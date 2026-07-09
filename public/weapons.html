@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Weapons Station</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #ff6f6f; }</style>
+</head>
+<body>
+  <header>
+    <h1>Weapons</h1>
+    <span class="room-code"></span>
+    <span class="conn-dot"></span>
+  </header>
+  <div id="toasts"></div>
+
+  <main>
+    <!-- Incoming asteroid contacts: tap to target, then fire -->
+    <div class="panel">
+      <h2>Sensor Contacts</h2>
+      <div id="targets"><p style="color:var(--dim)">No contacts.</p></div>
+    </div>
+
+    <!-- Weapon charge and fire control -->
+    <div class="panel">
+      <h2>Phaser Bank</h2>
+      <div class="label">Charge</div>
+      <div class="meter" style="margin-bottom:0.75rem"><div id="charge-bar"></div></div>
+      <button class="primary" id="fire-btn" style="width:100%">FIRE</button>
+    </div>
+
+    <!-- Shield control (regen rate depends on engineering's power allocation) -->
+    <div class="panel">
+      <h2>Shields</h2>
+      <div class="label">Strength</div>
+      <div class="meter" style="margin-bottom:0.75rem"><div id="shield-bar"></div></div>
+      <button id="shields-btn" style="width:100%">Raise Shields</button>
+    </div>
+  </main>
+
+  <!-- Phase overlays (shared shell fills these in) -->
+  <div class="overlay hidden" id="lobby-overlay">
+    <h2>Standing By</h2>
+    <p id="lobby-crew" style="color:var(--dim)"></p>
+    <button class="primary" id="launch-btn">Launch Mission</button>
+  </div>
+  <div class="overlay hidden" id="debrief-overlay">
+    <h2>Mission Debrief</h2>
+    <div class="grade" id="debrief-grade"></div>
+    <p id="debrief-narrative" style="max-width:26rem"></p>
+    <button class="primary" id="return-btn">Return to Ready Room</button>
+  </div>
+
+  <script type="module">
+    import { initStation } from '/js/station.js';
+
+    const targetsEl = document.getElementById('targets');
+    const fireBtn = document.getElementById('fire-btn');
+    const shieldsBtn = document.getElementById('shields-btn');
+    let shieldsRaised = false;
+
+    const net = initStation({
+      seat: 'weapons',
+      render(state) {
+        // Rebuild the contact list each state push (small list, simple code).
+        if (state.asteroids.length === 0) {
+          targetsEl.innerHTML = '<p style="color:var(--dim)">No contacts.</p>';
+        } else {
+          targetsEl.innerHTML = '';
+          for (const a of [...state.asteroids].sort((x, y) => x.impactIn - y.impactIn)) {
+            const btn = document.createElement('button');
+            btn.className = 'target-btn' + (a.id === state.targetId ? ' selected' : '');
+            btn.innerHTML = `<span>${a.label} (${a.dmg} dmg)</span>
+              <span class="eta ${a.impactIn <= 6 ? 'urgent' : ''}">${a.impactIn.toFixed(0)}s</span>`;
+            btn.addEventListener('click', () => net.action({ kind: 'target', id: a.id }));
+            targetsEl.appendChild(btn);
+          }
+        }
+        // Charge bar and fire availability.
+        document.getElementById('charge-bar').style.width = `${state.charge}%`;
+        fireBtn.disabled = state.charge < state.fireCost || state.targetId === null;
+        fireBtn.textContent = state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
+        // Shield toggle reflects server state.
+        shieldsRaised = state.shields.raised;
+        shieldsBtn.textContent = shieldsRaised ? 'Lower Shields' : 'Raise Shields';
+        document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
+      },
+    });
+
+    fireBtn.addEventListener('click', () => net.action({ kind: 'fire' }));
+    shieldsBtn.addEventListener('click', () => net.action({ kind: 'shields', raised: !shieldsRaised }));
+  </script>
+</body>
+</html>

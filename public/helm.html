@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Helm Station</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #6fa8ff; }</style>
+</head>
+<body>
+  <header>
+    <h1>Helm</h1>
+    <span class="room-code"></span>
+    <span class="conn-dot"></span>
+  </header>
+  <div id="toasts"></div>
+
+  <main>
+    <!-- Speed / progress readouts -->
+    <div class="panel">
+      <div class="spread">
+        <div><div class="label">Velocity</div><div class="readout" id="speed">0</div></div>
+        <div style="text-align:right"><div class="label">Distance to Station</div><div class="readout" id="dist">100%</div></div>
+      </div>
+    </div>
+
+    <!-- Throttle control -->
+    <div class="panel">
+      <h2>Throttle <span id="throttle-val" style="color:var(--accent)">0%</span></h2>
+      <input type="range" id="throttle" min="0" max="100" step="5" value="0">
+    </div>
+
+    <!-- Course alignment: keep the marker centered against drift -->
+    <div class="panel">
+      <h2>Course Alignment</h2>
+      <div class="align-track"><div class="align-marker" id="align-marker"></div></div>
+      <div class="row" style="margin-top:0.75rem;">
+        <button id="port-btn">&larr; Port</button>
+        <button id="starboard-btn">Starboard &rarr;</button>
+      </div>
+    </div>
+
+    <!-- Evasive maneuver: dodge imminent impacts, at a cost -->
+    <div class="panel">
+      <h2>Emergency</h2>
+      <button class="danger" id="evasive-btn" style="width:100%">Evasive Maneuver</button>
+    </div>
+  </main>
+
+  <!-- Phase overlays (shared shell fills these in) -->
+  <div class="overlay hidden" id="lobby-overlay">
+    <h2>Standing By</h2>
+    <p id="lobby-crew" style="color:var(--dim)"></p>
+    <button class="primary" id="launch-btn">Launch Mission</button>
+  </div>
+  <div class="overlay hidden" id="debrief-overlay">
+    <h2>Mission Debrief</h2>
+    <div class="grade" id="debrief-grade"></div>
+    <p id="debrief-narrative" style="max-width:26rem"></p>
+    <button class="primary" id="return-btn">Return to Ready Room</button>
+  </div>
+
+  <script type="module">
+    import { initStation } from '/js/station.js';
+
+    const throttle = document.getElementById('throttle');
+    const evasiveBtn = document.getElementById('evasive-btn');
+    let draggingThrottle = false;
+
+    const net = initStation({
+      seat: 'helm',
+      render(state) {
+        document.getElementById('speed').textContent = state.speed.toFixed(1);
+        document.getElementById('dist').textContent = `${Math.max(0, 100 - state.progress).toFixed(0)}%`;
+        // Don't fight the player's finger: only sync the slider when idle.
+        if (!draggingThrottle) throttle.value = state.throttle;
+        document.getElementById('throttle-val').textContent = `${state.throttle}%`;
+        // Alignment marker: map -100..100 onto the track width.
+        const pct = (state.alignment + 100) / 200;
+        document.getElementById('align-marker').style.left = `calc(${(pct * 100).toFixed(1)}% - 5px)`;
+        // Evasive availability.
+        evasiveBtn.disabled = state.evasiveReadyIn > 0;
+        evasiveBtn.textContent = state.evasiveReadyIn > 0
+          ? `Evasive (ready in ${Math.ceil(state.evasiveReadyIn)}s)`
+          : 'Evasive Maneuver';
+      },
+    });
+
+    // Throttle sends on change; track dragging so render() doesn't stomp it.
+    throttle.addEventListener('pointerdown', () => (draggingThrottle = true));
+    throttle.addEventListener('pointerup', () => (draggingThrottle = false));
+    throttle.addEventListener('input', () => net.action({ kind: 'throttle', value: Number(throttle.value) }));
+
+    document.getElementById('port-btn').addEventListener('click', () => net.action({ kind: 'nudge', dir: -1 }));
+    document.getElementById('starboard-btn').addEventListener('click', () => net.action({ kind: 'nudge', dir: 1 }));
+    evasiveBtn.addEventListener('click', () => net.action({ kind: 'evasive' }));
+  </script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+/* Shared look for all bridge stations: dark panel aesthetic, large touch
+   targets, one accent color per station (set via the --accent variable). */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0e17;
+  --panel: #131a2a;
+  --panel-edge: #263353;
+  --text: #cfe0ff;
+  --dim: #7d8db3;
+  --accent: #ffb347; /* stations override this */
+  --good: #4cd97b;
+  --warn: #ffb347;
+  --bad: #ff5c5c;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+body { display: flex; flex-direction: column; }
+
+/* --- Header bar shown on every station --- */
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-bottom: 2px solid var(--accent);
+}
+header h1 { font-size: 1.05rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); flex: 1; }
+.room-code { font-family: monospace; font-size: 1rem; color: var(--dim); letter-spacing: 0.2em; }
+.conn-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+.conn-dot.ok { background: var(--good); }
+
+main { flex: 1; padding: 1rem; overflow-y: auto; max-width: 720px; width: 100%; margin: 0 auto; }
+
+/* --- Panels --- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--dim); margin-bottom: 0.75rem; }
+
+/* --- Controls --- */
+button {
+  font: inherit;
+  color: var(--text);
+  background: #1c2740;
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  padding: 0.8rem 1.2rem;
+  font-size: 1.05rem;
+  cursor: pointer;
+  min-height: 48px; /* comfortable touch target */
+}
+button:active { background: var(--accent); color: #06090f; }
+button:disabled { opacity: 0.35; }
+button.primary { background: var(--accent); color: #06090f; font-weight: 700; border: none; }
+button.danger { border-color: var(--bad); color: var(--bad); }
+
+input[type="range"] { width: 100%; height: 44px; accent-color: var(--accent); }
+input[type="text"] {
+  font: inherit; color: var(--text); background: #0d1322;
+  border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.8rem;
+  width: 100%; font-size: 1.1rem;
+}
+select {
+  font: inherit; color: var(--text); background: #0d1322;
+  border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.8rem; width: 100%;
+}
+
+.row { display: flex; gap: 0.75rem; align-items: center; }
+.row > * { flex: 1; }
+.spread { display: flex; justify-content: space-between; align-items: baseline; }
+
+/* --- Meters (hull, shields, charge, ...) --- */
+.meter { background: #0d1322; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid var(--panel-edge); }
+.meter > div { height: 100%; background: var(--accent); transition: width 0.25s linear; }
+.meter.good > div { background: var(--good); }
+.meter.bad > div { background: var(--bad); }
+.readout { font-family: monospace; font-size: 1.4rem; color: var(--accent); }
+.label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
+
+/* --- Alignment indicator (helm) --- */
+.align-track { position: relative; height: 34px; background: #0d1322; border: 1px solid var(--panel-edge); border-radius: 8px; }
+.align-track::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--good); }
+.align-marker { position: absolute; top: 4px; bottom: 4px; width: 10px; border-radius: 4px; background: var(--accent); transition: left 0.25s linear; }
+
+/* --- Power pips (engineering) --- */
+.pips { display: flex; gap: 5px; }
+.pip { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--panel-edge); background: #0d1322; }
+.pip.on { background: var(--accent); border-color: var(--accent); }
+
+/* --- Target list (weapons) --- */
+.target-btn { width: 100%; text-align: left; margin-bottom: 0.5rem; display: flex; justify-content: space-between; }
+.target-btn.selected { border-color: var(--accent); background: #2a2010; }
+.target-btn .eta { font-family: monospace; }
+.target-btn .eta.urgent { color: var(--bad); }
+
+/* --- Event log --- */
+.log { font-size: 0.85rem; line-height: 1.5; color: var(--dim); max-height: 9em; overflow-y: auto; }
+.log div:last-child { color: var(--text); }
+
+/* --- Full-screen overlays for lobby / debrief phases --- */
+.overlay {
+  position: fixed; inset: 0; z-index: 10;
+  background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1rem; padding: 1.5rem; text-align: center;
+}
+.overlay.hidden { display: none; }
+.overlay h2 { color: var(--accent); letter-spacing: 0.1em; text-transform: uppercase; }
+.big-code { font-family: monospace; font-size: 2.6rem; letter-spacing: 0.35em; color: var(--text); }
+.grade { font-size: 1.8rem; color: var(--accent); }
+.stats-grid { display: grid; grid-template-columns: auto auto; gap: 0.3rem 1.5rem; text-align: left; font-size: 0.95rem; }
+.stats-grid .label { align-self: center; }
+
+/* --- Toasts for game events --- */
+#toasts { position: fixed; top: 3.4rem; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; pointer-events: none; z-index: 20; }
+.toast {
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 8px;
+  padding: 0.5rem 1rem; font-size: 0.9rem; max-width: 90%;
+  animation: toast-fade 4s forwards;
+}
+@keyframes toast-fade { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* --- Main screen layout --- */
+.mainscreen-body main { max-width: none; padding: 0; display: flex; flex-direction: column; height: 100%; }
+#viewscreen { flex: 1; width: 100%; display: block; background: #05070d; }
+.hud { display: flex; gap: 1rem; padding: 0.8rem 1rem; background: var(--panel); border-top: 1px solid var(--panel-edge); flex-wrap: wrap; }
+.hud .cell { flex: 1; min-width: 130px; }

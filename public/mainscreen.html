@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Main Screen</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #7ddb9a; }</style>
+</head>
+<body class="mainscreen-body">
+  <header>
+    <h1>USS Prototype — Main Screen</h1>
+    <span class="room-code"></span>
+    <span class="conn-dot"></span>
+  </header>
+  <div id="toasts"></div>
+
+  <main>
+    <!-- Simulated view outside the ship -->
+    <canvas id="viewscreen"></canvas>
+
+    <!-- Ship status HUD along the bottom, visible to the whole room -->
+    <div class="hud">
+      <div class="cell">
+        <div class="label">Hull</div>
+        <div class="meter good"><div id="hull-bar"></div></div>
+      </div>
+      <div class="cell">
+        <div class="label">Shields <span id="shield-state"></span></div>
+        <div class="meter"><div id="shield-bar"></div></div>
+      </div>
+      <div class="cell">
+        <div class="label">Distance to Station Epsilon</div>
+        <div class="meter"><div id="progress-bar"></div></div>
+      </div>
+      <div class="cell">
+        <div class="label">Mission Clock</div>
+        <div class="readout" id="clock">0:00</div>
+      </div>
+      <div class="cell" style="flex:2; min-width:220px">
+        <div class="label">Ship's Log</div>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Lobby: join instructions everyone in the room can read -->
+  <div class="overlay hidden" id="lobby-overlay">
+    <h2>Awaiting Crew</h2>
+    <img id="qr" alt="Join QR code" width="260" height="260" style="border-radius:12px;">
+    <div class="big-code" id="big-code"></div>
+    <p style="color:var(--dim)" id="join-url"></p>
+    <p id="lobby-crew" style="color:var(--dim)"></p>
+    <button class="primary" id="launch-btn">Launch Mission</button>
+  </div>
+
+  <!-- Debrief: full mission results for the whole room -->
+  <div class="overlay hidden" id="debrief-overlay">
+    <h2>Mission Debrief</h2>
+    <div class="grade" id="debrief-grade"></div>
+    <p id="debrief-narrative" style="max-width:30rem"></p>
+    <div class="stats-grid" id="debrief-stats"></div>
+    <button class="primary" id="return-btn">Return to Ready Room</button>
+  </div>
+
+  <script type="module" src="/js/mainscreen.js"></script>
+</body>
+</html>

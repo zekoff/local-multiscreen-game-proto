@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Bridge Crew — Join</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #6fa8ff; }</style>
+</head>
+<body>
+  <header>
+    <h1>Bridge Crew</h1>
+  </header>
+  <main>
+    <!-- Host flow: create a ship, then this device becomes the main screen -->
+    <div class="panel">
+      <h2>Host a ship</h2>
+      <p style="margin-bottom:0.75rem; color:var(--dim); font-size:0.9rem;">
+        Run this on the TV or a laptop everyone can see. It shows the join code and the viewscreen.
+      </p>
+      <button class="primary" id="create-btn" style="width:100%">Create New Ship</button>
+    </div>
+
+    <!-- Player flow: enter the code from the main screen, pick a station -->
+    <div class="panel">
+      <h2>Join a ship</h2>
+      <div class="row" style="margin-bottom:0.75rem;">
+        <input type="text" id="code-input" placeholder="SHIP CODE" maxlength="4"
+               autocapitalize="characters" autocomplete="off" style="text-transform:uppercase; letter-spacing:0.3em; text-align:center;">
+      </div>
+      <div class="row" style="margin-bottom:0.75rem;">
+        <input type="text" id="name-input" placeholder="Your name (optional)">
+      </div>
+      <div class="row" style="margin-bottom:0.75rem;">
+        <select id="difficulty-select">
+          <option value="chill">Chill — lighter workload</option>
+          <option value="normal" selected>Normal</option>
+          <option value="intense">Intense — heavier workload</option>
+        </select>
+      </div>
+      <div class="row" style="margin-bottom:0.75rem;">
+        <button data-seat="helm">Helm</button>
+        <button data-seat="engineering">Engineering</button>
+      </div>
+      <div class="row">
+        <button data-seat="weapons">Weapons</button>
+        <button data-seat="mainscreen">Main Screen</button>
+      </div>
+      <p style="margin-top:0.9rem; color:var(--dim); font-size:0.85rem;">
+        Commander: no device needed — watch the main screen and give orders.
+      </p>
+    </div>
+  </main>
+  <script>
+    // Prefill the code when arriving via the QR link (/?room=XXXX).
+    const params = new URLSearchParams(location.search);
+    const codeInput = document.getElementById('code-input');
+    if (params.get('room')) codeInput.value = params.get('room').toUpperCase();
+
+    // Host: create a room, then open the main screen for it.
+    document.getElementById('create-btn').addEventListener('click', async () => {
+      const res = await fetch('/api/rooms', { method: 'POST' });
+      const { code } = await res.json();
+      location.href = `/mainscreen.html?room=${code}`;
+    });
+
+    // Player: navigate to the chosen station page with join params.
+    for (const btn of document.querySelectorAll('button[data-seat]')) {
+      btn.addEventListener('click', () => {
+        const code = codeInput.value.trim().toUpperCase();
+        if (code.length !== 4) { alert('Enter the 4-letter ship code shown on the main screen.'); return; }
+        const seat = btn.dataset.seat;
+        const name = encodeURIComponent(document.getElementById('name-input').value.trim());
+        const d = document.getElementById('difficulty-select').value;
+        location.href = `/${seat}.html?room=${code}&name=${name}&d=${d}`;
+      });
+    }
+  </script>
+</body>
+</html>

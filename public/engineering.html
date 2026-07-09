@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Engineering Station</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #ffb347; }</style>
+</head>
+<body>
+  <header>
+    <h1>Engineering</h1>
+    <span class="room-code"></span>
+    <span class="conn-dot"></span>
+  </header>
+  <div id="toasts"></div>
+
+  <main>
+    <!-- Power budget: 6 units across three systems, max 4 each -->
+    <div class="panel">
+      <h2>Power Distribution <span id="power-free" style="color:var(--accent)"></span></h2>
+      <div id="power-systems"></div>
+    </div>
+
+    <!-- Breakers: trip randomly and halve a system's power until reset -->
+    <div class="panel">
+      <h2>Breakers</h2>
+      <div id="breakers"></div>
+    </div>
+
+    <!-- Ship vitals so engineering can see the effect of their choices -->
+    <div class="panel">
+      <h2>Ship Vitals</h2>
+      <div class="label">Hull</div>
+      <div class="meter good" style="margin-bottom:0.6rem"><div id="hull-bar"></div></div>
+      <div class="label">Shields</div>
+      <div class="meter"><div id="shield-bar"></div></div>
+    </div>
+  </main>
+
+  <!-- Phase overlays (shared shell fills these in) -->
+  <div class="overlay hidden" id="lobby-overlay">
+    <h2>Standing By</h2>
+    <p id="lobby-crew" style="color:var(--dim)"></p>
+    <button class="primary" id="launch-btn">Launch Mission</button>
+  </div>
+  <div class="overlay hidden" id="debrief-overlay">
+    <h2>Mission Debrief</h2>
+    <div class="grade" id="debrief-grade"></div>
+    <p id="debrief-narrative" style="max-width:26rem"></p>
+    <button class="primary" id="return-btn">Return to Ready Room</button>
+  </div>
+
+  <script type="module">
+    import { initStation } from '/js/station.js';
+
+    const SYSTEMS = ['engines', 'shields', 'weapons'];
+    const POWER_MAX = 4;
+    const POWER_TOTAL = 6;
+
+    // Build the three power rows once; render() updates pips and buttons.
+    const systemsEl = document.getElementById('power-systems');
+    const breakersEl = document.getElementById('breakers');
+    for (const sys of SYSTEMS) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.marginBottom = '0.6rem';
+      row.innerHTML = `
+        <div style="flex:1.2"><div class="label">${sys}</div><div class="pips" id="pips-${sys}">
+          ${Array.from({ length: POWER_MAX }, () => '<div class="pip"></div>').join('')}
+        </div></div>
+        <button data-sys="${sys}" data-delta="-1" style="flex:0.5">&minus;</button>
+        <button data-sys="${sys}" data-delta="1" style="flex:0.5">+</button>`;
+      systemsEl.appendChild(row);
+
+      const brk = document.createElement('button');
+      brk.className = 'danger';
+      brk.style.cssText = 'width:100%; margin-bottom:0.5rem;';
+      brk.id = `brk-${sys}`;
+      brk.textContent = `${sys}: OK`;
+      breakersEl.appendChild(brk);
+    }
+
+    const net = initStation({
+      seat: 'engineering',
+      render(state) {
+        const used = SYSTEMS.reduce((sum, s) => sum + state.power[s], 0);
+        document.getElementById('power-free').textContent = `${POWER_TOTAL - used} spare`;
+        for (const sys of SYSTEMS) {
+          // Light up pips to match the current allocation.
+          const pips = document.querySelectorAll(`#pips-${sys} .pip`);
+          pips.forEach((p, i) => p.classList.toggle('on', i < state.power[sys]));
+          // Breaker button flashes red text while tripped.
+          const brk = document.getElementById(`brk-${sys}`);
+          const tripped = state.breakers[sys];
+          brk.textContent = tripped ? `${sys}: TRIPPED — TAP TO RESET` : `${sys}: OK`;
+          brk.disabled = !tripped;
+        }
+        document.getElementById('hull-bar').style.width = `${state.hull}%`;
+        document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
+      },
+    });
+
+    // Power +/- buttons.
+    systemsEl.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-sys]');
+      if (btn) net.action({ kind: 'power', system: btn.dataset.sys, delta: Number(btn.dataset.delta) });
+    });
+    // Breaker reset buttons.
+    breakersEl.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[id^="brk-"]');
+      if (btn && !btn.disabled) net.action({ kind: 'resetBreaker', system: btn.id.slice(4) });
+    });
+  </script>
+</body>
+</html>
