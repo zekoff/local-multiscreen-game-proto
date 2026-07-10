@@ -67,6 +67,17 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
 - Rooms are fully independent by design — no cross-room state, ever. That
   invariant is what lets Durable Objects scale rooms horizontally.
 
+## Model fit
+
+Before starting work on a task, flag it (briefly, one line) if you judge that
+a stronger model (e.g. Opus) would clearly do meaningfully better than the
+model you're currently running as — for example, deep architectural
+tradeoffs across the dual-transport engine, subtle concurrency/reconnection
+bugs, or balance/design reasoning with many interacting constraints. Don't
+flag routine work (typical feature additions, bug fixes, refactors, doc
+updates) — this should be occasional, not a checklist item on every prompt.
+This is a judgment call on your part, not a hard rule with a fixed threshold.
+
 ## Rules that matter when extending
 
 - Adding a mechanic means touching all three of: `action()` (input),
