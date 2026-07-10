@@ -27,7 +27,7 @@ export const minedCorridor: MissionDef = {
       at: { progress: 18 },
       actions: [
         { type: 'log', text: 'Sensors: mine cluster ahead — brace!' },
-        { type: 'spawnAsteroids', count: 3, impactIn: { min: 10, max: 15 }, dmg: { min: 8, max: 12 } },
+        { type: 'spawnAsteroids', count: 4, impactIn: { min: 8, max: 13 }, dmg: { min: 8, max: 12 } },
       ],
     },
     {
@@ -43,7 +43,7 @@ export const minedCorridor: MissionDef = {
       at: { progress: 58 },
       actions: [
         { type: 'log', text: 'Contact! Drifting mines, all quadrants!' },
-        { type: 'spawnAsteroids', count: 4, impactIn: { min: 10, max: 16 }, dmg: { min: 8, max: 14 } },
+        { type: 'spawnAsteroids', count: 6, impactIn: { min: 8, max: 14 }, dmg: { min: 8, max: 14 } },
         { type: 'tripBreaker' },
       ],
     },

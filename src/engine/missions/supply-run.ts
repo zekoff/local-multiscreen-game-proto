@@ -1,6 +1,7 @@
-// The baseline mission — identical tuning to the original hardcoded
-// prototype mission, now expressed as data. Pure ambient pacing, no scripted
-// set pieces; this is the calibration reference for all other missions.
+// The baseline mission — identical ambient tuning to the original hardcoded
+// prototype mission, now expressed as data, plus two scripted belt-crossing
+// bursts (added during the 2026-07 balance pass — ambient pacing alone let
+// an unmanned ship clear this mission untouched).
 
 import type { MissionDef } from '../mission.js';
 
@@ -20,5 +21,22 @@ export const supplyRun: MissionDef = {
   breakerEvery: { min: 18, max: 30 },
   driftScale: 1,
   speedScale: 1,
-  events: [],
+  events: [
+    {
+      id: 'belt-cluster',
+      at: { progress: 35 },
+      actions: [
+        { type: 'log', text: 'The belt narrows here — cluster of rocks dead ahead!' },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 8, max: 13 }, dmg: { min: 10, max: 16 } },
+      ],
+    },
+    {
+      id: 'final-scatter',
+      at: { progress: 75 },
+      actions: [
+        { type: 'log', text: 'Scatter field on final approach to Epsilon — stay sharp.' },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 8, max: 13 }, dmg: { min: 10, max: 16 } },
+      ],
+    },
+  ],
 };

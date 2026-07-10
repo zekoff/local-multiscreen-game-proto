@@ -35,6 +35,15 @@ export const keplerRescue: MissionDef = {
         { type: 'log', text: 'Debris strike aft! Electrical cascade across the grid!' },
         { type: 'tripBreaker', system: 'engines' },
         { type: 'tripBreaker', system: 'weapons' },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 7, max: 12 }, dmg: { min: 10, max: 16 } },
+      ],
+    },
+    {
+      id: 'rockslide-swarm',
+      at: { progress: 72 },
+      actions: [
+        { type: 'log', text: 'The rockslide that hit Kepler is still spreading — swarm inbound!' },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 8, max: 13 }, dmg: { min: 8, max: 14 } },
       ],
     },
     {

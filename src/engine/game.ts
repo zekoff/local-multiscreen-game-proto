@@ -26,6 +26,21 @@ const POWER_TOTAL = 6;      // total power units engineering can allocate
 const POWER_MAX = 4;        // max units a single system can hold
 const FIRE_COST = 35;       // weapon charge consumed per shot
 const EVASIVE_COOLDOWN = 18; // seconds between evasive maneuvers
+// Auto-weapons is a survival net for an abandoned seat, not an optimal
+// gunner: it waits for a contact to be genuinely close, then still whiffs
+// some shots. Keeps the weapons seat meaningfully better than empty.
+const AUTO_WEAPONS_REACT_RANGE = 8;  // seconds-to-impact before auto-turret engages
+const AUTO_WEAPONS_MISS_CHANCE = 0.2; // fraction of auto shots that go wide
+// Raised shields draw off the drive: a real power-triage tradeoff instead of
+// a free defensive toggle.
+const SHIELD_ENGINE_PENALTY = 0.85;
+// Shields are tracked internally in absolute points (0..SHIELD_MAX) and
+// serialized to clients as a 0-100 percentage of that cap, so the UI meter
+// keeps reading as a plain percentage regardless of the cap's value. A lower
+// cap and slower regen mean a shield can actually be worn down by a burst,
+// rather than always sitting near full between sparse hits.
+const SHIELD_MAX = 35;
+const SHIELD_REGEN_PER_POWER = 0.25; // shield points/s per allocated power unit (was 0.5)
 
 export interface Asteroid {
   id: number;
@@ -99,7 +114,7 @@ export class Game {
   progress = 0;          // 0..100, distance to destination
   hull = 100;
   shieldRaised = false;
-  shieldStrength = 100;
+  shieldStrength = SHIELD_MAX; // absolute points, 0..SHIELD_MAX (serialized as a %)
   power: Record<SystemId, number> = { engines: 2, shields: 2, weapons: 2 };
   breakers: Record<SystemId, number | null> = { engines: null, shields: null, weapons: null }; // trip age in seconds, null = ok
   throttle = 0;          // 0..100
@@ -189,7 +204,7 @@ export class Game {
     this.progress = 0;
     this.hull = 100;
     this.shieldRaised = false;
-    this.shieldStrength = 100;
+    this.shieldStrength = SHIELD_MAX;
     this.power = { engines: 2, shields: 2, weapons: 2 };
     this.breakers = { engines: null, shields: null, weapons: null };
     this.throttle = 0;
@@ -382,11 +397,12 @@ export class Game {
     // Speed derives from throttle, effective engine power, course alignment,
     // and the mission's speed scale (longer trips = lower scale).
     const alignFactor = 1 - 0.6 * Math.min(1, Math.abs(this.alignment) / 100);
-    this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX)) * alignFactor * m.speedScale;
+    const shieldPenalty = this.shieldRaised ? SHIELD_ENGINE_PENALTY : 1;
+    this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX) * shieldPenalty) * alignFactor * m.speedScale;
     this.progress = Math.min(100, this.progress + this.speed * dt);
 
     // Shield regen and weapon charge scale with their allocated power.
-    this.shieldStrength = Math.min(100, this.shieldStrength + 0.5 * this.eff('shields') * dt);
+    this.shieldStrength = Math.min(SHIELD_MAX, this.shieldStrength + SHIELD_REGEN_PER_POWER * this.eff('shields') * dt);
     this.charge = Math.min(100, this.charge + 2.5 * this.eff('weapons') * dt);
 
     // Telemetry accumulation (station-load measurements).
@@ -404,12 +420,25 @@ export class Game {
       }
     }
 
-    // Auto-weapons: keep shields up and shoot the most urgent asteroid.
+    // Auto-weapons: keep shields up, but only engage once a contact is close
+    // (reaction latency) and sometimes miss (accuracy penalty) — an unmanned
+    // seat survives, it doesn't perform like a crewed one.
     if (this.auto('weapons')) {
       this.shieldRaised = true;
-      if (this.charge >= FIRE_COST && this.asteroids.length > 0) {
-        this.targetId = [...this.asteroids].sort((a, b) => a.impactIn - b.impactIn)[0].id;
-        this.fire();
+      const closest = this.asteroids.length > 0
+        ? [...this.asteroids].sort((a, b) => a.impactIn - b.impactIn)[0]
+        : null;
+      if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= FIRE_COST) {
+        this.targetId = closest.id;
+        if (this.rng() < AUTO_WEAPONS_MISS_CHANCE) {
+          // Shot goes wide: charge is spent but the target survives.
+          this.charge -= FIRE_COST;
+          this.tel.shotsFired++;
+          this.targetId = null;
+          this.event(`Auto-turret shot goes wide — ${closest.label} still inbound!`);
+        } else {
+          this.fire();
+        }
       }
     }
 
@@ -549,7 +578,9 @@ export class Game {
       missionTime: Math.round(this.missionTime),
       progress: round1(this.progress),
       hull: Math.round(this.hull),
-      shields: { raised: this.shieldRaised, strength: Math.round(this.shieldStrength) },
+      // strength is a % of SHIELD_MAX, not an absolute point count — the UI
+      // meter has always just rendered this as a 0-100 bar width.
+      shields: { raised: this.shieldRaised, strength: Math.round((this.shieldStrength / SHIELD_MAX) * 100) },
       power: this.power,
       breakers: {
         engines: this.breakers.engines !== null,

@@ -63,7 +63,7 @@ export function generateMission(params: GenParams): MissionDef {
       at: { progress: mark },
       actions: [
         { type: 'log', text: 'Debris storm ahead — multiple contacts inbound!' },
-        { type: 'spawnAsteroids', count: int(rng, 2, 3 + Math.round(t)), impactIn: { min: 10, max: 16 } },
+        { type: 'spawnAsteroids', count: int(rng, 3, 4 + Math.round(t)), impactIn: { min: 7, max: 13 } },
       ],
     }),
     (mark, i) => ({
