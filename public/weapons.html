@@ -16,10 +16,12 @@
   <div id="toasts"></div>
 
   <main>
-    <!-- Incoming asteroid contacts: tap to target, then fire -->
+    <!-- Incoming asteroid contacts: radar scope, tap a blip to target it -->
     <div class="panel">
       <h2>Sensor Contacts</h2>
-      <div id="targets"><p style="color:var(--dim)">No contacts.</p></div>
+      <div id="scope-mount" style="width:100%; aspect-ratio:1; max-width:320px; margin:0 auto;"></div>
+      <p id="scope-empty" style="color:var(--dim); text-align:center; margin-top:0.5rem">No contacts.</p>
+      <p id="scope-target" style="text-align:center; margin-top:0.5rem"></p>
     </div>
 
     <!-- Weapon charge and fire control -->
@@ -54,29 +56,29 @@
 
   <script type="module">
     import { initStation } from '/js/station.js';
+    import { mountPhaser } from '/js/phaser-station.js';
+    import { WeaponsScopeScene } from '/js/weapons-scope.js';
 
-    const targetsEl = document.getElementById('targets');
+    const scopeEmptyEl = document.getElementById('scope-empty');
+    const scopeTargetEl = document.getElementById('scope-target');
     const fireBtn = document.getElementById('fire-btn');
     const shieldsBtn = document.getElementById('shields-btn');
     let shieldsRaised = false;
 
+    const scopeScene = new WeaponsScopeScene();
+    mountPhaser({ parentId: 'scope-mount', width: 320, height: 320, scene: scopeScene });
+
     const net = initStation({
       seat: 'weapons',
       render(state) {
-        // Rebuild the contact list each state push (small list, simple code).
-        if (state.asteroids.length === 0) {
-          targetsEl.innerHTML = '<p style="color:var(--dim)">No contacts.</p>';
-        } else {
-          targetsEl.innerHTML = '';
-          for (const a of [...state.asteroids].sort((x, y) => x.impactIn - y.impactIn)) {
-            const btn = document.createElement('button');
-            btn.className = 'target-btn' + (a.id === state.targetId ? ' selected' : '');
-            btn.innerHTML = `<span>${a.label} (${a.dmg} dmg)</span>
-              <span class="eta ${a.impactIn <= 6 ? 'urgent' : ''}">${a.impactIn.toFixed(0)}s</span>`;
-            btn.addEventListener('click', () => net.action({ kind: 'target', id: a.id }));
-            targetsEl.appendChild(btn);
-          }
-        }
+        // The scope scene reads this on its own update loop; tapping a blip
+        // calls back here with the id, same action any target-list UI would send.
+        scopeScene.onTarget = (id) => net.action({ kind: 'target', id });
+        scopeScene.setState(state);
+        scopeEmptyEl.style.display = state.asteroids.length === 0 ? '' : 'none';
+        const targeted = state.asteroids.find((a) => a.id === state.targetId);
+        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label} (${targeted.dmg} dmg)` : '';
+
         // Charge bar and fire availability.
         document.getElementById('charge-bar').style.width = `${state.charge}%`;
         fireBtn.disabled = state.charge < state.fireCost || state.targetId === null;
