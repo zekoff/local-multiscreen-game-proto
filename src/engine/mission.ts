@@ -1,0 +1,71 @@
+// Mission definitions: the data schema that describes everything tunable
+// about a mission run. Authored missions are TypeScript modules exporting a
+// MissionDef (type-checked authoring); procedurally generated missions build
+// one from GenParams + a seed (src/engine/mission-gen.ts). The Game engine
+// consumes a MissionDef and knows nothing about where it came from.
+
+import type { Range } from './rng.js';
+
+export type SystemId = 'engines' | 'shields' | 'weapons';
+
+export interface MissionDef {
+  id: string;              // stable identifier ('supply-run', 'gen:standard:12345')
+  name: string;            // shown to players
+  briefing: string;        // one-paragraph setup shown in the lobby / log
+  arrivalName: string;     // destination, used in HUD labels and narrative
+  kind: 'authored' | 'generated';
+  parTime: number;         // seconds; the debrief time score is relative to this
+
+  // Ambient hazard pacing (per-seat difficulty multipliers apply on top).
+  spawnEvery: Range;       // seconds between ambient asteroid spawns
+  impactIn: Range;         // seconds from detection to impact
+  asteroidDmg: Range;      // damage per impact
+  maxAsteroids: number;    // concurrent cap
+  breakerEvery: Range;     // seconds between breaker trips
+
+  // Global scales relative to the baseline mission (1 = baseline).
+  driftScale: number;      // helm course-drift pressure
+  speedScale: number;      // ship velocity (lower = effectively longer trip)
+
+  // Authored timeline: set pieces that fire once at a time or progress mark.
+  events: ScriptedEvent[];
+}
+
+// A scripted event fires once when mission time (seconds) or progress
+// (0..100) reaches its trigger — whichever field is present; if both are
+// present, either reaching its mark fires the event.
+export interface ScriptedEvent {
+  id: string;
+  at: { time?: number; progress?: number };
+  actions: EventAction[];
+}
+
+export type EventAction =
+  // Narrative beat: appears in the ship's log and as a toast on stations.
+  | { type: 'log'; text: string }
+  // A burst of asteroids on top of ambient spawning (impact/dmg override
+  // the mission's ambient ranges when given).
+  | { type: 'spawnAsteroids'; count: number; impactIn?: Range; dmg?: Range }
+  // Trip a breaker now; omit `system` to let the engine pick a powered one.
+  | { type: 'tripBreaker'; system?: SystemId }
+  // Multiply the ambient spawn rate from this point on (stacks by replacing:
+  // last value wins). >1 = more frequent spawns.
+  | { type: 'spawnRate'; multiplier: number }
+  // Suppress ambient spawning for a stretch (scripted quiet before a storm).
+  | { type: 'calm'; seconds: number };
+
+// Parameters for the procedural generator: small enough to expose in a UI,
+// expressive enough to change how a run feels.
+export interface GenParams {
+  length: 'short' | 'standard' | 'long';
+  intensity: number; // 0..1: scales hazard frequency, damage, and drift
+  seed: number;      // reproducible generation AND run randomness
+}
+
+// Catalog entry: what transports send clients so a lobby can list options.
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  kind: 'authored' | 'generated';
+}

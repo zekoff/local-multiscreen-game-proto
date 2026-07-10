@@ -20,6 +20,7 @@ npm run deploy     # wrangler deploy to Cloudflare (needs CLOUDFLARE_API_TOKEN)
 npm run typecheck  # both configs: Node (tsconfig.json) + Worker (tsconfig.worker.json)
 npm run smoke      # bot crew plays a full mission vs the Node transport at 10x
 npm run smoke:cf   # same bot crew vs wrangler dev (Workers transport)
+npm run lab        # in-process balance sweep: missions x crew profiles x seeds
 node --check public/js/<file>.js   # syntax-check client JS (no build step exists)
 ```
 
@@ -40,11 +41,17 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   browser clients are stateless renderers. Clients send small `action`
   messages; the server ticks the simulation every 250ms and broadcasts the
   **complete** serialized state (no diffs) to every client in the room.
-- `src/engine/game.ts` — the engine. Runtime-agnostic, **zero imports**, no
-  network/transport knowledge (transports inject an `onEvent` callback); it
-  must stay that way so both transports share it. Phases:
+- `src/engine/` — the engine. Runtime-agnostic (engine-internal imports only,
+  no network/transport/platform knowledge; transports inject an `onEvent`
+  callback); it must stay that way so both transports share it. Phases:
   `lobby → active → debrief`. Seats reconnect via sticky `playerId`; unmanned
   seats run auto-assist through the same code paths as human actions.
+- **Missions are data** (`src/engine/mission.ts`): the engine consumes a
+  `MissionDef` — pacing ranges, scales, and scripted one-shot events.
+  Authored missions live in `src/engine/missions/`; the seeded procedural
+  generator is `mission-gen.ts`; transports resolve start requests through
+  `mission-registry.ts`. Every run is reproducible from (missionId, seed).
+  Authoring/testing guide: `docs/missions.md`.
 - `src/server-node.ts` — LAN-mode transport: Express static hosting + room
   API (`POST /api/rooms`, `GET /api/room-info`) + WebSocket endpoint (`/ws`).
   One `Game` + tick interval per room; idle rooms don't tick.
@@ -69,8 +76,17 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   another station's controls.
 - Per-role difficulty must stay a *parameter* (multiplier), not a separate
   code path; that's a core design pillar (see `docs/design/02-architecture.md`).
+  The same rule applies to mission tuning (MissionDef knobs) and, later,
+  persistent-ship upgrades (see `docs/design/07-persistence.md`).
 - Mission outcomes are non-binary by design — don't collapse the debrief
   scoring to win/lose.
+- The debrief record must stay self-contained (mission, seed, crew
+  composition, stats, telemetry) — it is the future persistent career-history
+  row (`docs/design/07-persistence.md`).
+- Balance changes should be justified with `npm run lab` output; the current
+  baseline and known issues live in `docs/design/08-mission-balance-baseline.md`.
+- Keep gameplay randomness on the seeded per-run RNG (`this.rng` in game.ts),
+  never `Math.random` — reproducibility from (missionId, seed) is a feature.
 - Reconnection is a first-class requirement: any new client page must go
   through `Net`/`initStation` (or preserve their sticky-`playerId` behavior)
   so phones that drop Wi-Fi can resume their seat mid-mission.

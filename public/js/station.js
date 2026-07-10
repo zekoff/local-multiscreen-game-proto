@@ -5,7 +5,15 @@
 
 import { Net } from './net.js';
 
-export function initStation({ seat, render }) {
+// Options:
+//   seat         - which station this page is
+//   render       - render(state) called on every state push
+//   onJoined     - optional; receives the full 'joined' message (mission
+//                  catalog, seat confirmation) — the main screen uses this
+//                  to build its mission picker
+//   startPayload - optional; () => message object sent by the Launch button
+//                  (defaults to a plain start; the main screen adds missionId)
+export function initStation({ seat, render, onJoined, startPayload }) {
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   const name = params.get('name') || '';
@@ -56,6 +64,7 @@ export function initStation({ seat, render }) {
         renderPhase(state);
         render(state);
       },
+      onJoined: (msg) => onJoined?.(msg),
       onEvent: toast,
       onError: (message) => {
         alert(message);
@@ -66,7 +75,8 @@ export function initStation({ seat, render }) {
   });
 
   // Anyone can launch from the lobby; the debrief return button too.
-  document.getElementById('launch-btn').addEventListener('click', () => net.send({ type: 'start' }));
+  document.getElementById('launch-btn').addEventListener('click', () =>
+    net.send(startPayload ? startPayload() : { type: 'start' }));
   document.getElementById('return-btn').addEventListener('click', () => net.send({ type: 'restart' }));
 
   net.connect();

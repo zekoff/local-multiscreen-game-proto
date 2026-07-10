@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Game, type SeatId, type Difficulty } from './engine/game.js';
+import { missionCatalog, resolveMissionStart } from './engine/mission-registry.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const TICK_MS = Number(process.env.TICK_MS || 250);
@@ -237,7 +238,13 @@ wss.on('connection', (ws) => {
       room.clients.add(ws);
       room.emptySince = null;
       ensureTicking(room); // a connected client always needs state pushes
-      ws.send(JSON.stringify({ type: 'joined', seat, code: room.code, state: room.game.serialize() }));
+      ws.send(JSON.stringify({
+        type: 'joined',
+        seat,
+        code: room.code,
+        state: room.game.serialize(),
+        catalog: missionCatalog(), // lobby mission picker options
+      }));
       return;
     }
 
@@ -245,9 +252,15 @@ wss.on('connection', (ws) => {
     const m = meta.get(ws);
     if (!m) return;
     if (msg.type === 'start') {
-      // Any connected client may launch the mission from the lobby.
+      // Any connected client may launch from the lobby. missionId picks an
+      // authored mission or a generator preset; seed fixes the run's
+      // randomness (tests/replays). Both optional — defaults apply.
       if (m.room.game.phase === 'lobby') {
-        m.room.game.start();
+        const { def, seed } = resolveMissionStart(
+          typeof msg.missionId === 'string' ? msg.missionId : undefined,
+          typeof msg.seed === 'number' ? msg.seed : undefined,
+        );
+        m.room.game.start(def, seed);
         ensureTicking(m.room);
       }
     } else if (msg.type === 'restart') {

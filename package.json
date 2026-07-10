@@ -11,7 +11,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
     "smoke": "node scripts/smoke.mjs",
-    "smoke:cf": "node scripts/smoke-cf.mjs"
+    "smoke:cf": "node scripts/smoke-cf.mjs",
+    "lab": "tsx scripts/mission-lab.ts"
   },
   "dependencies": {
     "express": "^4.19.0",

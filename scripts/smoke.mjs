@@ -14,10 +14,13 @@ try {
     { env: { PORT: String(PORT), GAME_SPEED: '10' }, readyPattern: /Bridge server ready/ },
   );
 
-  const debrief = await runBotCrew(BASE);
+  // Explicit missionId exercises the mission-selection path over the wire.
+  const debrief = await runBotCrew(BASE, { missionId: 'supply-run' });
   console.log(`debrief reached: ${debrief.outcome} — ${debrief.grade} (${debrief.score}/100)`);
+  console.log(`mission: ${debrief.missionId} seed=${debrief.seed}`);
   console.log(`stats: ${JSON.stringify(debrief.stats)}`);
   if (debrief.outcome !== 'arrived') throw new Error('bot crew should have arrived but went adrift');
+  if (debrief.missionId !== 'supply-run') throw new Error(`wrong mission ran: ${debrief.missionId}`);
   console.log('SMOKE PASS');
   killTree();
   process.exit(0);

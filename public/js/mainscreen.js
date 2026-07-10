@@ -27,8 +27,29 @@ fetch(`/api/room-info?code=${room}`)
   })
   .catch(() => {});
 
+// Mission picker state (populated from the join message's catalog).
+const missionSelect = document.getElementById('mission-select');
+const missionDesc = document.getElementById('mission-desc');
+let catalog = [];
+
+function showMissionDesc() {
+  const entry = catalog.find((c) => c.id === missionSelect.value);
+  missionDesc.textContent = entry ? entry.description : '';
+}
+missionSelect.addEventListener('change', showMissionDesc);
+
 initStation({
   seat: 'main',
+  // The Launch button carries the selected mission (stations without a
+  // picker send a plain start, which resolves to the default mission).
+  startPayload: () => ({ type: 'start', missionId: missionSelect.value || undefined }),
+  onJoined(msg) {
+    catalog = msg.catalog || [];
+    missionSelect.innerHTML = catalog
+      .map((c) => `<option value="${c.id}">${c.name}</option>`)
+      .join('');
+    showMissionDesc();
+  },
   render(state) {
     latest = state;
     // HUD bars.
@@ -36,12 +57,17 @@ initStation({
     document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
     document.getElementById('shield-state').textContent = state.shields.raised ? '(raised)' : '(down)';
     document.getElementById('progress-bar').style.width = `${state.progress}%`;
+    if (state.mission) {
+      document.getElementById('progress-label').textContent = `Distance to ${state.mission.arrivalName}`;
+    }
     document.getElementById('clock').textContent = fmtTime(state.missionTime);
     // Ship's log from the authoritative state (survives reconnects).
     logEl.innerHTML = state.log.map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
     logEl.scrollTop = logEl.scrollHeight;
     // Debrief stats grid.
     if (state.phase === 'debrief' && state.debrief) {
+      document.getElementById('debrief-mission').textContent =
+        `${state.debrief.missionName} (seed ${state.debrief.seed})`;
       const s = state.debrief.stats;
       document.getElementById('debrief-stats').innerHTML = `
         <div class="label">Mission time</div><div>${fmtTime(s.time)}</div>
@@ -108,7 +134,7 @@ function frame(ts) {
       ctx.textAlign = 'center';
       ctx.fillText(`${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - 6 * devicePixelRatio);
     }
-    // Station Epsilon grows on the horizon as progress approaches 100.
+    // The destination grows on the horizon as progress approaches 100.
     if (latest.progress > 70) {
       const grow = (latest.progress - 70) / 30;
       const r = grow * 40 * devicePixelRatio;
@@ -120,7 +146,8 @@ function frame(ts) {
       ctx.fillStyle = 'rgba(125, 219, 154, 0.9)';
       ctx.font = `${12 * devicePixelRatio}px monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText('STATION EPSILON', w * 0.85, h * 0.3 - r - 8 * devicePixelRatio);
+      const destination = (latest.mission?.arrivalName || 'DESTINATION').toUpperCase();
+      ctx.fillText(destination, w * 0.85, h * 0.3 - r - 8 * devicePixelRatio);
     }
   }
 

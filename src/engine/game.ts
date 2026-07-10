@@ -1,27 +1,31 @@
 // Core game engine: authoritative mission state for one ship (one room).
-// The server owns one Game instance per room, ticks it at a fixed rate, and
-// broadcasts the serialized state to all connected clients after each tick.
+// A transport (Node server or Cloudflare Durable Object) owns one Game
+// instance per room, ticks it at a fixed rate, and broadcasts the serialized
+// state to all connected clients after each tick.
+//
+// The engine is runtime-agnostic: engine-internal imports only, no transport
+// or platform knowledge. Missions arrive as data (MissionDef) — see
+// mission-registry.ts for how start requests resolve.
+
+import type { MissionDef, EventAction, SystemId } from './mission.js';
+import { mulberry32, range, randomSeed, type Rng } from './rng.js';
 
 export type Phase = 'lobby' | 'active' | 'debrief';
 export type SeatId = 'helm' | 'engineering' | 'weapons' | 'main';
-export type SystemId = 'engines' | 'shields' | 'weapons';
 export type Difficulty = 'chill' | 'normal' | 'intense';
+export type { SystemId } from './mission.js';
 
 // Difficulty multiplies the burden a station must handle (drift rate for helm,
 // breaker trip rate for engineering, asteroid spawn rate for weapons).
 const DIFF_MULT: Record<Difficulty, number> = { chill: 0.6, normal: 1, intense: 1.5 };
 
-// Crew seats that map to actual control stations (main screen is view-only).
-const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons'];
 const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons'];
 
-// Tuning constants for the prototype mission ("Supply Run to Station Epsilon").
+// Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
 const POWER_TOTAL = 6;      // total power units engineering can allocate
 const POWER_MAX = 4;        // max units a single system can hold
 const FIRE_COST = 35;       // weapon charge consumed per shot
 const EVASIVE_COOLDOWN = 18; // seconds between evasive maneuvers
-const MAX_ASTEROIDS = 4;    // concurrent asteroid cap
-const PAR_TIME = 260;       // seconds; used for the debrief time score
 
 export interface Asteroid {
   id: number;
@@ -37,11 +41,30 @@ interface SeatState {
   difficulty: Difficulty;
 }
 
+// Per-run measurements for mission balancing (see docs/missions.md). Summed
+// during the run, summarized into the debrief, and consumed raw by the
+// mission-lab harness.
+export interface Telemetry {
+  asteroidsSpawned: number;
+  shotsFired: number;
+  evasivesUsed: number;
+  powerChanges: number;
+  breakerDowntime: number; // system-seconds spent tripped
+  shieldUptime: number;    // seconds with shields raised
+  hullDamageTaken: number;
+  impactLog: { t: number; dmg: number; hullDmg: number }[];
+  avgAlignment: number;    // mean |alignment| over the run (helm load)
+  avgThrottle: number;
+}
+
 export interface Debrief {
   outcome: 'arrived' | 'adrift';
   grade: string;
   score: number;
   narrative: string;
+  missionId: string;
+  missionName: string;
+  seed: number;           // (missionId, seed) reproduces the run's randomness
   stats: {
     time: number;
     hull: number;
@@ -50,6 +73,8 @@ export interface Debrief {
     dodged: number;
     breakersTripped: number;
   };
+  telemetry: Telemetry;
+  crew: Record<string, { difficulty: Difficulty; human: boolean }>;
 }
 
 // Actions are small role-scoped commands sent by clients over the socket.
@@ -64,9 +89,14 @@ export class Game {
   // Called whenever a human-readable event happens (impacts, breakers, etc.).
   onEvent: (text: string) => void = () => {};
 
+  // --- Mission definition & run randomness (set by start()) ---
+  mission: MissionDef | null = null;
+  private runSeed = 0;
+  private rng: Rng = mulberry32(1);
+
   // --- Mission state (reset by start()) ---
   missionTime = 0;
-  progress = 0;          // 0..100, distance to Station Epsilon
+  progress = 0;          // 0..100, distance to destination
   hull = 100;
   shieldRaised = false;
   shieldStrength = 100;
@@ -84,9 +114,16 @@ export class Game {
   private nextAsteroidId = 1;
   private spawnTimer = 10;
   private breakerTimer = 22;
+  private spawnRateMult = 1;  // scripted 'spawnRate' actions replace this
+  private calmUntil = 0;      // missionTime before which ambient spawns pause
+  private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
   private stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0 };
+  private tel: Telemetry = freshTelemetry();
+  private alignAbsSum = 0;
+  private throttleSum = 0;
+  private telSamples = 0;
   private log: { t: number; text: string }[] = [];
 
   constructor() {
@@ -138,8 +175,14 @@ export class Game {
 
   // --- Phase transitions ---
 
-  start() {
+  // Begin a mission run. The transport resolves the MissionDef (registry or
+  // generator) and passes the run seed so (missionId, seed) reproduces the
+  // run's randomness exactly.
+  start(def: MissionDef, seed?: number) {
     if (this.phase === 'active') return;
+    this.mission = def;
+    this.runSeed = seed ?? randomSeed();
+    this.rng = mulberry32(this.runSeed);
     // Reset all mission state for a fresh run.
     this.phase = 'active';
     this.missionTime = 0;
@@ -156,13 +199,21 @@ export class Game {
     this.evasiveCd = 0;
     this.asteroids = [];
     this.debrief = null;
-    this.spawnTimer = 10;
-    this.breakerTimer = 22;
+    this.spawnTimer = range(this.rng, def.spawnEvery);
+    this.breakerTimer = range(this.rng, def.breakerEvery);
+    this.spawnRateMult = 1;
+    this.calmUntil = 0;
+    this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
     this.stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0 };
+    this.tel = freshTelemetry();
+    this.alignAbsSum = 0;
+    this.throttleSum = 0;
+    this.telSamples = 0;
     this.log = [];
-    this.event('Mission start: supply run to Station Epsilon. Godspeed.');
+    this.event(`Mission start: ${def.name}. Godspeed.`);
+    this.event(def.briefing);
   }
 
   restartToLobby() {
@@ -208,6 +259,7 @@ export class Game {
     if (next < 0 || next > POWER_MAX) return;
     if (delta > 0 && total >= POWER_TOTAL) return; // no free units in the budget
     this.power[system] = next;
+    this.tel.powerChanges++;
   }
 
   private resetBreaker(system: SystemId) {
@@ -223,7 +275,8 @@ export class Game {
     const dodged = this.asteroids.filter((a) => a.impactIn <= 5);
     this.asteroids = this.asteroids.filter((a) => a.impactIn > 5);
     this.stats.dodged += dodged.length;
-    this.alignment = clamp(this.alignment + sign(Math.random() - 0.5) * (20 + Math.random() * 20), -100, 100);
+    this.tel.evasivesUsed++;
+    this.alignment = clamp(this.alignment + sign(this.rng() - 0.5) * (20 + this.rng() * 20), -100, 100);
     this.evasiveCd = EVASIVE_COOLDOWN;
     this.event(dodged.length > 0 ? `Evasive maneuver! Dodged ${dodged.length} asteroid(s).` : 'Evasive maneuver — nothing in close range.');
   }
@@ -233,6 +286,7 @@ export class Game {
     const target = this.asteroids.find((a) => a.id === this.targetId);
     if (!target) return;
     this.charge -= FIRE_COST;
+    this.tel.shotsFired++;
     this.asteroids = this.asteroids.filter((a) => a.id !== target.id);
     this.targetId = null;
     this.stats.destroyed++;
@@ -244,20 +298,79 @@ export class Game {
     return this.power[system] * (this.breakers[system] !== null ? 0.5 : 1);
   }
 
+  // --- Scripted mission events ---
+
+  private runScriptedEvents() {
+    const m = this.mission!;
+    for (const ev of m.events) {
+      if (this.firedEvents.has(ev.id)) continue;
+      const timeHit = ev.at.time !== undefined && this.missionTime >= ev.at.time;
+      const progressHit = ev.at.progress !== undefined && this.progress >= ev.at.progress;
+      if (!timeHit && !progressHit) continue;
+      this.firedEvents.add(ev.id);
+      for (const action of ev.actions) this.applyEventAction(action);
+    }
+  }
+
+  private applyEventAction(action: EventAction) {
+    const m = this.mission!;
+    if (action.type === 'log') {
+      this.event(action.text);
+    } else if (action.type === 'spawnAsteroids') {
+      for (let i = 0; i < action.count; i++) {
+        this.spawnAsteroid(action.impactIn ?? m.impactIn, action.dmg ?? m.asteroidDmg);
+      }
+    } else if (action.type === 'tripBreaker') {
+      this.tripBreaker(action.system);
+    } else if (action.type === 'spawnRate') {
+      this.spawnRateMult = action.multiplier;
+    } else if (action.type === 'calm') {
+      this.calmUntil = this.missionTime + action.seconds;
+    }
+  }
+
+  private spawnAsteroid(impactIn: { min: number; max: number }, dmg: { min: number; max: number }) {
+    const id = this.nextAsteroidId++;
+    const a: Asteroid = {
+      id,
+      label: `AST-${String(id).padStart(3, '0')}`,
+      impactIn: range(this.rng, impactIn),
+      dmg: Math.round(range(this.rng, dmg)),
+    };
+    this.asteroids.push(a);
+    this.tel.asteroidsSpawned++;
+    this.event(`Sensor contact: asteroid ${a.label} inbound.`);
+  }
+
+  // Trip a specific breaker (scripted) or a random untripped one (ambient).
+  private tripBreaker(system?: SystemId) {
+    const candidates = system !== undefined && this.breakers[system] === null
+      ? [system]
+      : SYSTEMS.filter((s) => this.breakers[s] === null);
+    if (candidates.length === 0) return;
+    const victim = candidates[Math.floor(this.rng() * candidates.length)];
+    this.breakers[victim] = 0;
+    this.stats.breakersTripped++;
+    this.event(`Breaker tripped: ${victim} at half power!`);
+  }
+
   // --- Simulation tick (dt in seconds) ---
 
   tick(dt: number) {
-    if (this.phase !== 'active') return;
+    if (this.phase !== 'active' || !this.mission) return;
+    const m = this.mission;
     this.missionTime += dt;
     this.evasiveCd = Math.max(0, this.evasiveCd - dt);
 
-    // Course drift: a slowly-changing bias plus jitter, scaled by helm difficulty.
+    // Course drift: a slowly-changing bias plus jitter, scaled by the
+    // mission's drift pressure and the helm seat's difficulty.
+    const driftScale = m.driftScale * this.diff('helm');
     this.driftBiasTimer -= dt;
     if (this.driftBiasTimer <= 0) {
-      this.driftBias = (Math.random() * 2 - 1) * 2.5 * this.diff('helm');
-      this.driftBiasTimer = 6 + Math.random() * 8;
+      this.driftBias = (this.rng() * 2 - 1) * 2.5 * driftScale;
+      this.driftBiasTimer = 6 + this.rng() * 8;
     }
-    this.alignment = clamp(this.alignment + (this.driftBias + (Math.random() * 2 - 1) * 2.0) * dt, -100, 100);
+    this.alignment = clamp(this.alignment + (this.driftBias + (this.rng() * 2 - 1) * 2.0) * dt, -100, 100);
 
     // Auto-helm: hold throttle and gently steer back on course.
     if (this.auto('helm')) {
@@ -266,14 +379,22 @@ export class Game {
       this.alignment -= sign(this.alignment) * correction;
     }
 
-    // Speed derives from throttle, effective engine power, and course alignment.
+    // Speed derives from throttle, effective engine power, course alignment,
+    // and the mission's speed scale (longer trips = lower scale).
     const alignFactor = 1 - 0.6 * Math.min(1, Math.abs(this.alignment) / 100);
-    this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX)) * alignFactor;
+    this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX)) * alignFactor * m.speedScale;
     this.progress = Math.min(100, this.progress + this.speed * dt);
 
     // Shield regen and weapon charge scale with their allocated power.
     this.shieldStrength = Math.min(100, this.shieldStrength + 0.5 * this.eff('shields') * dt);
     this.charge = Math.min(100, this.charge + 2.5 * this.eff('weapons') * dt);
+
+    // Telemetry accumulation (station-load measurements).
+    if (this.shieldRaised) this.tel.shieldUptime += dt;
+    for (const s of SYSTEMS) if (this.breakers[s] !== null) this.tel.breakerDowntime += dt;
+    this.alignAbsSum += Math.abs(this.alignment);
+    this.throttleSum += this.throttle;
+    this.telSamples++;
 
     // Age tripped breakers; auto-engineering resets them after a delay.
     for (const s of SYSTEMS) {
@@ -292,6 +413,9 @@ export class Game {
       }
     }
 
+    // Scripted set pieces fire on time/progress marks.
+    this.runScriptedEvents();
+
     // Advance asteroids and apply impacts.
     for (const a of this.asteroids) a.impactIn -= dt;
     const hits = this.asteroids.filter((a) => a.impactIn <= 0);
@@ -301,31 +425,23 @@ export class Game {
       this.targetId = null;
     }
 
-    // Spawn new asteroids, rate scaled by weapons difficulty.
+    // Ambient spawning: rate scaled by weapons difficulty and scripted rate
+    // multipliers, suppressed entirely during scripted calm stretches.
     this.spawnTimer -= dt;
-    if (this.spawnTimer <= 0 && this.asteroids.length < MAX_ASTEROIDS) {
-      const id = this.nextAsteroidId++;
-      this.asteroids.push({
-        id,
-        label: `AST-${String(id).padStart(3, '0')}`,
-        impactIn: 14 + Math.random() * 8,
-        dmg: Math.round(10 + Math.random() * 10),
-      });
-      this.event(`Sensor contact: asteroid ${this.asteroids[this.asteroids.length - 1].label} inbound.`);
-      this.spawnTimer = (9 + Math.random() * 7) / this.diff('weapons');
+    if (
+      this.spawnTimer <= 0 &&
+      this.asteroids.length < m.maxAsteroids &&
+      this.missionTime >= this.calmUntil
+    ) {
+      this.spawnAsteroid(m.impactIn, m.asteroidDmg);
+      this.spawnTimer = range(this.rng, m.spawnEvery) / (this.diff('weapons') * this.spawnRateMult);
     }
 
     // Trip breakers periodically, rate scaled by engineering difficulty.
     this.breakerTimer -= dt;
     if (this.breakerTimer <= 0) {
-      const ok = SYSTEMS.filter((s) => this.breakers[s] === null);
-      if (ok.length > 0) {
-        const victim = ok[Math.floor(Math.random() * ok.length)];
-        this.breakers[victim] = 0;
-        this.stats.breakersTripped++;
-        this.event(`Breaker tripped: ${victim} at half power!`);
-      }
-      this.breakerTimer = (18 + Math.random() * 12) / this.diff('engineering');
+      this.tripBreaker();
+      this.breakerTimer = range(this.rng, m.breakerEvery) / this.diff('engineering');
     }
 
     // End conditions.
@@ -343,6 +459,8 @@ export class Game {
     }
     this.hull = Math.max(0, this.hull - remaining);
     this.stats.impacts++;
+    this.tel.hullDamageTaken += remaining;
+    this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
     this.event(
       remaining > 0
         ? `IMPACT: ${a.label} hit the hull for ${Math.round(remaining)} damage!`
@@ -353,6 +471,7 @@ export class Game {
   // Non-binary mission resolution: a score composed from hull, time, and
   // defensive performance maps to one of several narrative outcomes.
   private finish(outcome: 'arrived' | 'adrift') {
+    const m = this.mission!;
     let score: number;
     let narrative: string;
     const { destroyed, impacts, dodged } = this.stats;
@@ -361,12 +480,12 @@ export class Game {
       score = Math.round(this.progress * 0.25);
       narrative = 'Hull breach critical. The crew was recovered by a tow ship two days later — the cargo was not.';
     } else {
-      const timeScore = clamp(1.4 - this.missionTime / PAR_TIME, 0, 1);
+      const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
       const shotsAtUs = destroyed + impacts + dodged;
       const defense = shotsAtUs === 0 ? 1 : destroyed / shotsAtUs;
       score = Math.round(0.55 * this.hull + 25 * timeScore + 20 * defense);
       narrative =
-        score >= 85 ? 'A flawless run. Station Epsilon dock crews applaud as you glide in.'
+        score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as you glide in.`
         : score >= 70 ? 'Solid work. Some scorch marks, but the cargo is intact and morale is high.'
         : score >= 50 ? 'Mission accomplished — though the ship will spend a week in drydock.'
         : score >= 30 ? 'You made it, barely. The insurance adjusters would like a word.'
@@ -377,11 +496,20 @@ export class Game {
       score >= 70 ? 'Commendable' :
       score >= 50 ? 'Mission Accomplished' :
       score >= 30 ? 'Pyrrhic Success' : 'Barely Survived';
+    // Finalize telemetry averages.
+    this.tel.avgAlignment = this.telSamples > 0 ? round1(this.alignAbsSum / this.telSamples) : 0;
+    this.tel.avgThrottle = this.telSamples > 0 ? Math.round(this.throttleSum / this.telSamples) : 0;
+    this.tel.breakerDowntime = round1(this.tel.breakerDowntime);
+    this.tel.shieldUptime = round1(this.tel.shieldUptime);
+    this.tel.hullDamageTaken = Math.round(this.tel.hullDamageTaken);
     this.debrief = {
       outcome,
       grade,
       score,
       narrative,
+      missionId: m.id,
+      missionName: m.name,
+      seed: this.runSeed,
       stats: {
         time: Math.round(this.missionTime),
         hull: Math.round(this.hull),
@@ -390,9 +518,18 @@ export class Game {
         dodged,
         breakersTripped: this.stats.breakersTripped,
       },
+      telemetry: this.tel,
+      // Which seats were human-crewed and at what difficulty — needed to
+      // interpret balance data (and, later, for persistent crew records).
+      crew: Object.fromEntries(
+        (['helm', 'engineering', 'weapons'] as SeatId[]).map((s) => [
+          s,
+          { difficulty: this.seats[s].difficulty, human: this.seats[s].playerId !== null },
+        ]),
+      ),
     };
     this.phase = 'debrief';
-    this.event(outcome === 'arrived' ? 'Docking complete at Station Epsilon.' : 'The ship goes dark, adrift in the belt.');
+    this.event(outcome === 'arrived' ? `Docking complete at ${m.arrivalName}.` : 'The ship goes dark, adrift in the belt.');
   }
 
   private event(text: string) {
@@ -406,6 +543,9 @@ export class Game {
   serialize() {
     return {
       phase: this.phase,
+      mission: this.mission
+        ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing }
+        : null,
       missionTime: Math.round(this.missionTime),
       progress: round1(this.progress),
       hull: Math.round(this.hull),
@@ -442,6 +582,20 @@ export class Game {
 }
 
 // --- small helpers ---
+function freshTelemetry(): Telemetry {
+  return {
+    asteroidsSpawned: 0,
+    shotsFired: 0,
+    evasivesUsed: 0,
+    powerChanges: 0,
+    breakerDowntime: 0,
+    shieldUptime: 0,
+    hullDamageTaken: 0,
+    impactLog: [],
+    avgAlignment: 0,
+    avgThrottle: 0,
+  };
+}
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }

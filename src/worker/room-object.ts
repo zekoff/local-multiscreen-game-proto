@@ -5,6 +5,7 @@
 // and its tick loop, mirroring the Node transport's behavior and protocol.
 
 import { Game, type SeatId, type Difficulty } from '../engine/game';
+import { missionCatalog, resolveMissionStart } from '../engine/mission-registry';
 import type { Env } from './env';
 
 const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main'];
@@ -136,14 +137,25 @@ export class RoomObject {
       }
       this.clients.set(ws, { seat: msg.seat, playerId: msg.playerId, msgWindowStart: Date.now(), msgCount: 0 });
       this.ensureTicking();
-      ws.send(JSON.stringify({ type: 'joined', seat: msg.seat, code: this.code, state: this.game.serialize() }));
+      ws.send(JSON.stringify({
+        type: 'joined',
+        seat: msg.seat,
+        code: this.code,
+        state: this.game.serialize(),
+        catalog: missionCatalog(), // lobby mission picker options
+      }));
       return;
     }
 
     if (!m) return; // everything else requires a prior successful join
     if (msg.type === 'start') {
+      // Same mission-resolution contract as the Node transport.
       if (this.game.phase === 'lobby') {
-        this.game.start();
+        const { def, seed } = resolveMissionStart(
+          typeof msg.missionId === 'string' ? msg.missionId : undefined,
+          typeof msg.seed === 'number' ? msg.seed : undefined,
+        );
+        this.game.start(def, seed);
         this.ensureTicking();
       }
     } else if (msg.type === 'restart') {

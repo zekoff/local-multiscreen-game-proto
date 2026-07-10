@@ -1,9 +1,10 @@
 // Shared headless bot crew used by both smoke tests (Node transport and the
 // Cloudflare Workers transport). Creates a room over the real HTTP API,
 // connects all four seats over real WebSockets, launches the mission, and
-// plays competently until the debrief.
+// plays it with the shared 'skilled' policies until the debrief.
 
 import WebSocket from 'ws';
+import { makeCrew } from './policies.mjs';
 
 // Connect one seat and react to every state broadcast with `onState`.
 function connectSeat(base, code, seat, onState) {
@@ -30,8 +31,9 @@ function connectSeat(base, code, seat, onState) {
 const send = (ws, action) => ws.send(JSON.stringify({ type: 'action', action }));
 
 // Runs a full mission against `base` (e.g. http://127.0.0.1:3123).
-// Resolves with the debrief object; rejects on error or timeout.
-export async function runBotCrew(base, { timeoutMs = 90_000 } = {}) {
+// Options: missionId/seed select and pin the mission (defaults: server picks
+// the default mission with a fresh seed). Resolves with the debrief object.
+export async function runBotCrew(base, { timeoutMs = 90_000, missionId, seed } = {}) {
   const res = await fetch(`${base}/api/rooms`, { method: 'POST' });
   if (!res.ok) throw new Error(`room creation failed: HTTP ${res.status}`);
   const { code } = await res.json();
@@ -43,29 +45,10 @@ export async function runBotCrew(base, { timeoutMs = 90_000 } = {}) {
     setTimeout(() => reject(new Error('timed out waiting for debrief')), timeoutMs);
   });
 
-  // Helm bot: full throttle, correct course whenever drift builds up.
-  const helmState = (ws, s) => {
-    if (s.phase !== 'active') return;
-    if (s.throttle < 100) send(ws, { kind: 'throttle', value: 100 });
-    if (Math.abs(s.alignment) > 10) send(ws, { kind: 'nudge', dir: s.alignment > 0 ? -1 : 1 });
-  };
-  // Engineering bot: reset any tripped breaker immediately.
-  const engState = (ws, s) => {
-    if (s.phase !== 'active') return;
-    for (const sys of ['engines', 'shields', 'weapons']) {
-      if (s.breakers[sys]) send(ws, { kind: 'resetBreaker', system: sys });
-    }
-  };
-  // Weapons bot: raise shields, target the most urgent contact, fire when charged.
-  let shieldsUp = false;
-  const wepState = (ws, s) => {
-    if (s.phase !== 'active') return;
-    if (!s.shields.raised && !shieldsUp) { shieldsUp = true; send(ws, { kind: 'shields', raised: true }); }
-    if (s.asteroids.length > 0) {
-      const urgent = [...s.asteroids].sort((a, b) => a.impactIn - b.impactIn)[0];
-      if (s.targetId !== urgent.id) send(ws, { kind: 'target', id: urgent.id });
-      if (s.charge >= s.fireCost && s.targetId !== null) send(ws, { kind: 'fire' });
-    }
+  // Station bots run the shared 'skilled' policies over the wire.
+  const crew = makeCrew('skilled');
+  const policyHandler = (seat) => (ws, s) => {
+    for (const action of crew[seat](s)) send(ws, action);
   };
   // Main screen bot: watches for the debrief and reports the outcome.
   const mainState = (_ws, s) => {
@@ -73,15 +56,15 @@ export async function runBotCrew(base, { timeoutMs = 90_000 } = {}) {
   };
 
   const sockets = await Promise.all([
-    connectSeat(base, code, 'helm', helmState),
-    connectSeat(base, code, 'engineering', engState),
-    connectSeat(base, code, 'weapons', wepState),
+    connectSeat(base, code, 'helm', policyHandler('helm')),
+    connectSeat(base, code, 'engineering', policyHandler('engineering')),
+    connectSeat(base, code, 'weapons', policyHandler('weapons')),
     connectSeat(base, code, 'main', mainState),
   ]);
 
   // Launch the mission from the main screen seat.
-  sockets[3].send(JSON.stringify({ type: 'start' }));
-  console.log('mission launched, bots playing...');
+  sockets[3].send(JSON.stringify({ type: 'start', missionId, seed }));
+  console.log(`mission launched (${missionId ?? 'default'}), bots playing...`);
 
   try {
     return await done;

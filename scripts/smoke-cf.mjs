@@ -16,10 +16,13 @@ try {
     { readyPattern: /Ready on/i, startTimeoutMs: 120_000 },
   );
 
-  const debrief = await runBotCrew(BASE);
+  // A scripted mission on the CF transport also exercises the event system.
+  const debrief = await runBotCrew(BASE, { missionId: 'mined-corridor' });
   console.log(`debrief reached: ${debrief.outcome} — ${debrief.grade} (${debrief.score}/100)`);
+  console.log(`mission: ${debrief.missionId} seed=${debrief.seed}`);
   console.log(`stats: ${JSON.stringify(debrief.stats)}`);
   if (debrief.outcome !== 'arrived') throw new Error('bot crew should have arrived but went adrift');
+  if (debrief.missionId !== 'mined-corridor') throw new Error(`wrong mission ran: ${debrief.missionId}`);
   console.log('SMOKE-CF PASS');
   killTree();
   process.exit(0);

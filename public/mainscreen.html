@@ -30,7 +30,7 @@
         <div class="meter"><div id="shield-bar"></div></div>
       </div>
       <div class="cell">
-        <div class="label">Distance to Station Epsilon</div>
+        <div class="label" id="progress-label">Distance to Destination</div>
         <div class="meter"><div id="progress-bar"></div></div>
       </div>
       <div class="cell">
@@ -51,12 +51,20 @@
     <div class="big-code" id="big-code"></div>
     <p style="color:var(--dim)" id="join-url"></p>
     <p id="lobby-crew" style="color:var(--dim)"></p>
+    <!-- Mission picker: authored missions + procedural presets, populated
+         from the catalog the server sends on join -->
+    <div style="width:min(28rem, 90%); text-align:left;">
+      <div class="label" style="margin-bottom:0.3rem;">Mission</div>
+      <select id="mission-select"></select>
+      <p id="mission-desc" style="color:var(--dim); font-size:0.85rem; margin-top:0.5rem; min-height:3em;"></p>
+    </div>
     <button class="primary" id="launch-btn">Launch Mission</button>
   </div>
 
   <!-- Debrief: full mission results for the whole room -->
   <div class="overlay hidden" id="debrief-overlay">
     <h2>Mission Debrief</h2>
+    <p id="debrief-mission" style="color:var(--dim)"></p>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:30rem"></p>
     <div class="stats-grid" id="debrief-stats"></div>

@@ -9,6 +9,12 @@ Assessment of the proposed multi-device, co-located spaceship-bridge cooperative
 - [04 — Competitive landscape](04-competitive-analysis.md)
 - [05 — Additional assessment](05-additional-assessment.md)
 
+Added after implementation began:
+
+- [06 — Phaser station UIs: feasibility for a later stage](06-phaser-stations.md)
+- [07 — Persistence plan: users, crews, ships](07-persistence.md)
+- [08 — Mission balance baseline data](08-mission-balance-baseline.md)
+
 ## TL;DR
 
 - **Feasibility: high.** This is a Node.js server + WebSocket + browser-clients app — squarely
