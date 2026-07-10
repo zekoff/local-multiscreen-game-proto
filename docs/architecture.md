@@ -4,6 +4,18 @@ How the prototype is put together. For *why* it's shaped this way, see the
 design assessment in [`docs/design/`](design/00-overview.md) — this document
 describes what is actually implemented.
 
+> **2026-07-09 update:** the codebase now has two interchangeable transports
+> over one shared engine: the original Node/Express/ws server (LAN mode, now
+> `src/server-node.ts`, engine at `src/engine/game.ts`) and a Cloudflare
+> Workers transport (`src/worker/`) with one Durable Object per room. The
+> sections below describe the Node transport; the DO transport mirrors its
+> behavior and wire protocol exactly (same messages, same seat rules, same
+> abuse caps), with platform routing replacing the in-process room map — see
+> [`cloud-migration.md`](cloud-migration.md) for the full design and the
+> scaling rationale. File paths in prose below predate the restructure:
+> read `src/game.ts` as `src/engine/game.ts` and `src/server.ts` as
+> `src/server-node.ts`.
+
 ## Runtime topology
 
 ```

@@ -28,20 +28,38 @@ The mission: escort a supply run through an asteroid belt to Station Epsilon.
 Outcomes are non-binary — a scored debrief grades the run from *Legendary* to
 *Barely Survived*, and even a lost ship earns partial credit.
 
+## Cloud hosting (Cloudflare Workers)
+
+The same game deploys to Cloudflare Workers with one Durable Object per room
+(see `docs/cloud-migration.md`):
+
+```bash
+npm run dev:cf     # run the cloud transport locally (wrangler dev)
+npm run deploy     # deploy to Cloudflare (needs CLOUDFLARE_API_TOKEN)
+```
+
+LAN mode (`npm start`) keeps working from the same codebase and is the
+offline fallback.
+
 ## Development
 
 ```bash
-npm run dev        # server with auto-reload
-npm run typecheck  # TypeScript check of src/
-npm run smoke      # headless bot crew plays a full mission at 10x speed
+npm run dev        # LAN server with auto-reload
+npm run typecheck  # TypeScript check (Node + Worker configs)
+npm run smoke      # bot crew plays a full mission vs the Node transport at 10x
+npm run smoke:cf   # same bot crew vs the Workers transport (wrangler dev)
 ```
 
 Environment knobs: `PORT` (default 3000), `GAME_SPEED` (simulated-time
-multiplier, used by the smoke test), `TICK_MS` (server tick, default 250).
+multiplier, used by the smoke tests), `TICK_MS` (server tick, default 250),
+`PUBLIC_URL` (override for player-facing join URLs).
 
 ## Layout
 
-- `src/game.ts` — authoritative game engine (state machine, mission logic)
-- `src/server.ts` — HTTP static hosting + room API + WebSocket transport
+- `src/engine/game.ts` — authoritative game engine (runtime-agnostic; shared
+  by both transports)
+- `src/server-node.ts` — LAN-mode transport: static hosting + room API +
+  WebSockets
+- `src/worker/` — cloud transport: Worker router + one Durable Object per room
 - `public/` — zero-install browser clients (join page, three stations, main screen)
-- `scripts/smoke.mjs` — end-to-end bot-crew regression test
+- `scripts/` — end-to-end bot-crew regression tests for both transports

@@ -1,0 +1,27 @@
+# Cloudflare Workers deployment (cloud transport). LAN mode is unaffected —
+# `npm start` still runs the Node server. See docs/cloud-migration.md.
+
+name = "bridge-crew"
+main = "src/worker/index.ts"
+compatibility_date = "2026-07-01"
+account_id = "2bd7806a60121c4f84a6a38d5160803b"
+
+# Static client pages. Requests matching an asset are served directly by the
+# platform; everything else (the /api routes, /ws, /healthz) hits the Worker.
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+# One Durable Object per room, addressed by room code (idFromName).
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomObject"
+
+# SQLite-backed DO class — required for the Workers free tier and gives each
+# room private storage for later mission persistence (Phase 3).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomObject"]
+
+[observability]
+enabled = true

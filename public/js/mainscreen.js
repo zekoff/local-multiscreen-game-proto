@@ -2,6 +2,7 @@
 // the room-visible HUD, lobby join instructions, and full debrief stats.
 
 import { initStation, fmtTime } from '/js/station.js';
+import { qrcode } from '/js/vendor/qrcode-generator.mjs';
 
 const canvas = document.getElementById('viewscreen');
 const ctx = canvas.getContext('2d');
@@ -16,7 +17,12 @@ document.getElementById('big-code').textContent = room;
 fetch(`/api/room-info?code=${room}`)
   .then((r) => r.json())
   .then((info) => {
-    document.getElementById('qr').src = info.qrDataUrl;
+    // QR is rendered client-side from the join URL; the server only needs to
+    // know the public origin, which works identically for LAN and cloud.
+    const qr = qrcode(0, 'M'); // type 0 = auto-size, medium error correction
+    qr.addData(info.joinUrl);
+    qr.make();
+    document.getElementById('qr').src = qr.createDataURL(6, 4);
     document.getElementById('join-url').textContent = info.joinUrl;
   })
   .catch(() => {});

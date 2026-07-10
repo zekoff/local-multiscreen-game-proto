@@ -13,36 +13,52 @@ a Commander plays with no device at all. Design rationale lives in
 ## Commands
 
 ```bash
-npm start          # run the server (port 3000, binds 0.0.0.0 for LAN play)
-npm run dev        # server with auto-reload (tsx watch)
-npm run typecheck  # tsc --noEmit over src/
-npm run smoke      # end-to-end test: headless bot crew plays a full mission at 10x speed
+npm start          # LAN-mode Node server (port 3000, binds 0.0.0.0)
+npm run dev        # LAN server with auto-reload (tsx watch)
+npm run dev:cf     # cloud transport locally (wrangler dev, local workerd)
+npm run deploy     # wrangler deploy to Cloudflare (needs CLOUDFLARE_API_TOKEN)
+npm run typecheck  # both configs: Node (tsconfig.json) + Worker (tsconfig.worker.json)
+npm run smoke      # bot crew plays a full mission vs the Node transport at 10x
+npm run smoke:cf   # same bot crew vs wrangler dev (Workers transport)
 node --check public/js/<file>.js   # syntax-check client JS (no build step exists)
 ```
 
-There is no unit-test runner yet; `npm run smoke` is the regression test. Run
-`npm run typecheck` and `npm run smoke` before considering a change done.
-Env knobs: `PORT`, `TICK_MS` (server tick, default 250ms), `GAME_SPEED`
-(simulated-time multiplier — how the smoke test runs fast).
+There is no unit-test runner yet; the smoke tests are the regression suite.
+Run `npm run typecheck`, `npm run smoke`, and (if transport/worker code
+changed) `npm run smoke:cf` before considering a change done.
+Env knobs: `PORT`, `TICK_MS` (tick, default 250ms), `GAME_SPEED`
+(simulated-time multiplier — how smoke tests run fast), `PUBLIC_URL`
+(override for player-facing join URLs). Cloudflare auth comes from
+`CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` in the environment.
 
 ## Architecture (the short version)
 
-Authoritative-server, thin-client. Full detail in `docs/architecture.md`.
+Authoritative-server, thin-client, **two interchangeable transports over one
+engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
 
-- **All game state lives in the server's `Game` instance** (`src/game.ts`);
+- **All game state lives in a `Game` instance** (`src/engine/game.ts`);
   browser clients are stateless renderers. Clients send small `action`
   messages; the server ticks the simulation every 250ms and broadcasts the
   **complete** serialized state (no diffs) to every client in the room.
-- `src/server.ts` — Express static hosting + room API (`POST /api/rooms`,
-  `GET /api/room-info` for the QR/join URL) + the WebSocket endpoint (`/ws`).
-  One `Game` + one tick interval per room.
-- `src/game.ts` — game engine, deliberately network-free (server injects an
-  `onEvent` callback). Phases: `lobby → active → debrief`. Seats reconnect via
-  sticky `playerId`; unmanned seats run server-side auto-assist through the
-  same code paths as human actions.
-- `public/` — zero-build static clients. `js/net.js` (reconnecting WS client),
-  `js/station.js` (shared shell: overlays, toasts, join wiring), one HTML page
-  per station, `mainscreen.html`/`js/mainscreen.js` (canvas viewscreen).
+- `src/engine/game.ts` — the engine. Runtime-agnostic, **zero imports**, no
+  network/transport knowledge (transports inject an `onEvent` callback); it
+  must stay that way so both transports share it. Phases:
+  `lobby → active → debrief`. Seats reconnect via sticky `playerId`; unmanned
+  seats run auto-assist through the same code paths as human actions.
+- `src/server-node.ts` — LAN-mode transport: Express static hosting + room
+  API (`POST /api/rooms`, `GET /api/room-info`) + WebSocket endpoint (`/ws`).
+  One `Game` + tick interval per room; idle rooms don't tick.
+- `src/worker/` — cloud transport (Cloudflare Workers): `index.ts` routes the
+  same API and forwards `/ws?room=` upgrades to `room-object.ts`, a Durable
+  Object per room (addressed `idFromName(code)`) owning that room's `Game`,
+  sockets, and tick. **Same wire protocol as the Node transport** — protocol
+  changes must land in both, or clients break on one of them.
+- `public/` — zero-build static clients served by both transports.
+  `js/net.js` (reconnecting WS client), `js/station.js` (shared shell), one
+  HTML page per station, `mainscreen.html`/`js/mainscreen.js` (canvas
+  viewscreen + client-side QR from `js/vendor/qrcode-generator.mjs`).
+- Rooms are fully independent by design — no cross-room state, ever. That
+  invariant is what lets Durable Objects scale rooms horizontally.
 
 ## Rules that matter when extending
 

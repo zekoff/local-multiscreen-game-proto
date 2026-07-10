@@ -23,7 +23,12 @@ export class Net {
 
   connect() {
     this.handlers.onStatus?.('connecting');
-    this.ws = new WebSocket(`ws://${location.host}/ws`);
+    // wss when the page is served over https (required in cloud hosting; a
+    // https page cannot open a plain ws:// socket). The room code rides in
+    // the URL so a routing layer can pick the owning server before any
+    // message is exchanged; the Node server reads it from the join message.
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    this.ws = new WebSocket(`${proto}://${location.host}/ws?room=${encodeURIComponent(this.room)}`);
 
     this.ws.addEventListener('open', () => {
       this.retryMs = 1000; // reset backoff on success
