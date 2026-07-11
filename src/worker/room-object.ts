@@ -166,6 +166,7 @@ export class RoomObject {
           msg.debug === true,
           typeof msg.shipName === 'string' ? msg.shipName : '',
           msg.difficulties && typeof msg.difficulties === 'object' ? msg.difficulties : undefined,
+          typeof msg.pace === 'number' ? msg.pace : 1, // ready-room mission speed (engine clamps)
         );
         this.ensureTicking();
       }

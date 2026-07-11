@@ -16,6 +16,7 @@ export const firstFlight: MissionDef = {
     'flown together. Run the shakedown lane to Meridian Relay, learn your ' +
     'consoles, and bring her home without scratching the paint.',
   arrivalName: 'Meridian Relay',
+  rating: 'training',
   destination: { kind: 'station', color: '#9fe8b8' }, // grows on the viewscreen approach
   kind: 'authored',
   ...pacingFor(150), // short: a first crew should taste the whole loop quickly

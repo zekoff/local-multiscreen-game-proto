@@ -12,6 +12,7 @@ export const supplyRun: MissionDef = {
     'Station Epsilon is low on medical supplies and the relief corridor runs ' +
     'through the edge of an asteroid belt. Get the cargo there in one piece.',
   arrivalName: 'Station Epsilon',
+  rating: 'standard',
   destination: { kind: 'station', color: '#8fd6ff' }, // grows on the viewscreen approach
   kind: 'authored',
   ...pacingFor(180), // the 3-minute baseline: targetSeconds + derived speedScale/parTime

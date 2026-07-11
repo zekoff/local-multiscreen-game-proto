@@ -322,6 +322,7 @@ export class Game {
   private debrisUntil = 0;     // while active, running hot scrapes the hull (helm pressure)
   private debrisTickTimer = 0; // paces the scrape feedback (fx/log) while in debris
   private fullLog: { t: number; text: string }[] = []; // complete captain's log (debrief review)
+  private usedLabels = new Set<string>(); // contact callsigns already issued this run
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -407,6 +408,7 @@ export class Game {
     debug = false,
     shipName = '',
     difficulties?: Partial<Record<SeatId, Difficulty>>,
+    pace = 1,
   ) {
     if (this.phase === 'active') return;
     this.mission = def;
@@ -425,7 +427,11 @@ export class Game {
         if (this.seats[s] && d && DIFF_MULT[d]) this.seats[s].difficulty = d;
       }
     }
-    this.timeScale = 1;
+    // Mission pace (ready-room setting): a real-time multiplier on the whole
+    // simulation. Slower = more thinking time (accessibility), faster = a
+    // tighter session; sim-relative balance is untouched. Debug speed
+    // controls still override it live when debug is enabled.
+    this.timeScale = Math.max(0.5, Math.min(1.5, pace || 1));
     // Reset all mission state for a fresh run.
     this.phase = 'active';
     this.missionTime = 0;
@@ -469,6 +475,7 @@ export class Game {
     this.chargeFullTime = 0;
     this.log = [];
     this.fullLog = [];
+    this.usedLabels.clear();
     this.killTimes = [];
     this.damageWindow = [];
     this.narratedHalfway = false;
@@ -763,6 +770,33 @@ export class Game {
     return this.maxAsteroidsOverride ?? this.mission!.maxAsteroids;
   }
 
+  // The crew-facing progress readout (mission-configurable; see MissionReadout).
+  // Default: a parsec distance derived from mission length, reaching 0 at dock.
+  private readout() {
+    if (!this.mission) return null;
+    const r = this.mission.readout
+      ?? { kind: 'distance' as const, unit: 'pc', total: Math.max(4, Math.round(this.mission.targetSeconds / 15)) };
+    const remaining = r.kind === 'distance'
+      ? r.total * (1 - this.progress / 100)
+      : Math.max(0, r.total - this.missionTime);
+    return { kind: r.kind, unit: r.unit, label: r.label ?? null, total: r.total, remaining: round1(Math.max(0, remaining)) };
+  }
+
+  // Contact callsigns: randomized designation (prefix + non-sequential number)
+  // so the sky reads like a survey catalog rather than a spawn counter.
+  // Seeded rng + a per-run used-set keeps them reproducible and unique.
+  private contactLabel(): string {
+    const prefixes = ['AST', 'KOR', 'TYR', 'OBJ', 'RHO', 'CET'];
+    for (let tries = 0; tries < 50; tries++) {
+      const label = `${prefixes[Math.floor(this.rng() * prefixes.length)]}-${10 + Math.floor(this.rng() * 90)}`;
+      if (!this.usedLabels.has(label)) {
+        this.usedLabels.add(label);
+        return label;
+      }
+    }
+    return `AST-${this.nextAsteroidId}`; // pathological fallback: guaranteed unique
+  }
+
   private spawnAsteroid(impactIn: { min: number; max: number }, dmg: { min: number; max: number }) {
     const id = this.nextAsteroidId++;
     // Size and speed vary per rock and together set its damage: a big, fast rock
@@ -773,7 +807,7 @@ export class Game {
     const dealt = Math.max(3, Math.round(baseDmg * (0.65 + 0.35 * size) * (0.7 + 0.3 * speed)));
     const a: Asteroid = {
       id,
-      label: `AST-${String(id).padStart(3, '0')}`,
+      label: this.contactLabel(),
       impactIn: range(this.rng, impactIn),
       dmg: dealt,
       size,
@@ -1015,6 +1049,18 @@ export class Game {
     if (this.ionStormUntil > 0 && this.missionTime >= this.ionStormUntil) {
       this.ionStormUntil = 0;
       this.event('Ion storm front has passed — sensor returns clearing.');
+    }
+    // Target-lock upkeep: if the locked contact slips back below sensor
+    // resolution (sensor power dropped, ion storm rolled in), the lock is
+    // lost — weapons can't hold a firing solution on a contact the ship can
+    // no longer resolve. (A missing contact means it died/hit; clear quietly.)
+    if (this.targetId !== null) {
+      const locked = this.asteroids.find((a) => a.id === this.targetId);
+      if (!locked) this.targetId = null;
+      else if (!this.targetable(locked)) {
+        this.targetId = null;
+        this.event(`Target lock lost — ${locked.label} faded below sensor resolution.`);
+      }
     }
     if (this.debrisUntil > 0 && this.missionTime >= this.debrisUntil) {
       this.debrisUntil = 0;
@@ -1307,6 +1353,10 @@ export class Game {
       debrisIn: round1(Math.max(0, this.debrisUntil - this.missionTime)),
       // Slipstream open (post-gate speed boost) — drives the viewscreen streaks.
       slipstream: this.gateBoostTimer > 0,
+      // Progress readout: what the distance line on main screen + helm shows.
+      // Distance counts down to 0 at dock (parsecs by default); countdown
+      // missions show seconds left on a failure clock instead.
+      readout: this.readout(),
       // Contacts carry size/speed (for main-screen threat read-out) and whether
       // sensors have resolved them yet (targetable on the weapons scope).
       asteroids: this.asteroids.map((a) => ({

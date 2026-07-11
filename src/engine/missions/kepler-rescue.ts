@@ -11,6 +11,7 @@ export const keplerRescue: MissionDef = {
     'Research Post Kepler broke apart in a rockslide swarm and their escape ' +
     'pod life support is failing. Burn hard, take the hits, get there fast.',
   arrivalName: 'Kepler Post',
+  rating: 'hard',
   kind: 'authored',
   ...pacingFor(150),                       // short, hot dash — arrive fast if you keep the engines fed
   spawnEvery: { min: 7, max: 12 },

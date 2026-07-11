@@ -12,6 +12,7 @@ export const minedCorridor: MissionDef = {
     'The direct route to Depot Tycho was seeded with proximity mines during ' +
     'the blockade. Sweepers cleared a lane — mostly. Fly it slow and stay sharp.',
   arrivalName: 'Depot Tycho',
+  rating: 'veteran',
   kind: 'authored',
   ...pacingFor(260),                       // a longer, wave-structured haul
   spawnEvery: { min: 14, max: 22 },       // quiet between the waves

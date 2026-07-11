@@ -184,6 +184,26 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   check('weapons difficulty scales spawn pressure', intense >= chill * 1.5 && intense > chill, `chill=${chill} intense=${intense}`);
 }
 
+// --- 8. Target lock is lost when the contact falls below sensor resolution ---
+// Acquire a rock near the edge of passive range, then pull the sensor power
+// point: range shrinks under the contact and the lock must clear.
+{
+  const game = freshGame() as any;
+  // Default sensors=1 -> range 10s. Hand-place a rock at 9.5s (targetable).
+  game.asteroids.push({
+    id: 501, label: 'CHK-EDGE', impactIn: 9.5, dmg: 5, size: 1, speed: 1,
+    revealed: false, announced: true, bearing: 0,
+  });
+  game.action('weapons', { kind: 'target', id: 501 });
+  check('edge contact locks at sensors=1 (range 10s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
+  // Drop sensors 1 -> 0: range 8s < 9.5s, the contact fades, lock must drop.
+  game.action('engineering', { kind: 'power', system: 'sensors', delta: -1 });
+  game.tick(0.25);
+  const after = game.serialize();
+  check('lock clears when sensor range shrinks under the contact', after.targetId === null, `targetId=${after.targetId}`);
+  check('faded contact is no longer targetable', after.asteroids.find((a: any) => a.id === 501)?.targetable === false, '');
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) FAILED`);
   process.exit(1);

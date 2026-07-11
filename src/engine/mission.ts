@@ -8,11 +8,27 @@ import type { Range } from './rng.js';
 
 export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors';
 
+// What the progress readout shows the crew: a decreasing physical distance
+// (docks at 0) or a countdown toward mission failure (an escape pod losing
+// power, a convoy window closing). Distance-in-parsecs is the default,
+// derived from targetSeconds when a mission doesn't set its own.
+export interface MissionReadout {
+  kind: 'distance' | 'countdown';
+  unit: string;   // display unit, e.g. 'pc'
+  total: number;  // parsecs at launch, or seconds on the failure clock
+  label?: string; // optional display label ("Distance to <arrival>" default)
+}
+
 export interface MissionDef {
   id: string;              // stable identifier ('supply-run', 'gen:standard:12345')
   name: string;            // shown to players
   briefing: string;        // one-paragraph setup shown in the lobby / log
   arrivalName: string;     // destination, used in HUD labels and narrative
+  // Lobby difficulty rating shown in the mission picker
+  // ('training' | 'standard' | 'veteran' | 'hard' — free text).
+  rating?: string;
+  // Progress readout config (see MissionReadout; parsecs-distance default).
+  readout?: MissionReadout;
   // Optional themed body the main screen renders growing on the horizon as
   // progress climbs (a station or planet). Missions without it get a plain
   // marker. Focused on one mission for now (see supply-run).
@@ -109,4 +125,5 @@ export interface CatalogEntry {
   name: string;
   description: string;
   kind: 'authored' | 'generated';
+  rating: string; // lobby difficulty tag ('training' / 'standard' / ...)
 }
