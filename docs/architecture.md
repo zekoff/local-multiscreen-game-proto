@@ -87,27 +87,41 @@ logic without a browser.
 - **Actions** — validated per seat in `action(seat, a)`; a helm client cannot
   send engineering actions. Auto-assist uses the same internal code paths as
   human actions (e.g. `fire()`), so behavior is identical.
-- **Interdependence** (the coordination engine): speed = throttle × effective
-  engine power × course alignment (further reduced while shields are raised —
-  a real power-triage tradeoff); shield regen and weapon charge scale with
-  their power allocation; engineering has 6 units across three systems (max 4
-  each), and tripped breakers halve a system until reset. No station can
-  succeed alone by design.
+- **Interdependence** (the coordination engine): engineering allocates **6
+  power units across four systems** (engines, shields, weapons, **sensors**;
+  max 4 each), and tripped breakers halve a system until reset. Each system is
+  a live tradeoff:
+  - *engines* → ship speed **and** turn authority (a nudge turns harder with
+    more engine power and with lower throttle), but a faster ship makes
+    asteroids close sooner;
+  - *weapons* → laser recharge speed (the laser is a recharge meter, not a
+    battery — firing empties it, weapon power refills it, ready at full);
+  - *shields* → regen rate (shields recharge only while lowered, bleed while
+    raised — a managed resource, and raising them also taxes engine output);
+  - *sensors* → how early a contact becomes *targetable* on the weapons scope
+    (low sensors ⇒ contacts resolve late ⇒ a shorter shoot window).
+  Nav **gates** sit off the direct course (a bearing the helm must swing onto
+  for a bonus), and **Emergency Warp** (helm) clears all threats but scatters
+  every system. No station can succeed alone by design.
 - **Difficulty** — per-seat `chill/normal/intense` multiplies that station's
-  burden only: helm → drift rate, engineering → breaker trip rate, weapons →
-  asteroid spawn rate. Chosen at join time; it's a parameter, not a separate
-  code path. The same "parameter, not code path" rule applies to mission
-  tuning (below).
+  burden only: helm → drift rate + gate frequency, engineering → breaker trip
+  rate, weapons → asteroid spawn rate. Chosen at join time; it's a parameter,
+  not a separate code path. The same "parameter, not code path" rule applies to
+  mission tuning (below).
 - **Non-binary outcomes** — `finish()` composes a 0–100 score from hull (55%),
-  time vs. par (25%), and defensive performance (20%), mapped to five
-  narrative grades. A destroyed ship still scores partial credit from
-  distance covered. The debrief is self-contained (mission, seed, crew
-  composition, stats, telemetry) — see `Debrief`/`Telemetry` in `game.ts`.
+  time vs. par (~22%), and defensive performance (~18%), plus a small optional
+  nav-gate bonus (up to +8), mapped to five narrative grades. A destroyed ship
+  still scores partial credit from distance covered. The debrief is
+  self-contained (mission, seed, crew composition, stats, telemetry) — see
+  `Debrief`/`Telemetry` in `game.ts`.
 - **Serialization** — `serialize()` produces the complete client-facing
   snapshot with rounded floats (including percentage-normalized display
   values, e.g. shield strength is tracked internally in absolute points but
-  serialized as a 0–100 % of its cap). Anything a client renders must be
-  here; adding a mechanic means extending `action()` + `tick()` +
+  serialized as a 0–100 % of its cap). It also carries a transient `fx` array
+  of one-shot effects (laser/explosion/impact/gate/warp/pulse) that both
+  transports clear via `clearFx()` right after each broadcast — this drives the
+  main-screen effects and the procedural audio. Anything a client renders must
+  be here; adding a mechanic means extending `action()` + `tick()` +
   `serialize()` together.
 
 ## Missions are data (`src/engine/mission.ts`, `mission-gen.ts`, `mission-registry.ts`)
@@ -203,16 +217,29 @@ step.
   seats in multiple tabs while a reload in a tab resumes its seat).
 - **`js/station.js`** — `initStation({seat, render})`: shared shell for the
   three crew pages. Owns URL-param parsing, the connection dot, lobby and
-  debrief overlays, event toasts, and launch/return buttons. Each station
-  page supplies only its `render(state)` and its control wiring.
+  debrief overlays (with score-colored grade), event toasts (corner-anchored,
+  capped, suppressed under overlays), launch/return buttons, and shared
+  meter-coloring helpers (`setHealthBar`/`setChargeBar`). Each station page
+  supplies only its `render(state)` and its control wiring.
 - **Station pages** (`helm.html`, `engineering.html`, `weapons.html`) —
   self-contained page + inline module each; controls send actions, `render`
-  reflects the latest snapshot. One deliberate pattern: sliders track a
-  local "dragging" flag so server echoes don't fight the player's finger.
+  reflects the latest snapshot. Helm has throttle + course/gate steering +
+  Emergency Warp; engineering has 4-way power + breakers + sensors + pulse;
+  weapons is the Phaser radar scope (`js/weapons-scope.js` mounted via
+  `js/phaser-station.js`) + recharge/fire + shields. Sliders track a local
+  "dragging" flag so server echoes don't fight the player's finger.
 - **`mainscreen.html` + `js/mainscreen.js`** — view-only seat. Canvas
-  starfield (star speed tracks actual ship speed), asteroid blobs whose size
-  reflects time-to-impact, the ship's log, HUD bars, mission-select lobby,
-  client-side QR, and the full debrief stats grid.
+  viewscreen: forward starfield that banks with course, an approaching themed
+  destination, off-course nav-gate rings, size/threat-coded asteroids
+  (unlabeled until sensors resolve them), laser/explosion/warp/pulse effects
+  and screen shake, a captain's per-station + system tactical HUD, the ship's
+  log, semantic HUD bars, mission-select lobby, client-side QR, and the full
+  debrief stats grid.
+- **`js/audio.js`** — procedural Web-Audio module (no asset files): an ambient
+  music bed that builds with mission progress, ship-wide SFX on the main screen
+  (explosion/impact/laser/gate/warp/pulse), and console-local SFX on the
+  consoles (breaker trip/reset, shields). Starts on the first user gesture;
+  fails silently if the platform blocks Web Audio.
 - **`index.html`** — landing page for both flows: *host* (create room →
   become main screen) and *player* (code + name + difficulty → station
   page). The QR link lands here with `?room=` prefilled.

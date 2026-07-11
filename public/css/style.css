@@ -86,16 +86,30 @@ select {
 
 /* --- Meters (hull, shields, charge, ...) --- */
 .meter { background: #0d1322; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid var(--panel-edge); }
-.meter > div { height: 100%; background: var(--accent); transition: width 0.25s linear; }
+.meter > div { height: 100%; background: var(--accent); transition: width 0.25s linear, background 0.25s linear; }
+/* Semantic health colors, toggled by JS from a meter's value so the same
+   reading (hull/shields/charge) means the same color on every station. */
 .meter.good > div { background: var(--good); }
+.meter.warn > div { background: var(--warn); }
 .meter.bad > div { background: var(--bad); }
+.meter.cool > div { background: #4f7bd0; } /* charging / readiness (not health) */
 .readout { font-family: monospace; font-size: 1.4rem; color: var(--accent); }
 .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
 
 /* --- Alignment indicator (helm) --- */
-.align-track { position: relative; height: 34px; background: #0d1322; border: 1px solid var(--panel-edge); border-radius: 8px; }
-.align-track::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--good); }
-.align-marker { position: absolute; top: 4px; bottom: 4px; width: 10px; border-radius: 4px; background: var(--accent); transition: left 0.25s linear; }
+.align-track { position: relative; height: 34px; background: #0d1322; border: 1px solid var(--panel-edge); border-radius: 8px; overflow: hidden; }
+.align-track::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--good); z-index: 1; }
+/* The nav-gate pass window: steer the marker into this band to fly a gate
+   clean. It widens with engine power (JS sets left/width). */
+.align-zone { position: absolute; top: 0; bottom: 0; background: rgba(76, 217, 123, 0.14); border-left: 1px solid rgba(76, 217, 123, 0.5); border-right: 1px solid rgba(76, 217, 123, 0.5); }
+.align-marker { position: absolute; top: 4px; bottom: 4px; width: 10px; border-radius: 4px; background: var(--accent); transition: left 0.25s linear; z-index: 2; }
+
+/* --- Breaker buttons (engineering): neutral at rest, red only when tripped
+   so a glance reads "which system is in trouble" without every breaker
+   looking like a danger button. --- */
+.breaker { width: 100%; margin-bottom: 0.5rem; border-color: var(--panel-edge); color: var(--dim); }
+.breaker.tripped { border-color: var(--bad); color: var(--bad); background: #2a1414; animation: breaker-pulse 1s ease-in-out infinite; }
+@keyframes breaker-pulse { 0%, 100% { border-color: var(--bad); } 50% { border-color: #7a2a2a; } }
 
 /* --- Power pips (engineering) --- */
 .pips { display: flex; gap: 5px; }
@@ -109,7 +123,7 @@ select {
 .target-btn .eta.urgent { color: var(--bad); }
 
 /* --- Event log --- */
-.log { font-size: 0.85rem; line-height: 1.5; color: var(--dim); max-height: 9em; overflow-y: auto; }
+.log { font-size: 0.85rem; line-height: 1.5; color: var(--dim); max-height: 7em; overflow-y: auto; }
 .log div:last-child { color: var(--text); }
 
 /* --- Full-screen overlays for lobby / debrief phases --- */
@@ -127,16 +141,37 @@ select {
 .stats-grid .label { align-self: center; }
 
 /* --- Toasts for game events --- */
-#toasts { position: fixed; top: 3.4rem; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; pointer-events: none; z-index: 20; }
+/* Anchored to the top-right corner (not the center content column) so they
+   never sit on top of a panel header; capped in count by JS. Hidden while a
+   full-screen overlay (lobby/debrief) is up so the end-of-mission event burst
+   can't bury the debrief. */
+#toasts { position: fixed; top: 3.4rem; right: 0.6rem; left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; pointer-events: none; z-index: 20; max-width: min(20rem, 70vw); }
+#toasts.suppressed { display: none; }
 .toast {
   background: var(--panel); border: 1px solid var(--accent); border-radius: 8px;
-  padding: 0.5rem 1rem; font-size: 0.9rem; max-width: 90%;
+  padding: 0.5rem 1rem; font-size: 0.9rem; max-width: 100%;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
   animation: toast-fade 4s forwards;
 }
 @keyframes toast-fade { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 
 /* --- Main screen layout --- */
-.mainscreen-body main { max-width: none; padding: 0; display: flex; flex-direction: column; height: 100%; }
-#viewscreen { flex: 1; width: 100%; display: block; background: #05070d; }
-.hud { display: flex; gap: 1rem; padding: 0.8rem 1rem; background: var(--panel); border-top: 1px solid var(--panel-edge); flex-wrap: wrap; }
+/* overflow:hidden + min-height:0 keeps the bottom HUD from pushing content
+   past the viewport (the log scrolls inside its own fixed height instead). */
+.mainscreen-body { overflow: hidden; }
+.mainscreen-body main { max-width: none; padding: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; }
+#viewscreen { flex: 1; min-height: 0; width: 100%; display: block; background: #05070d; }
+.hud { display: flex; gap: 1rem; padding: 0.8rem 1rem; background: var(--panel); border-top: 1px solid var(--panel-edge); flex-wrap: wrap; max-height: 32vh; overflow: hidden; }
 .hud .cell { flex: 1; min-width: 130px; }
+
+/* Captain's tactical readout overlaid on the top-left of the viewscreen. */
+.captain-hud { position: absolute; top: 3.6rem; left: 1rem; z-index: 5; display: flex; flex-direction: column; gap: 0.25rem;
+  background: rgba(10, 14, 23, 0.72); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.5rem 0.7rem;
+  font-size: 0.8rem; letter-spacing: 0.02em; min-width: 15rem; pointer-events: none; }
+.captain-hud.hidden { display: none; }
+.cap-row { display: flex; gap: 0.6rem; align-items: baseline; }
+.cap-row .cap-name { color: var(--dim); font-weight: 700; width: 3.2rem; letter-spacing: 0.12em; }
+.cap-row .cap-val { color: var(--text); font-family: monospace; }
+.cap-row.alert .cap-val { color: var(--bad); font-weight: 700; }
+.cap-row.warn .cap-val { color: var(--warn); }
+.mainscreen-body main { position: relative; } /* anchor for the captain-hud overlay */

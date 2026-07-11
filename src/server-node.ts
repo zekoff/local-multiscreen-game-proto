@@ -74,6 +74,7 @@ function ensureTicking(room: Room) {
   room.interval = setInterval(() => {
     room.game.tick((TICK_MS / 1000) * GAME_SPEED);
     broadcast(room, { type: 'state', state: room.game.serialize() });
+    room.game.clearFx(); // one-shot effects delivered; reset for the next tick
     if (!roomNeedsTick(room)) stopTicking(room);
   }, TICK_MS);
 }

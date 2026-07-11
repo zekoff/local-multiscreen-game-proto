@@ -19,35 +19,110 @@ export type { SystemId } from './mission.js';
 // breaker trip rate for engineering, asteroid spawn rate for weapons).
 const DIFF_MULT: Record<Difficulty, number> = { chill: 0.6, normal: 1, intense: 1.5 };
 
-const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons'];
+// Sensors is a fourth engineering-powered system (not a separate crew seat):
+// it sets how far out an asteroid becomes targetable on the weapons scope.
+const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors'];
 
 // Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
 const POWER_TOTAL = 6;      // total power units engineering can allocate
 const POWER_MAX = 4;        // max units a single system can hold
-const FIRE_COST = 35;       // weapon charge consumed per shot
-const EVASIVE_COOLDOWN = 18; // seconds between evasive maneuvers
-// Auto-weapons is a survival net for an abandoned seat, not an optimal
-// gunner: it waits for a contact to be genuinely close, then still whiffs
-// some shots. Keeps the weapons seat meaningfully better than empty.
+
+// Laser: no battery bank and no fixed cooldown. `charge` (0-100) is simply the
+// recharge meter — firing empties it and it refills at a rate set by weapon
+// power, so the "cooldown" is emergent (higher weapon power = faster refire).
+const LASER_CHARGE_RATE = 14; // charge points/s per allocated weapon power unit
+
+// Emergency Warp: a drastic escape that jumps the ship elsewhere, scattering
+// its systems (see doWarp). Long cooldown so it's a last resort, not a rhythm.
+const WARP_COOLDOWN = 25;
+const WARP_HULL_DMG = 8;
+const WARP_CALM = 5;                       // seconds of spawn pause after a jump
+const WARP_OFFCOURSE = { min: 65, max: 95 }; // how far off course the jump throws the helm
+
+// Maneuverability: a nudge's turn authority scales UP with engine power and
+// DOWN with throttle — so you turn hard by feeding the engines and/or easing
+// off the throttle (the "slow down to catch a ring" dynamic).
+const BASE_TURN = 12;
+
+// Auto-weapons is a survival net for an abandoned seat, not an optimal gunner.
 const AUTO_WEAPONS_REACT_RANGE = 8;  // seconds-to-impact before auto-turret engages
 const AUTO_WEAPONS_MISS_CHANCE = 0.2; // fraction of auto shots that go wide
+
+// Sensors: detection range in seconds-to-impact. An asteroid is only targetable
+// on the weapons scope once its impactIn drops to within this range, which
+// grows with sensor power. A pulse (below) overrides it for a one-shot reveal.
+const SENSOR_BASE = 10;         // detection range (s) at zero sensor power
+const SENSOR_PER_POWER = 4;     // extra range (s) per effective sensor power unit
+const SENSOR_PULSE_COOLDOWN = 80; // long cooldown => ~1-2 pulses per mission
+
 // Raised shields draw off the drive: a real power-triage tradeoff instead of
 // a free defensive toggle.
 const SHIELD_ENGINE_PENALTY = 0.85;
-// Shields are tracked internally in absolute points (0..SHIELD_MAX) and
-// serialized to clients as a 0-100 percentage of that cap, so the UI meter
-// keeps reading as a plain percentage regardless of the cap's value. A lower
-// cap and slower regen mean a shield can actually be worn down by a burst,
-// rather than always sitting near full between sparse hits.
+// Shields are a managed resource, not a set-and-forget toggle. Tracked
+// internally in absolute points (0..SHIELD_MAX) and serialized as a 0-100 %.
+// They only recharge while LOWERED, and slowly bleed while RAISED, so keeping
+// them up costs charge you can't get back until you drop them — you raise
+// them around a threat (especially while the phaser is on cooldown) and lower
+// them to recharge and go faster. The cap is low enough that a burst can wear
+// them through to the hull.
 const SHIELD_MAX = 35;
-const SHIELD_REGEN_PER_POWER = 0.25; // shield points/s per allocated power unit (was 0.5)
+const SHIELD_REGEN_PER_POWER = 1.0;  // points/s per allocated power unit, only while lowered
+const SHIELD_DRAIN_PER_SEC = 1.0;    // points/s bled while raised (idle upkeep)
+
+// --- Nav gates: fly-through targets the helm lines up on. The pass window
+// widens with engine power (thrust authority makes the ship easier to aim),
+// but running the engines hot also makes asteroids close faster (see
+// closeRate) — the deliberate risk/reward the design calls for.
+const GATE_BASE_WINDOW = 18;       // |alignment - bearing| tolerance at minimum engine power
+const GATE_ENGINE_WINDOW = 26;     // extra tolerance at full engine power
+const GATE_CHARGE_REWARD = 20;     // laser recharge granted for a clean pass
+const GATE_PROGRESS_REWARD = 1.2;  // small slipstream progress boost on a pass
+const GATE_REACH: { min: number; max: number } = { min: 13, max: 19 }; // seconds to reach a gate
+// Gates appear well off the current course: the helm must actively swing the
+// ship onto the gate's bearing (turning hard => ease throttle / feed engines).
+const GATE_BEARING = { min: 45, max: 88 };
+const MAX_GATES = 2;               // concurrent gates ahead
+// How much running hot (throttle x engine power) shortens the time asteroids
+// take to close — the cost of the speed that makes gates easy.
+const SPEED_RISK = 0.6;
+
+// Chance an ambient spawn arrives as a short 2-3 rock cluster instead of a
+// single contact, so it isn't always one-at-a-time with long gaps.
+const BURST_CHANCE = 0.32;
 
 export interface Asteroid {
   id: number;
   label: string;    // human-readable callsign, e.g. "AST-042"
   impactIn: number; // seconds until impact
-  dmg: number;      // damage dealt on impact
+  dmg: number;      // damage dealt on impact (derived from size & speed)
+  size: number;     // 0.6..1.6 visual/hitbox scale — bigger is easier to spot early
+  speed: number;    // 0.7..1.5 closing-rate multiplier — faster shortens the window
+  revealed: boolean;  // a sensor pulse forced this one targetable regardless of range
+  announced: boolean; // the "sensor contact" event has fired (on detection, not spawn)
 }
+
+// A nav gate the ship flies through. Steering into it (low |alignment| when it
+// arrives) scores a pass; the pass window widens with engine power, so a
+// well-powered ship is easier to line up — at the cost of the extra asteroid
+// risk that speed brings (see the impact-closing coupling in tick()).
+export interface Gate {
+  id: number;
+  label: string;
+  reachIn: number;  // seconds until the ship reaches the gate plane
+  bearing: number;  // target alignment to fly through it (well off the 0 course line)
+}
+
+// One-shot visual/audio effects emitted during a tick and delivered in the
+// very next state broadcast, then cleared (transport calls clearFx()). Purely
+// cosmetic — clients render a laser/explosion/shake/sound; losing one is
+// harmless. Positions are derived client-side from the stable asteroid/gate id.
+export type Effect =
+  | { kind: 'laser'; targetId: number; hit: boolean }
+  | { kind: 'explosion'; id: number }
+  | { kind: 'impact'; hullDmg: number; absorbed: boolean }
+  | { kind: 'gate'; id: number; passed: boolean }
+  | { kind: 'warp' }          // Emergency Warp jump (big shake/flash + sound)
+  | { kind: 'sensorPulse' };  // active sensor sweep (expanding ring on the scope)
 
 interface SeatState {
   playerId: string | null; // sticky id so a dropped client can resume its seat
@@ -62,7 +137,6 @@ interface SeatState {
 export interface Telemetry {
   asteroidsSpawned: number;
   shotsFired: number;
-  evasivesUsed: number;
   powerChanges: number;
   breakerDowntime: number; // system-seconds spent tripped
   shieldUptime: number;    // seconds with shields raised
@@ -70,6 +144,10 @@ export interface Telemetry {
   impactLog: { t: number; dmg: number; hullDmg: number }[];
   avgAlignment: number;    // mean |alignment| over the run (helm load)
   avgThrottle: number;
+  gatesPassed: number;
+  gatesMissed: number;
+  warpsUsed: number;
+  pulsesUsed: number;
 }
 
 export interface Debrief {
@@ -87,6 +165,10 @@ export interface Debrief {
     impacts: number;
     dodged: number;
     breakersTripped: number;
+    gatesPassed: number;
+    gatesMissed: number;
+    warpsUsed: number;
+    pulsesUsed: number;
   };
   telemetry: Telemetry;
   crew: Record<string, { difficulty: Difficulty; human: boolean }>;
@@ -115,18 +197,23 @@ export class Game {
   hull = 100;
   shieldRaised = false;
   shieldStrength = SHIELD_MAX; // absolute points, 0..SHIELD_MAX (serialized as a %)
-  power: Record<SystemId, number> = { engines: 2, shields: 2, weapons: 2 };
-  breakers: Record<SystemId, number | null> = { engines: null, shields: null, weapons: null }; // trip age in seconds, null = ok
+  power: Record<SystemId, number> = { engines: 2, shields: 1, weapons: 2, sensors: 1 };
+  breakers: Record<SystemId, number | null> = { engines: null, shields: null, weapons: null, sensors: null }; // trip age in seconds, null = ok
   throttle = 0;          // 0..100
   alignment = 0;         // -100..100, 0 = on course
   speed = 0;             // derived, progress units per second
-  charge = 100;          // weapon charge 0..100
+  charge = 100;          // laser recharge meter 0..100 (100 = ready to fire)
   targetId: number | null = null;
-  evasiveCd = 0;         // seconds until evasive is ready
+  warpCd = 0;            // seconds until Emergency Warp is ready
+  sensorPulseCd = 0;     // seconds until the active sensor pulse is ready
   asteroids: Asteroid[] = [];
+  gates: Gate[] = [];
+  fx: Effect[] = [];     // one-shot effects for this broadcast (see clearFx)
   debrief: Debrief | null = null;
 
   private nextAsteroidId = 1;
+  private nextGateId = 1;
+  private gateTimer = 30;
   private spawnTimer = 10;
   private breakerTimer = 22;
   private spawnRateMult = 1;  // scripted 'spawnRate' actions replace this
@@ -134,7 +221,7 @@ export class Game {
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
-  private stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0 };
+  private stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0, gatesPassed: 0, gatesMissed: 0, warpsUsed: 0, pulsesUsed: 0 };
   private tel: Telemetry = freshTelemetry();
   private alignAbsSum = 0;
   private throttleSum = 0;
@@ -205,14 +292,19 @@ export class Game {
     this.hull = 100;
     this.shieldRaised = false;
     this.shieldStrength = SHIELD_MAX;
-    this.power = { engines: 2, shields: 2, weapons: 2 };
-    this.breakers = { engines: null, shields: null, weapons: null };
+    this.power = { engines: 2, shields: 1, weapons: 2, sensors: 1 };
+    this.breakers = { engines: null, shields: null, weapons: null, sensors: null };
     this.throttle = 0;
     this.alignment = 0;
     this.charge = 100;
     this.targetId = null;
-    this.evasiveCd = 0;
+    this.warpCd = 0;
+    this.sensorPulseCd = 0;
     this.asteroids = [];
+    this.gates = [];
+    this.fx = [];
+    this.nextGateId = 1;
+    this.gateTimer = range(this.rng, def.gateEvery ?? { min: 25, max: 40 });
     this.debrief = null;
     this.spawnTimer = range(this.rng, def.spawnEvery);
     this.breakerTimer = range(this.rng, def.breakerEvery);
@@ -221,7 +313,7 @@ export class Game {
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
-    this.stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0 };
+    this.stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0, gatesPassed: 0, gatesMissed: 0, warpsUsed: 0, pulsesUsed: 0 };
     this.tel = freshTelemetry();
     this.alignAbsSum = 0;
     this.throttleSum = 0;
@@ -246,19 +338,24 @@ export class Game {
       if (a.kind === 'throttle' && typeof a.value === 'number') {
         this.throttle = Math.max(0, Math.min(100, a.value));
       } else if (a.kind === 'nudge' && (a.dir === -1 || a.dir === 1)) {
-        this.alignment = clamp(this.alignment + 10 * (a.dir as number), -100, 100);
-      } else if (a.kind === 'evasive') {
-        this.doEvasive();
+        // Turn authority scales with engine power and (inversely) throttle.
+        this.alignment = clamp(this.alignment + this.turnStep() * (a.dir as number), -100, 100);
+      } else if (a.kind === 'warp' || a.kind === 'evasive') {
+        this.doWarp();
       }
     } else if (seat === 'engineering') {
       if (a.kind === 'power' && SYSTEMS.includes(a.system as SystemId) && (a.delta === -1 || a.delta === 1)) {
         this.adjustPower(a.system as SystemId, a.delta as number);
       } else if (a.kind === 'resetBreaker' && SYSTEMS.includes(a.system as SystemId)) {
         this.resetBreaker(a.system as SystemId);
+      } else if (a.kind === 'sensorPulse') {
+        this.doSensorPulse();
       }
     } else if (seat === 'weapons') {
       if (a.kind === 'target' && typeof a.id === 'number') {
-        if (this.asteroids.some((x) => x.id === a.id)) this.targetId = a.id as number;
+        // Can only lock a contact the sensors have actually resolved.
+        const t = this.asteroids.find((x) => x.id === a.id);
+        if (t && this.targetable(t)) this.targetId = a.id as number;
       } else if (a.kind === 'fire') {
         this.fire();
       } else if (a.kind === 'shields' && typeof a.raised === 'boolean') {
@@ -284,33 +381,127 @@ export class Game {
     }
   }
 
-  private doEvasive() {
-    if (this.evasiveCd > 0) return;
-    // Evasive clears anything about to hit, but throws the ship off course.
-    const dodged = this.asteroids.filter((a) => a.impactIn <= 5);
-    this.asteroids = this.asteroids.filter((a) => a.impactIn > 5);
-    this.stats.dodged += dodged.length;
-    this.tel.evasivesUsed++;
-    this.alignment = clamp(this.alignment + sign(this.rng() - 0.5) * (20 + this.rng() * 20), -100, 100);
-    this.evasiveCd = EVASIVE_COOLDOWN;
-    this.event(dodged.length > 0 ? `Evasive maneuver! Dodged ${dodged.length} asteroid(s).` : 'Evasive maneuver — nothing in close range.');
+  // Emergency Warp: a last-resort jump. Threats vanish (the ship is elsewhere),
+  // but every system is scattered — breakers all trip, shields and the laser
+  // drop, ALL power is unallocated (engineering must re-power from scratch), the
+  // ship is thrown far off course with the throttle cut, and it takes a little
+  // hull damage. Followed by a brief spawn lull.
+  private doWarp() {
+    if (this.warpCd > 0) return;
+    this.asteroids = [];
+    this.targetId = null;
+    this.hull = Math.max(0, this.hull - WARP_HULL_DMG);
+    for (const s of SYSTEMS) this.breakers[s] = 0;
+    this.stats.breakersTripped += SYSTEMS.length;
+    this.shieldRaised = false;
+    this.shieldStrength = 0;
+    this.charge = 0;
+    this.power = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+    this.alignment = clamp(sign(this.rng() - 0.5) * range(this.rng, WARP_OFFCOURSE), -100, 100);
+    this.throttle = 0;
+    this.calmUntil = this.missionTime + WARP_CALM;
+    this.warpCd = WARP_COOLDOWN;
+    this.stats.warpsUsed++;
+    this.pushFx({ kind: 'warp' });
+    this.event('EMERGENCY WARP! Systems scattered — re-establish power and course!');
+  }
+
+  // Active sensor pulse: light up every current contact (targetable regardless
+  // of the passive sensor range) for one sweep. Long cooldown.
+  private doSensorPulse() {
+    if (this.sensorPulseCd > 0) return;
+    for (const a of this.asteroids) a.revealed = true;
+    this.sensorPulseCd = SENSOR_PULSE_COOLDOWN;
+    this.stats.pulsesUsed++;
+    this.pushFx({ kind: 'sensorPulse' });
+    this.event('Active sensor pulse — all contacts lit up.');
   }
 
   private fire() {
-    if (this.charge < FIRE_COST) return;
+    if (this.charge < 100) return; // not fully recharged yet
     const target = this.asteroids.find((a) => a.id === this.targetId);
-    if (!target) return;
-    this.charge -= FIRE_COST;
+    if (!target || !this.targetable(target)) return;
+    this.charge = 0; // firing empties the recharge meter; weapon power refills it
     this.tel.shotsFired++;
     this.asteroids = this.asteroids.filter((a) => a.id !== target.id);
     this.targetId = null;
     this.stats.destroyed++;
+    // Laser then explosion — the main screen draws the beam to the contact and
+    // pops it; the miss path (auto-turret) draws the beam with no explosion.
+    this.pushFx({ kind: 'laser', targetId: target.id, hit: true });
+    this.pushFx({ kind: 'explosion', id: target.id });
     this.event(`Direct hit! ${target.label} destroyed.`);
+  }
+
+  // Bounded effect buffer: cleared by the transport after each broadcast, but
+  // capped so a consumer that never clears (the in-process lab) can't grow it.
+  private pushFx(e: Effect) {
+    this.fx.push(e);
+    if (this.fx.length > 32) this.fx.shift();
+  }
+
+  // Called by the transport immediately after broadcasting a tick's state, so
+  // effects emitted between ticks (player fire) still ride the next broadcast.
+  clearFx() {
+    if (this.fx.length > 0) this.fx = [];
   }
 
   // Effective power for a system: allocated units, halved while its breaker is tripped.
   private eff(system: SystemId): number {
     return this.power[system] * (this.breakers[system] !== null ? 0.5 : 1);
+  }
+
+  // Turn authority per nudge: rises with engine power, falls with throttle — so
+  // hard turns need the engines fed and/or the throttle eased back.
+  private turnStep(): number {
+    const engineFactor = 0.4 + 0.6 * (this.eff('engines') / POWER_MAX);
+    const throttleFactor = 1.3 - 0.9 * (this.throttle / 100);
+    return BASE_TURN * engineFactor * throttleFactor;
+  }
+
+  // Passive sensor detection range (seconds-to-impact), grows with sensor power.
+  private sensorRange(): number {
+    return SENSOR_BASE + SENSOR_PER_POWER * this.eff('sensors');
+  }
+
+  // A contact is targetable once it's within passive sensor range, or after a
+  // pulse has revealed it.
+  private targetable(a: Asteroid): boolean {
+    return a.revealed || a.impactIn <= this.sensorRange();
+  }
+
+  // How fast hazards (asteroids, gates) close, relative to real time. Running
+  // the engines hot (high throttle x engine power) closes them faster, cutting
+  // reaction time — the risk that pays for the wider gate window high power buys.
+  private closeRate(): number {
+    return 1 + SPEED_RISK * (this.throttle / 100) * (this.eff('engines') / POWER_MAX);
+  }
+
+  private spawnGate() {
+    const id = this.nextGateId++;
+    // Bearing is well off the current course, and randomly to port or starboard,
+    // so the helm has to actively swing onto it.
+    const bearing = sign(this.rng() - 0.5) * range(this.rng, GATE_BEARING);
+    const g: Gate = { id, label: `NAV-${String(id).padStart(2, '0')}`, reachIn: range(this.rng, GATE_REACH), bearing };
+    this.gates.push(g);
+    this.event(`Nav gate ${g.label} ahead, bearing ${bearing > 0 ? 'starboard' : 'port'} — swing onto the approach.`);
+  }
+
+  // A gate is reached: passing needs alignment near the gate's bearing, within a
+  // window that widens with engine power. Passing rewards recharge + a boost.
+  private evaluateGate(g: Gate) {
+    const window = GATE_BASE_WINDOW + GATE_ENGINE_WINDOW * (this.eff('engines') / POWER_MAX);
+    const passed = Math.abs(this.alignment - g.bearing) <= window;
+    if (passed) {
+      this.stats.gatesPassed++;
+      this.charge = Math.min(100, this.charge + GATE_CHARGE_REWARD);
+      this.progress = Math.min(100, this.progress + GATE_PROGRESS_REWARD);
+      this.event(`Clean pass through ${g.label} — slipstream boost!`);
+    } else {
+      this.stats.gatesMissed++;
+      this.event(`Missed ${g.label} — off the approach line.`);
+    }
+    this.pushFx({ kind: 'gate', id: g.id, passed });
   }
 
   // --- Scripted mission events ---
@@ -346,15 +537,26 @@ export class Game {
 
   private spawnAsteroid(impactIn: { min: number; max: number }, dmg: { min: number; max: number }) {
     const id = this.nextAsteroidId++;
+    // Size and speed vary per rock and together set its damage: a big, fast rock
+    // hits hardest (but big = easy to spot early; fast = a shorter shoot window).
+    const size = range(this.rng, { min: 0.6, max: 1.6 });
+    const speed = range(this.rng, { min: 0.75, max: 1.35 });
+    const baseDmg = range(this.rng, dmg);
+    const dealt = Math.max(3, Math.round(baseDmg * (0.65 + 0.35 * size) * (0.7 + 0.3 * speed)));
     const a: Asteroid = {
       id,
       label: `AST-${String(id).padStart(3, '0')}`,
       impactIn: range(this.rng, impactIn),
-      dmg: Math.round(range(this.rng, dmg)),
+      dmg: dealt,
+      size,
+      speed,
+      revealed: false,
+      announced: false,
     };
     this.asteroids.push(a);
     this.tel.asteroidsSpawned++;
-    this.event(`Sensor contact: asteroid ${a.label} inbound.`);
+    // No "sensor contact" toast yet — that fires when sensors resolve it (see
+    // the detection check in tick); at spawn it's just an unlabeled dot ahead.
   }
 
   // Trip a specific breaker (scripted) or a random untripped one (ambient).
@@ -375,7 +577,8 @@ export class Game {
     if (this.phase !== 'active' || !this.mission) return;
     const m = this.mission;
     this.missionTime += dt;
-    this.evasiveCd = Math.max(0, this.evasiveCd - dt);
+    this.warpCd = Math.max(0, this.warpCd - dt);
+    this.sensorPulseCd = Math.max(0, this.sensorPulseCd - dt);
 
     // Course drift: a slowly-changing bias plus jitter, scaled by the
     // mission's drift pressure and the helm seat's difficulty.
@@ -401,9 +604,15 @@ export class Game {
     this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX) * shieldPenalty) * alignFactor * m.speedScale;
     this.progress = Math.min(100, this.progress + this.speed * dt);
 
-    // Shield regen and weapon charge scale with their allocated power.
-    this.shieldStrength = Math.min(SHIELD_MAX, this.shieldStrength + SHIELD_REGEN_PER_POWER * this.eff('shields') * dt);
-    this.charge = Math.min(100, this.charge + 2.5 * this.eff('weapons') * dt);
+    // Shields: recharge (scaled by shield power) only while lowered; bleed a
+    // fixed upkeep while raised. Weapon charge always scales with weapon power.
+    if (this.shieldRaised) {
+      this.shieldStrength = Math.max(0, this.shieldStrength - SHIELD_DRAIN_PER_SEC * dt);
+    } else {
+      this.shieldStrength = Math.min(SHIELD_MAX, this.shieldStrength + SHIELD_REGEN_PER_POWER * this.eff('shields') * dt);
+    }
+    // Laser recharge meter refills at a rate set by weapon power (100 = ready).
+    this.charge = Math.min(100, this.charge + LASER_CHARGE_RATE * this.eff('weapons') * dt);
 
     // Telemetry accumulation (station-load measurements).
     if (this.shieldRaised) this.tel.shieldUptime += dt;
@@ -420,20 +629,37 @@ export class Game {
       }
     }
 
-    // Auto-weapons: keep shields up, but only engage once a contact is close
-    // (reaction latency) and sometimes miss (accuracy penalty) — an unmanned
-    // seat survives, it doesn't perform like a crewed one.
+    // Auto-engineering also re-allocates any unallocated power (e.g. after an
+    // Emergency Warp zeroes it) toward a sensible default, so an unmanned
+    // engineer can't leave the ship dead in the water.
+    if (this.auto('engineering')) {
+      const target: Record<SystemId, number> = { engines: 2, weapons: 2, shields: 1, sensors: 1 };
+      let spare = POWER_TOTAL - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
+      for (const s of SYSTEMS) {
+        while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
+      }
+    }
+
+    // Auto-weapons: manage shields (raise near a threat, lower to recharge) and
+    // only engage once a contact is close (reaction latency), sometimes missing
+    // (accuracy penalty) — an unmanned seat survives, it doesn't perform like a
+    // crewed one. Respects the phaser cooldown like a human would.
     if (this.auto('weapons')) {
-      this.shieldRaised = true;
-      const closest = this.asteroids.length > 0
-        ? [...this.asteroids].sort((a, b) => a.impactIn - b.impactIn)[0]
+      // Only contacts the sensors have resolved can be engaged.
+      const acquirable = this.asteroids.filter((a) => this.targetable(a));
+      const closest = acquirable.length > 0
+        ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
         : null;
-      if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= FIRE_COST) {
+      // Shield triage with hysteresis: up when something's inbound, down to
+      // recharge when the sky is clear.
+      this.shieldRaised = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE + 2;
+      if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= 100) {
         this.targetId = closest.id;
         if (this.rng() < AUTO_WEAPONS_MISS_CHANCE) {
-          // Shot goes wide: charge is spent but the target survives.
-          this.charge -= FIRE_COST;
+          // Shot goes wide: the recharge is spent but the target survives.
+          this.charge = 0;
           this.tel.shotsFired++;
+          this.pushFx({ kind: 'laser', targetId: closest.id, hit: false });
           this.targetId = null;
           this.event(`Auto-turret shot goes wide — ${closest.label} still inbound!`);
         } else {
@@ -445,14 +671,29 @@ export class Game {
     // Scripted set pieces fire on time/progress marks.
     this.runScriptedEvents();
 
-    // Advance asteroids and apply impacts.
-    for (const a of this.asteroids) a.impactIn -= dt;
+    // Advance asteroids (and gates) at the speed-scaled closing rate, times each
+    // rock's own speed. Faster ship and faster rocks arrive sooner => less time.
+    const closeRate = this.closeRate();
+    for (const a of this.asteroids) a.impactIn -= dt * closeRate * a.speed;
+    // Detection edge: announce a contact the first time sensors resolve it.
+    for (const a of this.asteroids) {
+      if (!a.announced && this.targetable(a)) {
+        a.announced = true;
+        this.event(`Sensor contact: asteroid ${a.label} acquired.`);
+      }
+    }
     const hits = this.asteroids.filter((a) => a.impactIn <= 0);
     this.asteroids = this.asteroids.filter((a) => a.impactIn > 0);
     for (const hit of hits) this.applyImpact(hit);
     if (this.targetId !== null && !this.asteroids.some((a) => a.id === this.targetId)) {
       this.targetId = null;
     }
+
+    // Advance nav gates and evaluate the ones the ship reaches this tick.
+    for (const g of this.gates) g.reachIn -= dt * closeRate;
+    const reached = this.gates.filter((g) => g.reachIn <= 0);
+    this.gates = this.gates.filter((g) => g.reachIn > 0);
+    for (const g of reached) this.evaluateGate(g);
 
     // Ambient spawning: rate scaled by weapons difficulty and scripted rate
     // multipliers, suppressed entirely during scripted calm stretches.
@@ -462,7 +703,14 @@ export class Game {
       this.asteroids.length < m.maxAsteroids &&
       this.missionTime >= this.calmUntil
     ) {
-      this.spawnAsteroid(m.impactIn, m.asteroidDmg);
+      // Usually one rock, but sometimes a 2-3 cluster arrives in short order so
+      // it isn't always one-at-a-time. Cluster rocks are staggered slightly and
+      // still respect the concurrent cap.
+      const burst = this.rng() < BURST_CHANCE ? (this.rng() < 0.4 ? 3 : 2) : 1;
+      for (let i = 0; i < burst && this.asteroids.length < m.maxAsteroids; i++) {
+        this.spawnAsteroid(m.impactIn, m.asteroidDmg);
+        if (i > 0) this.asteroids[this.asteroids.length - 1].impactIn -= i * range(this.rng, { min: 0.5, max: 2 });
+      }
       this.spawnTimer = range(this.rng, m.spawnEvery) / (this.diff('weapons') * this.spawnRateMult);
     }
 
@@ -471,6 +719,14 @@ export class Game {
     if (this.breakerTimer <= 0) {
       this.tripBreaker();
       this.breakerTimer = range(this.rng, m.breakerEvery) / this.diff('engineering');
+    }
+
+    // Spawn nav gates periodically (rate scaled by helm difficulty — more gates
+    // is more steering load), capped so the field ahead never floods.
+    this.gateTimer -= dt;
+    if (this.gateTimer <= 0 && this.gates.length < MAX_GATES) {
+      this.spawnGate();
+      this.gateTimer = range(this.rng, m.gateEvery ?? { min: 25, max: 40 }) / this.diff('helm');
     }
 
     // End conditions.
@@ -490,6 +746,9 @@ export class Game {
     this.stats.impacts++;
     this.tel.hullDamageTaken += remaining;
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
+    // Screen shake + sound scale off this on the main screen; absorbed hits get
+    // a lighter shield-clang, hull hits a heavier jolt.
+    this.pushFx({ kind: 'impact', hullDmg: Math.round(remaining), absorbed: remaining <= 0 });
     this.event(
       remaining > 0
         ? `IMPACT: ${a.label} hit the hull for ${Math.round(remaining)} damage!`
@@ -503,7 +762,7 @@ export class Game {
     const m = this.mission!;
     let score: number;
     let narrative: string;
-    const { destroyed, impacts, dodged } = this.stats;
+    const { destroyed, impacts, dodged, gatesPassed, gatesMissed, warpsUsed, pulsesUsed } = this.stats;
     if (outcome === 'adrift') {
       // Even a lost ship gets partial credit for distance covered.
       score = Math.round(this.progress * 0.25);
@@ -512,7 +771,12 @@ export class Game {
       const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
       const shotsAtUs = destroyed + impacts + dodged;
       const defense = shotsAtUs === 0 ? 1 : destroyed / shotsAtUs;
-      score = Math.round(0.55 * this.hull + 25 * timeScore + 20 * defense);
+      // Core score from surviving, arriving on time, and shooting well. Nav
+      // gates are OFF the direct course (chasing them costs speed), so they're
+      // an optional bonus (up to +8) rather than a tax you owe for existing.
+      const base = 0.55 * this.hull + 22 * timeScore + 18 * defense;
+      const gateBonus = Math.min(8, gatesPassed * 2);
+      score = Math.min(100, Math.round(base + gateBonus));
       narrative =
         score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as you glide in.`
         : score >= 70 ? 'Solid work. Some scorch marks, but the cargo is intact and morale is high.'
@@ -531,6 +795,10 @@ export class Game {
     this.tel.breakerDowntime = round1(this.tel.breakerDowntime);
     this.tel.shieldUptime = round1(this.tel.shieldUptime);
     this.tel.hullDamageTaken = Math.round(this.tel.hullDamageTaken);
+    this.tel.gatesPassed = this.stats.gatesPassed;
+    this.tel.gatesMissed = this.stats.gatesMissed;
+    this.tel.warpsUsed = this.stats.warpsUsed;
+    this.tel.pulsesUsed = this.stats.pulsesUsed;
     this.debrief = {
       outcome,
       grade,
@@ -546,6 +814,10 @@ export class Game {
         impacts,
         dodged,
         breakersTripped: this.stats.breakersTripped,
+        gatesPassed,
+        gatesMissed,
+        warpsUsed,
+        pulsesUsed,
       },
       telemetry: this.tel,
       // Which seats were human-crewed and at what difficulty — needed to
@@ -573,7 +845,7 @@ export class Game {
     return {
       phase: this.phase,
       mission: this.mission
-        ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing }
+        ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null }
         : null,
       missionTime: Math.round(this.missionTime),
       progress: round1(this.progress),
@@ -582,19 +854,25 @@ export class Game {
       // meter has always just rendered this as a 0-100 bar width.
       shields: { raised: this.shieldRaised, strength: Math.round((this.shieldStrength / SHIELD_MAX) * 100) },
       power: this.power,
-      breakers: {
-        engines: this.breakers.engines !== null,
-        shields: this.breakers.shields !== null,
-        weapons: this.breakers.weapons !== null,
-      },
+      breakers: Object.fromEntries(SYSTEMS.map((s) => [s, this.breakers[s] !== null])) as Record<SystemId, boolean>,
       throttle: Math.round(this.throttle),
       alignment: round1(this.alignment),
       speed: round1(this.speed * 100), // display units
+      // charge is the laser recharge meter (100 = ready to fire).
       charge: Math.round(this.charge),
-      fireCost: FIRE_COST,
       targetId: this.targetId,
-      evasiveReadyIn: round1(this.evasiveCd),
-      asteroids: this.asteroids.map((a) => ({ id: a.id, label: a.label, impactIn: round1(a.impactIn), dmg: a.dmg })),
+      warpReadyIn: round1(this.warpCd),
+      // Passive sensor range in seconds; sensor pulse readiness for engineering.
+      sensorRange: round1(this.sensorRange()),
+      sensorPulseReadyIn: round1(this.sensorPulseCd),
+      // Contacts carry size/speed (for main-screen threat read-out) and whether
+      // sensors have resolved them yet (targetable on the weapons scope).
+      asteroids: this.asteroids.map((a) => ({
+        id: a.id, label: a.label, impactIn: round1(a.impactIn), dmg: a.dmg,
+        size: round1(a.size), speed: round1(a.speed), targetable: this.targetable(a),
+      })),
+      gates: this.gates.map((g) => ({ id: g.id, label: g.label, reachIn: round1(g.reachIn), bearing: Math.round(g.bearing) })),
+      fx: this.fx,
       seats: Object.fromEntries(
         (Object.keys(this.seats) as SeatId[]).map((s) => [
           s,
@@ -617,7 +895,6 @@ function freshTelemetry(): Telemetry {
   return {
     asteroidsSpawned: 0,
     shotsFired: 0,
-    evasivesUsed: 0,
     powerChanges: 0,
     breakerDowntime: 0,
     shieldUptime: 0,
@@ -625,6 +902,10 @@ function freshTelemetry(): Telemetry {
     impactLog: [],
     avgAlignment: 0,
     avgThrottle: 0,
+    gatesPassed: 0,
+    gatesMissed: 0,
+    warpsUsed: 0,
+    pulsesUsed: 0,
   };
 }
 function clamp(v: number, lo: number, hi: number): number {

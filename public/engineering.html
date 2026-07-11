@@ -22,6 +22,15 @@
       <div id="power-systems"></div>
     </div>
 
+    <!-- Sensors: detection range + one-shot active pulse -->
+    <div class="panel">
+      <h2>Sensors <span id="sensor-range" style="color:var(--accent)"></span></h2>
+      <p style="color:var(--dim); font-size:0.85rem; margin-bottom:0.6rem;">
+        More sensor power resolves asteroids sooner, so Weapons can target them earlier.
+        The pulse lights up every contact at once (long cooldown).</p>
+      <button id="pulse-btn" style="width:100%">Sensor Pulse</button>
+    </div>
+
     <!-- Breakers: trip randomly and halve a system's power until reset -->
     <div class="panel">
       <h2>Breakers</h2>
@@ -52,9 +61,15 @@
   </div>
 
   <script type="module">
-    import { initStation } from '/js/station.js';
+    import { initStation, setHealthBar } from '/js/station.js';
+    import { createAudio } from '/js/audio.js';
 
-    const SYSTEMS = ['engines', 'shields', 'weapons'];
+    // Console-local audio: engineering hears its own breakers trip and reset.
+    const audio = createAudio();
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false };
+
+    const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors'];
     const POWER_MAX = 4;
     const POWER_TOTAL = 6;
 
@@ -74,8 +89,7 @@
       systemsEl.appendChild(row);
 
       const brk = document.createElement('button');
-      brk.className = 'danger';
-      brk.style.cssText = 'width:100%; margin-bottom:0.5rem;';
+      brk.className = 'breaker';
       brk.id = `brk-${sys}`;
       brk.textContent = `${sys}: OK`;
       breakersEl.appendChild(brk);
@@ -90,16 +104,31 @@
           // Light up pips to match the current allocation.
           const pips = document.querySelectorAll(`#pips-${sys} .pip`);
           pips.forEach((p, i) => p.classList.toggle('on', i < state.power[sys]));
-          // Breaker button flashes red text while tripped.
+          // Breaker button turns red only while tripped; neutral (and disabled)
+          // when OK so healthy systems don't read as danger buttons.
           const brk = document.getElementById(`brk-${sys}`);
           const tripped = state.breakers[sys];
+          // Sound the transition (trip vs reset) once, off the state edge.
+          if (tripped && !prevBreakers[sys]) audio.breakerTrip();
+          else if (!tripped && prevBreakers[sys]) audio.breakerReset();
+          prevBreakers[sys] = !!tripped;
+          brk.classList.toggle('tripped', !!tripped);
           brk.textContent = tripped ? `${sys}: TRIPPED — TAP TO RESET` : `${sys}: OK`;
           brk.disabled = !tripped;
         }
-        document.getElementById('hull-bar').style.width = `${state.hull}%`;
-        document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
+        setHealthBar(document.getElementById('hull-bar'), state.hull);
+        setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
+        // Sensors: current detection range + pulse cooldown.
+        document.getElementById('sensor-range').textContent = `${Math.round(state.sensorRange)}s range`;
+        const pulseBtn = document.getElementById('pulse-btn');
+        const pulseReady = state.sensorPulseReadyIn <= 0;
+        pulseBtn.disabled = !pulseReady;
+        pulseBtn.textContent = pulseReady ? 'Sensor Pulse' : `Pulse ready in ${Math.ceil(state.sensorPulseReadyIn)}s`;
       },
     });
+
+    // Sensor pulse button.
+    document.getElementById('pulse-btn').addEventListener('click', () => net.action({ kind: 'sensorPulse' }));
 
     // Power +/- buttons.
     systemsEl.addEventListener('click', (ev) => {

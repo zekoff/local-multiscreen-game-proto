@@ -12,8 +12,21 @@ Assessment of the proposed multi-device, co-located spaceship-bridge cooperative
 Added after implementation began:
 
 - [06 — Phaser station UIs: feasibility for a later stage](06-phaser-stations.md)
+  (weapons scope now built)
 - [07 — Persistence plan: users, crews, ships](07-persistence.md)
 - [08 — Mission balance baseline data](08-mission-balance-baseline.md)
+  (original baseline; superseded — see below)
+
+Living docs outside `design/` (current state, not assessment):
+
+- [`../status.md`](../status.md) — the resume-here snapshot; read this first
+- [`../pre-playtest-improvements-recap.md`](../pre-playtest-improvements-recap.md)
+  — full changelog of the two-wave pre-playtest pass (usability, viewscreen,
+  audio, flight model, sensors, Emergency Warp, asteroid physics)
+- [`../console-complexity-analysis.md`](../console-complexity-analysis.md) —
+  current per-console load, interplay map, and balance proposals
+- [`../playtest-visual-notes.md`](../playtest-visual-notes.md) — the visual
+  audit that started the pass
 
 ## TL;DR
 

@@ -1,5 +1,15 @@
 # Mission Balance Baseline (2026-07-09)
 
+> **Superseded (2026-07-11).** This is the *original* baseline and the problem
+> statement it identified ("everything is too easy — even an unmanned ship wins
+> flawlessly"). Both waves of the pre-playtest pass acted on the recommendations
+> below and **that problem is now resolved**: skilled ~72-79, novice ~64-69, and
+> **auto (unmanned) now fails 30-50% of the time** on the harder missions with
+> its hull gutted. For the current balance picture, per-console load, and the
+> next round of proposals, see `docs/console-complexity-analysis.md` and the
+> wave-2 section of `docs/pre-playtest-improvements-recap.md`. The table and
+> analysis below are kept as the historical starting point.
+
 First mission-lab sweep after the mission framework landed. 10 seeded runs
 per cell, all normal difficulty, tick 250ms. Raw records in `reports/`
 (regenerate anytime with `npm run lab`).

@@ -6,13 +6,17 @@
 
 import type { Range } from './rng.js';
 
-export type SystemId = 'engines' | 'shields' | 'weapons';
+export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors';
 
 export interface MissionDef {
   id: string;              // stable identifier ('supply-run', 'gen:standard:12345')
   name: string;            // shown to players
   briefing: string;        // one-paragraph setup shown in the lobby / log
   arrivalName: string;     // destination, used in HUD labels and narrative
+  // Optional themed body the main screen renders growing on the horizon as
+  // progress climbs (a station or planet). Missions without it get a plain
+  // marker. Focused on one mission for now (see supply-run).
+  destination?: { kind: 'station' | 'planet'; color: string };
   kind: 'authored' | 'generated';
   parTime: number;         // seconds; the debrief time score is relative to this
 
@@ -22,6 +26,7 @@ export interface MissionDef {
   asteroidDmg: Range;      // damage per impact
   maxAsteroids: number;    // concurrent cap
   breakerEvery: Range;     // seconds between breaker trips
+  gateEvery?: Range;       // seconds between nav gates (optional; default 25-40)
 
   // Global scales relative to the baseline mission (1 = baseline).
   driftScale: number;      // helm course-drift pressure

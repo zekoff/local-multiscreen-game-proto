@@ -4,6 +4,14 @@ Assessment of migrating station UIs from the current DOM dashboards to Phaser
 for rich graphical feedback and input. Requested 2026-07-09 as a
 later-development-stage option, to be built collaboratively (human + Claude).
 
+> **Status (2026-07-11): the weapons radar scope is built and shipped**
+> (`public/js/weapons-scope.js`, mounted via `js/phaser-station.js` per the
+> hybrid pattern below). It renders converging contacts, tap-to-target, a decay
+> sweep, a **passive sensor-range ring** (contacts stay invisible until they
+> cross inside), name-only labels (threat data lives on the main screen), and an
+> expanding **sensor-pulse** animation. Helm and engineering remain DOM. The
+> assessment below is the original plan; it held up.
+
 ## Verdict: feasible, low architectural risk, do it per-widget rather than per-app
 
 The architecture makes this cheap to adopt incrementally: stations are

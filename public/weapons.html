@@ -55,9 +55,15 @@
   </div>
 
   <script type="module">
-    import { initStation } from '/js/station.js';
+    import { initStation, setHealthBar, setChargeBar } from '/js/station.js';
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
+    import { createAudio } from '/js/audio.js';
+
+    // Console-local audio: weapons hears its own shields raise/lower.
+    const audio = createAudio();
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    let prevShieldsRaised = false;
 
     const scopeEmptyEl = document.getElementById('scope-empty');
     const scopeTargetEl = document.getElementById('scope-target');
@@ -75,18 +81,31 @@
         // calls back here with the id, same action any target-list UI would send.
         scopeScene.onTarget = (id) => net.action({ kind: 'target', id });
         scopeScene.setState(state);
-        scopeEmptyEl.style.display = state.asteroids.length === 0 ? '' : 'none';
+        // Trigger the pulse sweep animation when engineering fires a pulse.
+        if ((state.fx || []).some((e) => e.kind === 'sensorPulse')) scopeScene.pulse();
+        // Only sensor-resolved contacts show on the scope, so the empty message
+        // tracks how many are actually targetable.
+        const acquirable = state.asteroids.filter((a) => a.targetable);
+        scopeEmptyEl.style.display = acquirable.length === 0 ? '' : 'none';
         const targeted = state.asteroids.find((a) => a.id === state.targetId);
-        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label} (${targeted.dmg} dmg)` : '';
+        // Scope shows only the contact name — threat/speed data lives on the
+        // main screen so the captain can call priorities.
+        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label}` : '';
 
-        // Charge bar and fire availability.
-        document.getElementById('charge-bar').style.width = `${state.charge}%`;
-        fireBtn.disabled = state.charge < state.fireCost || state.targetId === null;
-        fireBtn.textContent = state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
-        // Shield toggle reflects server state.
+        // Charge is the laser recharge meter — green and firable only at full.
+        const ready = state.charge >= 100;
+        setChargeBar(document.getElementById('charge-bar'), state.charge, ready);
+        fireBtn.disabled = !ready || state.targetId === null;
+        fireBtn.textContent = !ready
+          ? 'CHARGING…'
+          : state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
+        // Shield toggle reflects server state; sound the raise/lower edge.
         shieldsRaised = state.shields.raised;
+        if (shieldsRaised && !prevShieldsRaised) audio.shieldUp();
+        else if (!shieldsRaised && prevShieldsRaised) audio.shieldDown();
+        prevShieldsRaised = shieldsRaised;
         shieldsBtn.textContent = shieldsRaised ? 'Lower Shields' : 'Raise Shields';
-        document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
+        setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
       },
     });
 
