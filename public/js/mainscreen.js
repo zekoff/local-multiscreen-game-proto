@@ -168,10 +168,12 @@ const net = initStation({
       dl.scrollTop = 0;
       cancelAnimationFrame(debriefScrollRaf);
       let lastScrollTs = performance.now() + 1800; // hold the top a beat first
+      let scrollPos = 0; // accumulate here: sub-pixel scrollTop writes truncate
       const scrollStep = (ts) => {
         if (!latest || latest.phase !== 'debrief') return;
         if (ts > lastScrollTs) {
-          dl.scrollTop += (ts - lastScrollTs) * 0.022; // ~22px/s reading pace
+          scrollPos += (ts - lastScrollTs) * 0.022; // ~22px/s reading pace
+          dl.scrollTop = scrollPos;
           lastScrollTs = ts;
         }
         if (dl.scrollTop + dl.clientHeight < dl.scrollHeight - 1) {

@@ -4,7 +4,28 @@ Last updated: 2026-07-11 (post-playtest revision pass — branch
 `worktree-revision-pass`, draft PR open, deployed to Cloudflare). This file
 is the "resume here" note — read it with `CLAUDE.md` at the start of a session.
 
-## Latest: follow-up implementation pass (2026-07-11, same branch/PR #6)
+## Latest: polish + expansion-menu pass (2026-07-11, same branch/PR #6)
+
+Third owner-directed pass on the branch. Highlights:
+- **Feel**: snapshot interpolation for alignment (held turns and slipstream
+  rings glide, no jump-then-smooth); slipstream streaks centered on ship
+  heading; polygonal tumbling asteroids; captain HUD rebuilt as a wrapping
+  grid (nothing truncates at TV widths); debug panel bottom-left.
+- **Consoles**: outlined fixed-height breaker boxes (OK text centered),
+  30px pips, thick sliders with 34px thumbs; graphical SVG tutorials with
+  plain-language prose; captain's log on every debrief (auto-scrolls on the
+  main screen); random contact callsigns (KOR-97 style).
+- **Config**: mission speed (0.75/1/1.25×) in the ready room; difficulty
+  rating shown per mission in the picker; parsec distance readout
+  (mission-configurable; countdown kind supported for future fail clocks).
+- **Engine**: target lock drops when a contact falls below sensor
+  resolution (checks assert it); 16 total checks green.
+- **Audio**: five tracks (added Halcyon, Meridian); throttle servo, warp
+  engage clunk, trigger click, scope tap tick. STILL not heard on device.
+- **Menu**: docs/design/11-gameplay-expansion-menu.md — 27 numbered
+  proposals (challenges/counters, widgets, missions) for owner selection.
+
+## Previous: follow-up implementation pass (2026-07-11, same branch/PR #6)
 
 Owner-directed follow-up implementing report proposals 1/2/5 + polish:
 
