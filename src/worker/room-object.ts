@@ -157,7 +157,8 @@ export class RoomObject {
           typeof msg.missionId === 'string' ? msg.missionId : undefined,
           typeof msg.seed === 'number' ? msg.seed : undefined,
         );
-        this.game.start(def, seed, msg.debug === true);
+        // shipName is optional launch fiction (crew-chosen, engine-sanitized).
+        this.game.start(def, seed, msg.debug === true, typeof msg.shipName === 'string' ? msg.shipName : '');
         this.ensureTicking();
       }
     } else if (msg.type === 'restart') {

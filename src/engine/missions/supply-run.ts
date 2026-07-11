@@ -22,6 +22,15 @@ export const supplyRun: MissionDef = {
   breakerEvery: { min: 27, max: 45 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
   driftScale: 1,
   events: [
+    // Story beats: keep the WHY of the run present mid-mission (thematic
+    // resonance was the playtest's requested next step). Log-only, no mechanics.
+    {
+      id: 'medbay-comms',
+      at: { progress: 15 },
+      actions: [
+        { type: 'log', text: "Epsilon medbay on comms: 'Twelve patients on ventilators. Fly safe — but fly.'" },
+      ],
+    },
     {
       id: 'belt-cluster',
       at: { progress: 35 },
@@ -36,6 +45,13 @@ export const supplyRun: MissionDef = {
       actions: [
         { type: 'log', text: 'Scatter field on final approach to Epsilon — stay sharp.' },
         { type: 'spawnAsteroids', count: 3, impactIn: { min: 12, max: 16 }, dmg: { min: 10, max: 16 } },
+      ],
+    },
+    {
+      id: 'arrival-visual',
+      at: { progress: 90 },
+      actions: [
+        { type: 'log', text: "Station Epsilon's docking beacons ahead. Medical teams are standing by at the airlock." },
       ],
     },
   ],

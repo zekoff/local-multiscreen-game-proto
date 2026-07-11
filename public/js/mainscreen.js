@@ -65,6 +65,8 @@ const net = initStation({
     type: 'start',
     missionId: missionSelect.value || undefined,
     debug: document.getElementById('debug-toggle').checked,
+    // Crew-chosen ship name (optional fiction; engine sanitizes/limits it).
+    shipName: document.getElementById('ship-name').value.trim() || undefined,
   }),
   onJoined(msg) {
     catalog = msg.catalog || [];
@@ -95,6 +97,9 @@ const net = initStation({
     if (state.mission) {
       document.getElementById('progress-label').textContent = `Distance to ${state.mission.arrivalName}`;
     }
+    // Header carries the crew's ship name once one is set (fiction beat #1).
+    document.querySelector('header h1').textContent =
+      state.shipName ? `${state.shipName} — Main Screen` : 'USS Prototype — Main Screen';
     document.getElementById('clock').textContent = fmtTime(state.missionTime);
     logEl.innerHTML = state.log.map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
     logEl.scrollTop = logEl.scrollHeight;

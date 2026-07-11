@@ -237,6 +237,7 @@ export interface Debrief {
   narrative: string;
   missionId: string;
   missionName: string;
+  shipName: string;       // crew-chosen ship name ('' if unnamed) — career-history fiction
   seed: number;           // (missionId, seed) reproduces the run's randomness
   stats: {
     time: number;
@@ -305,6 +306,7 @@ export class Game {
   private maxAsteroidsOverride: number | null = null; // scripted 'setMaxAsteroids' (null = use MissionDef)
   private autoFireAt: number | null = null;        // missionTime when the auto-turret's deliberate shot lands
   private autoShieldClearAt: number | null = null; // missionTime when auto shields drop after the sky clears
+  private shipName = ''; // optional crew-chosen ship name (fiction only, set at launch)
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -383,12 +385,15 @@ export class Game {
   // Begin a mission run. The transport resolves the MissionDef (registry or
   // generator) and passes the run seed so (missionId, seed) reproduces the
   // run's randomness exactly.
-  start(def: MissionDef, seed?: number, debug = false) {
+  start(def: MissionDef, seed?: number, debug = false, shipName = '') {
     if (this.phase === 'active') return;
     this.mission = def;
     this.runSeed = seed ?? randomSeed();
     this.rng = mulberry32(this.runSeed);
     this.debug = debug;
+    // The crew's ship name (optional, set at launch): pure fiction, zero
+    // mechanics — it flavors the log, the main-screen header, and the debrief.
+    this.shipName = shipName.trim().slice(0, 24);
     this.timeScale = 1;
     // Reset all mission state for a fresh run.
     this.phase = 'active';
@@ -439,7 +444,9 @@ export class Game {
     this.acquireLatencies = [];
     this.threatsNeutralized = 0;
     this.powerUtilSum = 0;
-    this.event(`Mission start: ${def.name}. Godspeed.`);
+    this.event(this.shipName
+      ? `Mission start: ${def.name}. The ${this.shipName} is underway — Godspeed.`
+      : `Mission start: ${def.name}. Godspeed.`);
     this.event(def.briefing);
   }
 
@@ -996,10 +1003,12 @@ export class Game {
     let score: number;
     let narrative: string;
     const { destroyed, impacts, dodged, gatesPassed, gatesMissed, warpsUsed, pulsesUsed } = this.stats;
+    // Fiction hook: reference the crew's named ship where the story allows.
+    const ship = this.shipName ? `the ${this.shipName}` : 'the ship';
     if (outcome === 'adrift') {
       // Even a lost ship gets partial credit for distance covered.
       score = Math.round(this.progress * 0.25);
-      narrative = 'Hull breach critical. The crew was recovered by a tow ship two days later — the cargo was not.';
+      narrative = `Hull breach critical. ${ship.charAt(0).toUpperCase() + ship.slice(1)} went dark ${Math.round(this.progress)}% of the way to ${m.arrivalName}; a tow ship recovered the crew two days later. The cargo was not so lucky.`;
     } else {
       const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
       const shotsAtUs = destroyed + impacts + dodged;
@@ -1011,11 +1020,11 @@ export class Game {
       const gateBonus = Math.min(8, gatesPassed * 2);
       score = Math.min(100, Math.round(base + gateBonus));
       narrative =
-        score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as you glide in.`
+        score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as ${ship} glides in.`
         : score >= 70 ? 'Solid work. Some scorch marks, but the cargo is intact and morale is high.'
-        : score >= 50 ? 'Mission accomplished — though the ship will spend a week in drydock.'
+        : score >= 50 ? `Mission accomplished — though ${ship} will spend a week in drydock.`
         : score >= 30 ? 'You made it, barely. The insurance adjusters would like a word.'
-        : 'The ship limps into dock, venting atmosphere. Nobody claps.';
+        : `${ship.charAt(0).toUpperCase() + ship.slice(1)} limps into dock, venting atmosphere. Nobody claps.`;
     }
     const grade =
       score >= 85 ? 'Legendary Run' :
@@ -1062,6 +1071,7 @@ export class Game {
       narrative,
       missionId: m.id,
       missionName: m.name,
+      shipName: this.shipName,
       seed: this.runSeed,
       stats: {
         time: Math.round(this.missionTime),
@@ -1177,6 +1187,7 @@ export class Game {
       mission: this.mission
         ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null }
         : null,
+      shipName: this.shipName,
       missionTime: Math.round(this.missionTime),
       // Target duration of a well-executed run (seconds) — drives the music
       // build arc on the main screen (build over ~180s, then hold/pad longer).

@@ -263,7 +263,8 @@ wss.on('connection', (ws) => {
           typeof msg.missionId === 'string' ? msg.missionId : undefined,
           typeof msg.seed === 'number' ? msg.seed : undefined,
         );
-        m.room.game.start(def, seed, msg.debug === true);
+        // shipName is optional launch fiction (crew-chosen, engine-sanitized).
+        m.room.game.start(def, seed, msg.debug === true, typeof msg.shipName === 'string' ? msg.shipName : '');
         ensureTicking(m.room);
       }
     } else if (msg.type === 'restart') {

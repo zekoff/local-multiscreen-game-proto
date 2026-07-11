@@ -47,6 +47,13 @@ export const minedCorridor: MissionDef = {
       ],
     },
     {
+      id: 'arrival-visual',
+      at: { progress: 92 },
+      actions: [
+        { type: 'log', text: "Depot Tycho's lights through the debris. The dockmaster owes this crew a drink." },
+      ],
+    },
+    {
       id: 'final-gauntlet',
       at: { progress: 78 },
       actions: [

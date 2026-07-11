@@ -65,6 +65,10 @@
     <!-- Mission picker: authored missions + procedural presets, populated
          from the catalog the server sends on join -->
     <div style="width:min(28rem, 90%); text-align:left;">
+      <!-- Ship naming: pure fiction, no mechanics — flavors the log, the
+           header, and the debrief. The field persists across runs. -->
+      <div class="label" style="margin-bottom:0.3rem;">Ship name <span style="color:var(--dim); text-transform:none; letter-spacing:0;">(optional)</span></div>
+      <input type="text" id="ship-name" maxlength="24" placeholder="e.g. Dauntless" autocomplete="off" style="margin-bottom:0.7rem;">
       <div class="label" style="margin-bottom:0.3rem;">Mission</div>
       <select id="mission-select"></select>
       <p id="mission-desc" style="color:var(--dim); font-size:0.85rem; margin-top:0.5rem; min-height:3em;"></p>
