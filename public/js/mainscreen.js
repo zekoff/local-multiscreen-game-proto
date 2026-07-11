@@ -82,13 +82,27 @@ initStation({
 
 // --- Starfield / viewscreen rendering ---
 
-// Stars live in a normalized space and stream right-to-left at ship speed.
+// Stars sit in world space around a forward-facing viewpoint (x, y centered
+// on 0) at some depth z ahead of the ship. As z shrinks each star is
+// perspective-projected toward the screen center, so the whole field appears
+// to radiate outward — as if flying straight through a bridge window rather
+// than sliding sideways past it.
 const STAR_COUNT = 140;
-const stars = Array.from({ length: STAR_COUNT }, () => ({
-  x: Math.random(),
-  y: Math.random(),
-  depth: 0.3 + Math.random() * 0.7, // parallax factor and brightness
-}));
+const STAR_FAR_Z = 1;
+const STAR_NEAR_Z = 0.02;
+function resetStar(s) {
+  // Spread stars across a wide field so they don't all funnel through the
+  // same point on-screen once projected.
+  s.x = (Math.random() - 0.5) * 2.4;
+  s.y = (Math.random() - 0.5) * 2.4;
+  s.z = STAR_FAR_Z;
+}
+const stars = Array.from({ length: STAR_COUNT }, () => {
+  const s = { x: 0, y: 0, z: 0 };
+  resetStar(s);
+  s.z = STAR_NEAR_Z + Math.random() * (STAR_FAR_Z - STAR_NEAR_Z); // stagger initial depths
+  return s;
+});
 
 function resize() {
   canvas.width = canvas.clientWidth * devicePixelRatio;
@@ -107,14 +121,23 @@ function frame(ts) {
   ctx.fillStyle = '#05070d';
   ctx.fillRect(0, 0, w, h);
 
-  // Star speed tracks the ship's actual velocity (idle drift when in lobby).
+  // Closing speed tracks the ship's actual velocity (idle drift when in lobby).
   const shipSpeed = latest && latest.phase === 'active' ? latest.speed : 5;
+  const cx = w / 2;
+  const cy = h / 2;
+  const projScale = Math.min(w, h) * 0.5;
   for (const s of stars) {
-    s.x -= (0.01 + shipSpeed * 0.004) * s.depth * dt;
-    if (s.x < 0) { s.x = 1; s.y = Math.random(); }
-    const size = s.depth * 2.2 * devicePixelRatio;
-    ctx.fillStyle = `rgba(207, 224, 255, ${0.25 + s.depth * 0.6})`;
-    ctx.fillRect(s.x * w, s.y * h, size, size);
+    s.z -= (0.07 + shipSpeed * 0.0055) * dt;
+    if (s.z <= STAR_NEAR_Z) resetStar(s);
+    const px = cx + (s.x / s.z) * projScale;
+    const py = cy + (s.y / s.z) * projScale;
+    // Off-screen (still far off to the side at this depth) — skip drawing.
+    if (px < 0 || px > w || py < 0 || py > h) continue;
+    // Nearer stars (small z) are bigger and brighter than distant ones.
+    const closeness = 1 - (s.z - STAR_NEAR_Z) / (STAR_FAR_Z - STAR_NEAR_Z);
+    const size = (0.5 + closeness * 2.5) * devicePixelRatio;
+    ctx.fillStyle = `rgba(207, 224, 255, ${0.2 + closeness * 0.7})`;
+    ctx.fillRect(px, py, size, size);
   }
 
   if (latest && latest.phase === 'active') {
