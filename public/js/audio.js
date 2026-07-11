@@ -29,17 +29,53 @@ export function createAudio() {
   const pad = [];         // persistent pad oscillator chain
   let noiseBuf = null;
 
-  const TEMPO = 96;                       // BPM
-  const STEP = (60 / TEMPO) / 4;          // seconds per 16th note
-  // A slow minor-ish progression the drone cycles through (root frequencies).
-  const ROOTS = [110.0, 87.31, 130.81, 98.0]; // A2, F2, C3, G2
+  // --- Tracks: three sparse-ambient beds sharing the same 3-phase build.
+  // One is chosen at random per mission (startMusic), so back-to-back runs
+  // don't sound identical. Each defines tempo, a chord-root cycle, and a set
+  // of melody patterns (root multiples per eighth) the scheduler rotates
+  // through — the rotation + rest bars + beat breakdowns are what keep a
+  // single track from feeling like one repeating loop.
+  const TRACKS = [
+    { // "Drift" — the original bed: slow A-minor-ish wander.
+      tempo: 96,
+      roots: [110.0, 87.31, 130.81, 98.0], // A2, F2, C3, G2
+      leadType: 'triangle',
+      patterns: [
+        [4, 4.8, 6, 4.8, 5.33, 4, 3, 4],
+        [6, 4.8, 4, 3, 4, 4.8, 6, 8],
+        [4, 3, 4.8, 6, 4.8, 4, 4.8, 3],
+      ],
+    },
+    { // "Ember" — lower, slower, warmer; G-minor-ish.
+      tempo: 82,
+      roots: [98.0, 73.42, 116.54, 87.31], // G2, D2, Bb2, F2
+      leadType: 'sine',
+      patterns: [
+        [3, 4, 4.8, 4, 6, 4.8, 4, 3],
+        [4, 4.8, 4, 3.56, 3, 3.56, 4, 4.8],
+        [6, 4.8, 4.27, 4, 4.27, 4.8, 6, 4],
+      ],
+    },
+    { // "Aurora" — brighter and a touch quicker; B-minor-ish lift.
+      tempo: 104,
+      roots: [123.47, 92.5, 146.83, 110.0], // B2, F#2, D3, A2
+      leadType: 'triangle',
+      patterns: [
+        [4, 6, 4.8, 6, 8, 6, 4.8, 4],
+        [4.8, 4, 6, 4.8, 4, 3.56, 4, 4.8],
+        [6, 8, 6, 4.8, 6, 4.8, 4, 4.8],
+      ],
+    },
+  ];
+  let track = TRACKS[0];
+  let stepDur = (60 / track.tempo) / 4;   // seconds per 16th note (per-track tempo)
   let chordIdx = 0;
-  // 3-phase build thresholds (on the 0..1 intensity the main screen drives from
-  // mission time) and the lead-arpeggio walk (multiples of the chord root — a
-  // minor-pentatonic-ish contour that reads as a melody over the drone).
+  let barIdx = 0;                         // bar counter driving the variation logic
+  let patternIdx = 0;                     // which melody pattern this stretch uses
+  // 3-phase build thresholds (on the 0..1 intensity the main screen drives
+  // from mission time): ambient -> +melody -> +beat.
   const MELODY_IN = 0.33;                 // intensity at which the melody starts
-  const BEAT_IN = 0.66;                   // intensity at which the driving beat starts
-  const MELODY_PATTERN = [4, 4.8, 6, 4.8, 5.33, 4, 3, 4]; // root multiples per eighth
+  const BEAT_IN = 0.66;                   // intensity at which the beat starts
 
   let failed = false;
   function ensure() {
@@ -116,8 +152,8 @@ export function createAudio() {
   }
 
   function setChord(idx) {
-    chordIdx = idx % ROOTS.length;
-    const root = ROOTS[chordIdx];
+    chordIdx = idx % track.roots.length;
+    const root = track.roots[chordIdx];
     const now = ctx.currentTime;
     for (const p of pad) {
       for (const v of p.voices) {
@@ -132,7 +168,14 @@ export function createAudio() {
     ensure();
     if (!ctx || musicOn) return;
     musicOn = true;
+    // A fresh mission gets a randomly-drawn track (cosmetic only — gameplay
+    // randomness stays on the seeded server RNG; the bed is presentation).
+    track = TRACKS[Math.floor(Math.random() * TRACKS.length)];
+    stepDur = (60 / track.tempo) / 4;
+    barIdx = 0;
+    patternIdx = Math.floor(Math.random() * track.patterns.length);
     if (pad.length === 0) buildPad();
+    setChord(0);
     musicGain.gain.cancelScheduledValues(ctx.currentTime);
     musicGain.gain.setTargetAtTime(0.9, ctx.currentTime, 2); // fade in
     step = 0;
@@ -154,11 +197,26 @@ export function createAudio() {
     if (!musicOn) return;
     while (nextStepTime < ctx.currentTime + 0.12) {
       scheduleStep(step, nextStepTime);
-      nextStepTime += STEP;
+      nextStepTime += stepDur;
       step = (step + 1) % 16;
-      if (step % 8 === 0) setChord(chordIdx + 1); // advance harmony every half-bar
-      // Occasional slow noise sweep in the ambient/melody phases ("deep space").
-      if (step === 0 && intensity < BEAT_IN && Math.random() < 0.25) sweep();
+      if (step === 0) {
+        barIdx++;
+        // Rotate the melody pattern every couple of bars, with an occasional
+        // random jump — the anti-repetition lever.
+        if (barIdx % 2 === 0) {
+          patternIdx = Math.random() < 0.3
+            ? Math.floor(Math.random() * track.patterns.length)
+            : (patternIdx + 1) % track.patterns.length;
+        }
+      }
+      if (step % 8 === 0) {
+        // Harmony mostly walks the cycle, occasionally skipping a chord so
+        // the progression doesn't become a metronome of its own.
+        setChord(chordIdx + (Math.random() < 0.15 ? 2 : 1));
+      }
+      // Occasional slow noise sweep ("deep space") — now in every phase, a
+      // touch rarer once the beat is in so the end doesn't get crowded.
+      if (step === 0 && Math.random() < (intensity < BEAT_IN ? 0.25 : 0.12)) sweep();
     }
   }
 
@@ -169,23 +227,35 @@ export function createAudio() {
   // BEAT_IN (ramping to full across the final phase).
   function scheduleStep(s, t) {
     const I = intensity;
+    // Every 4th bar the melody rests (the pad + texture carry it) — space is
+    // what keeps a sparse bed from turning into a loop.
+    const restBar = barIdx % 4 === 3;
+    // Every 8th bar the beat breaks down to hat + bass only, then re-enters.
+    const breakdownBar = barIdx % 8 === 7;
     // Melody: a lead arpeggio that fades in for the middle phase and stays.
-    if (I >= MELODY_IN) {
+    if (I >= MELODY_IN && !restBar) {
       const mv = clamp01((I - MELODY_IN) / 0.3) * 0.16;
       if (s % 2 === 0) {
-        const note = MELODY_PATTERN[(s / 2) % MELODY_PATTERN.length];
-        lead(t, ROOTS[chordIdx] * note, mv);
+        const pattern = track.patterns[patternIdx];
+        const note = pattern[(s / 2) % pattern.length];
+        // Small chance to drop a note an octave for contour variety.
+        const mult = Math.random() < 0.12 ? note / 2 : note;
+        lead(t, track.roots[chordIdx] * mult, mv);
       }
     }
-    // Driving beat: comes in for the final phase and ramps kick/snare/hat/bass
-    // from sparse to full as intensity climbs from BEAT_IN to 1.
+    // Beat: enters for the final phase, deliberately restrained — the pulse
+    // should push, not pound (playtest: the old end-phase beat was too
+    // strong). Gains are roughly half the first pass, the double-kick only
+    // appears near full intensity, and breakdown bars pull it out entirely.
     if (I >= BEAT_IN) {
       const b = clamp01((I - BEAT_IN) / (1 - BEAT_IN)); // 0..1 across the beat phase
-      if (s === 0 || s === 8 || (b > 0.5 && (s === 4 || s === 12))) kick(t, 0.6 + b * 0.5);
-      if (b > 0.3 && (s === 4 || s === 12)) snare(t, 0.3 + b * 0.4);
-      if (s % 4 === 0) hat(t, 0.12 + b * 0.2);
-      if (b > 0.6 && s % 2 === 1) hat(t, 0.07 + b * 0.12);
-      if (s === 0 || s === 8) bass(t, ROOTS[chordIdx] / 2, 0.3 + b * 0.3);
+      if (!breakdownBar) {
+        if (s === 0 || s === 8 || (b > 0.75 && s === 12)) kick(t, 0.32 + b * 0.2);
+        if (b > 0.35 && (s === 4 || s === 12)) snare(t, 0.14 + b * 0.16);
+      }
+      if (s % 4 === 0) hat(t, 0.1 + b * 0.12);
+      if (b > 0.7 && s % 4 === 2) hat(t, 0.05 + b * 0.07);
+      if (s === 0 || s === 8) bass(t, track.roots[chordIdx] / 2, 0.24 + b * 0.2);
     }
   }
 
@@ -194,7 +264,7 @@ export function createAudio() {
     if (!ctx || g <= 0.001) return;
     const o = ctx.createOscillator();
     const gain = ctx.createGain();
-    o.type = 'triangle';
+    o.type = track.leadType; // per-track lead voice
     o.frequency.value = freq;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 2600;
@@ -491,6 +561,43 @@ export function createAudio() {
   // Helm: subtle blip per steering nudge (fires every tick while a button is held).
   function nudgeTick() { blip(300, 360, 0.06, 0.04, 'square'); }
 
+  // Ion storm front: a crackling static wash (engineering + main screen).
+  function ionStorm() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 0.7;
+    bp.frequency.setValueAtTime(2400, t);
+    bp.frequency.exponentialRampToValueAtTime(600, t + 1.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.28, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
+    src.connect(bp); bp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 1.55);
+    // A couple of electrical crackle ticks on top of the wash.
+    blip(1800, 900, 0.12, 0.05, 'square');
+    setTimeout(() => blip(2200, 1100, 0.1, 0.05, 'square'), 180);
+  }
+
+  // Debris field entered: a low gravel rumble (helm + main screen).
+  function debris() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 260;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.35, t + 0.2);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+    src.connect(lp); lp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 1.65);
+  }
+
   return {
     resume,
     setIntensity,
@@ -512,6 +619,8 @@ export function createAudio() {
     breakerTick,
     powerClick,
     nudgeTick,
+    ionStorm,
+    debris,
     shieldUp: () => shield(true),
     shieldDown: () => shield(false),
   };
