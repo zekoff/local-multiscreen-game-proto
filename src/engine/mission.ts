@@ -6,7 +6,7 @@
 
 import type { Range } from './rng.js';
 
-export type SystemId = 'engines' | 'shields' | 'weapons';
+export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors';
 
 export interface MissionDef {
   id: string;              // stable identifier ('supply-run', 'gen:standard:12345')

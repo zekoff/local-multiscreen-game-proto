@@ -109,13 +109,15 @@ function updateCaptainHud(state) {
   setCapRow('cap-helm',
     off < 12 ? `on course · thr ${state.throttle}%` : `${off.toFixed(0)}° ${dir} · thr ${state.throttle}%`,
     off > 45 ? 'alert' : off > 20 ? 'warn' : '');
-  const tripped = ['engines', 'shields', 'weapons'].filter((s) => state.breakers[s]);
+  const tripped = ['engines', 'shields', 'weapons', 'sensors'].filter((s) => state.breakers[s]);
+  const p = state.power;
   setCapRow('cap-eng',
-    `pwr ${state.power.engines}/${state.power.shields}/${state.power.weapons}` + (tripped.length ? ` · ${tripped.join(',')} TRIPPED` : ''),
+    `pwr e${p.engines} s${p.shields} w${p.weapons} sen${p.sensors} · det ${Math.round(state.sensorRange)}s`
+      + (tripped.length ? ` · ${tripped.join(',')} TRIPPED` : ''),
     tripped.length ? 'alert' : '');
   const sh = state.shields.raised ? `shields ${state.shields.strength}%` : 'shields DOWN';
-  const cd = state.fireReadyIn > 0 ? `cd ${state.fireReadyIn.toFixed(0)}s` : `chg ${state.charge}%`;
-  setCapRow('cap-wep', `${sh} · ${cd}`,
+  const laser = state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
+  setCapRow('cap-wep', `${sh} · ${laser}`,
     (state.shields.raised && state.shields.strength < 25) ? 'warn' : '');
 }
 function setCapRow(id, text, cls) {
@@ -125,18 +127,22 @@ function setCapRow(id, text, cls) {
   if (cls) row.classList.add(cls);
 }
 
-// --- One-shot effects (fx) from the server, plus screen shake ---
+// --- One-shot effects (fx) from the server, plus screen shake / flashes ---
 const lasers = [];      // { id, hit, life }
 const explosions = [];  // { id, life, max }
 const gateFx = [];      // { passed, life }
 let shake = 0;
+let warpFlash = 0;      // white full-screen flash on an Emergency Warp
+let pulseFlash = 0;     // cyan flash on an active sensor pulse
 
 function consumeFx(state) {
   for (const e of state.fx || []) {
     if (e.kind === 'laser') { lasers.push({ id: e.targetId, hit: e.hit, life: 0.28 }); audio.laser(); }
     else if (e.kind === 'explosion') { explosions.push({ id: e.id, life: 0.55, max: 0.55 }); audio.explosion(); }
-    else if (e.kind === 'impact') { shake = Math.min(26, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6)); audio.impact(!e.absorbed); }
-    else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) { shake = Math.min(shake + 3, 26); audio.gatePass(); } else audio.gateMiss(); }
+    else if (e.kind === 'impact') { shake = Math.min(30, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6)); audio.impact(!e.absorbed); }
+    else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) { shake = Math.min(shake + 3, 30); audio.gatePass(); } else audio.gateMiss(); }
+    else if (e.kind === 'warp') { shake = 30; warpFlash = 0.7; audio.warp(); }
+    else if (e.kind === 'sensorPulse') { pulseFlash = 0.45; audio.sensorPulse(); }
   }
 }
 
@@ -223,7 +229,7 @@ function frame(ts) {
 
   if (latest && latest.phase === 'active') {
     drawDestination(w, h, cx, dpr);
-    drawGates(w, h, cx, cy, dpr);
+    drawGates(w, h, cy, dpr);
     drawAsteroids(w, h, yawPx, dpr);
     drawLasers(w, h, yawPx, dt, dpr);
     drawExplosions(w, h, yawPx, dt, dpr);
@@ -235,6 +241,7 @@ function frame(ts) {
   // banks behind it, so "centered under the crosshair" reads as on-course.
   if (latest && latest.phase === 'active') drawReticle(w, h, dpr);
   drawGateFlash(w, h, dt);
+  drawFlashes(w, h, dt);
 
   requestAnimationFrame(frame);
 }
@@ -310,14 +317,18 @@ function drawPlanet(x, y, r, color) {
   ctx.restore();
 }
 
-// Fly-through nav gates: rings that grow toward the viewer as they close.
-function drawGates(w, h, cx, cy, dpr) {
-  const GATE_MAX_REACH = 18;
+// Fly-through nav gates: rings that grow toward the viewer as they close. Each
+// gate sits at its bearing offset from the ship's current heading, so it drifts
+// under the reticle only when the helm has steered onto that bearing.
+function drawGates(w, h, cy, dpr) {
+  const GATE_MAX_REACH = 19;
   for (const gate of latest.gates || []) {
     const t = Math.max(0, Math.min(1, 1 - gate.reachIn / GATE_MAX_REACH)); // 0 far .. 1 here
-    const r = (14 + t * t * Math.min(w, h) * 0.7) * (0.6 + 0.4);
-    const targeted = Math.abs(latest.alignment) <= 25;
-    const color = targeted ? '#8fd6ff' : '#ffb347';
+    const r = (14 + t * t * Math.min(w, h) * 0.7);
+    // Screen x from how far the ship's alignment is off the gate's bearing.
+    const cx = w / 2 + ((gate.bearing - latest.alignment) / 100) * (w * 0.5);
+    const lined = Math.abs(latest.alignment - gate.bearing) <= 30;
+    const color = lined ? '#8fd6ff' : '#ffb347';
     ctx.strokeStyle = hexA(color, 0.35 + t * 0.5);
     ctx.lineWidth = (2 + t * 3) * dpr;
     ctx.beginPath();
@@ -342,30 +353,43 @@ function drawGates(w, h, cx, cy, dpr) {
 function drawAsteroids(w, h, yawPx, dpr) {
   for (const a of latest.asteroids) {
     const closeness = Math.max(0, 1 - a.impactIn / 25);
+    const size = a.size ?? 1;
     const base = asteroidBasePos(a.id, w, h);
     const px = base.x + yawPx;
     const py = base.y;
-    const r = (6 + closeness * 34) * dpr;
-    // Glow grows and reddens as impact nears.
-    const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.7);
-    glow.addColorStop(0, `rgba(${170 + closeness * 80}, ${90 - closeness * 50}, 60, 0.35)`);
+    // Small on spawn, growing as it nears; bigger rocks are visibly larger even
+    // far out (the captain's early-spot cue). Tint is a muted rocky brown that
+    // only warms slightly as it closes — no loud red until it's resolved.
+    const r = (2.5 + closeness * 24) * (0.7 + 0.5 * size) * dpr;
+    const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.6);
+    glow.addColorStop(0, `rgba(150, 120, 95, ${0.12 + closeness * 0.18})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(px, py, r * 1.7, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, r * 1.6, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${140 + closeness * 100}, ${90 - closeness * 40}, 70, 0.95)`;
+    ctx.fillStyle = `rgba(${120 + closeness * 60}, ${104 - closeness * 24}, 92, 0.9)`;
     ctx.fill();
+
+    // Unresolved contacts stay an unlabeled dot — the captain must spot them and
+    // call for more sensor power. Once targetable, show name + speed + a
+    // color-coded threat read (data lives here, not on the weapons scope).
+    if (!a.targetable) continue;
     const targeted = a.id === latest.targetId;
     if (targeted) {
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2 * dpr;
       ctx.stroke();
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    const spd = a.speed ?? 1;
+    const speedTag = spd >= 1.15 ? 'FAST' : spd >= 0.95 ? 'MED' : 'SLOW';
+    // Threat: fast or imminent = red, moderate = amber, else yellow-green.
+    const threat = (spd >= 1.15 || a.impactIn < 6) ? '#ff5c5c'
+      : (spd >= 0.95 || a.impactIn < 12) ? '#ffb347' : '#e0d24c';
+    ctx.fillStyle = threat;
     ctx.font = `${12 * dpr}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(`${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - 6 * dpr);
+    ctx.fillText(`${a.label} ${speedTag} ${Math.ceil(a.impactIn)}s`, px, py - r - 6 * dpr);
   }
 }
 
@@ -436,6 +460,20 @@ function drawReticle(w, h, dpr) {
   ctx.moveTo(cx, cy - s); ctx.lineTo(cx, cy - gap);
   ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + s);
   ctx.stroke();
+}
+
+// Emergency Warp (white) and sensor-pulse (cyan) full-screen flashes.
+function drawFlashes(w, h, dt) {
+  if (warpFlash > 0) {
+    ctx.fillStyle = `rgba(230, 240, 255, ${Math.min(0.85, warpFlash)})`;
+    ctx.fillRect(0, 0, w, h);
+    warpFlash = Math.max(0, warpFlash - dt * 1.6);
+  }
+  if (pulseFlash > 0) {
+    ctx.fillStyle = `rgba(143, 214, 255, ${pulseFlash * 0.5})`;
+    ctx.fillRect(0, 0, w, h);
+    pulseFlash = Math.max(0, pulseFlash - dt * 1.2);
+  }
 }
 
 // Brief full-screen tint when a gate is passed (green) or missed (red).

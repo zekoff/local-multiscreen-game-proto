@@ -42,10 +42,13 @@
       <p id="gate-readout" style="margin-top:0.75rem; text-align:center; color:var(--dim); min-height:1.4em;"></p>
     </div>
 
-    <!-- Evasive maneuver: dodge imminent impacts, at a cost -->
+    <!-- Emergency Warp: jump clear of all threats, at a heavy systems cost -->
     <div class="panel">
       <h2>Emergency</h2>
-      <button class="danger" id="evasive-btn" style="width:100%">Evasive Maneuver</button>
+      <button class="danger" id="warp-btn" style="width:100%">Emergency Warp</button>
+      <p style="color:var(--dim); font-size:0.8rem; margin-top:0.5rem;">
+        Jumps clear of every threat — but scatters all power, drops shields &amp; weapons,
+        trips every breaker, and throws you off course. Last resort.</p>
     </div>
   </main>
 
@@ -66,7 +69,7 @@
     import { initStation } from '/js/station.js';
 
     const throttle = document.getElementById('throttle');
-    const evasiveBtn = document.getElementById('evasive-btn');
+    const warpBtn = document.getElementById('warp-btn');
     let draggingThrottle = false;
 
     const net = initStation({
@@ -80,31 +83,39 @@
         // Alignment marker: map -100..100 onto the track width.
         const pct = (state.alignment + 100) / 200;
         document.getElementById('align-marker').style.left = `calc(${(pct * 100).toFixed(1)}% - 5px)`;
-        // Nav-gate pass window (widens with effective engine power): 20 + 30*(eff/4).
+        // Nav-gate pass window (widens with effective engine power): 18 + 26*(eff/4).
+        // The window is centered on the gate's BEARING (well off the 0 course
+        // line) so the helm has to actively swing onto it; with no gate, the
+        // band just marks the on-course zone around 0.
         const effEngines = state.power.engines * (state.breakers.engines ? 0.5 : 1);
-        const win = 20 + 30 * (effEngines / 4);
-        const zone = document.getElementById('align-zone');
-        zone.style.left = `${((-win + 100) / 200 * 100).toFixed(1)}%`;
-        zone.style.width = `${(win / 100 * 100).toFixed(1)}%`;
-        const lined = Math.abs(state.alignment) <= win;
-        document.getElementById('align-state').textContent = lined ? 'lined up' : 'off line';
-        document.getElementById('align-state').style.color = lined ? 'var(--good)' : 'var(--warn)';
-        // Next nav gate readout: closest gate + whether we'll pass on this line.
+        const win = 18 + 26 * (effEngines / 4);
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
+        const center = next ? next.bearing : 0;
+        const half = next ? win : 15;
+        const zone = document.getElementById('align-zone');
+        zone.style.left = `${((center - half + 100) / 200 * 100).toFixed(1)}%`;
+        zone.style.width = `${(2 * half / 200 * 100).toFixed(1)}%`;
+        const lined = Math.abs(state.alignment - center) <= half;
+        document.getElementById('align-state').textContent = lined ? (next ? 'on the gate' : 'on course') : 'off line';
+        document.getElementById('align-state').style.color = lined ? 'var(--good)' : 'var(--warn)';
+        // Next nav gate readout: closest gate, its bearing, and steering hint.
         const gateEl = document.getElementById('gate-readout');
         if (next) {
-          gateEl.textContent = `${next.label} in ${Math.ceil(next.reachIn)}s — ${lined ? 'lined up ✓' : 'steer to center'}`;
+          const dir = next.bearing > 0 ? 'starboard' : 'port';
+          gateEl.textContent = lined
+            ? `${next.label} in ${Math.ceil(next.reachIn)}s — on the gate ✓`
+            : `${next.label} in ${Math.ceil(next.reachIn)}s — swing ${dir} (ease throttle to turn faster)`;
           gateEl.style.color = lined ? 'var(--good)' : 'var(--warn)';
         } else {
           gateEl.textContent = 'No nav gate ahead.';
           gateEl.style.color = 'var(--dim)';
         }
-        // Evasive availability.
-        evasiveBtn.disabled = state.evasiveReadyIn > 0;
-        evasiveBtn.textContent = state.evasiveReadyIn > 0
-          ? `Evasive (ready in ${Math.ceil(state.evasiveReadyIn)}s)`
-          : 'Evasive Maneuver';
+        // Emergency Warp availability.
+        warpBtn.disabled = state.warpReadyIn > 0;
+        warpBtn.textContent = state.warpReadyIn > 0
+          ? `Warp charging (${Math.ceil(state.warpReadyIn)}s)`
+          : 'Emergency Warp';
       },
     });
 
@@ -115,7 +126,7 @@
 
     document.getElementById('port-btn').addEventListener('click', () => net.action({ kind: 'nudge', dir: -1 }));
     document.getElementById('starboard-btn').addEventListener('click', () => net.action({ kind: 'nudge', dir: 1 }));
-    evasiveBtn.addEventListener('click', () => net.action({ kind: 'evasive' }));
+    warpBtn.addEventListener('click', () => net.action({ kind: 'warp' }));
   </script>
 </body>
 </html>

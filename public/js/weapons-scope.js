@@ -38,10 +38,18 @@ export class WeaponsScopeScene extends Phaser.Scene {
     this.ringsGfx = this.add.graphics();
     this.drawRings();
 
+    this.rangeGfx = this.add.graphics(); // passive sensor-range ring
     this.sweepGfx = this.add.graphics();
+    this.pulseGfx = this.add.graphics(); // expanding active-pulse ring
     this.sweepAngle = 0;
+    this.pulseT = -1; // <0 = idle; 0..1 = expanding
 
     this.add.circle(this.cx, this.cy, 6, COLOR_ACCENT); // the ship, dead center
+  }
+
+  // Kick off the expanding sensor-pulse animation (engineering fired a pulse).
+  pulse() {
+    this.pulseT = 0;
   }
 
   drawRings() {
@@ -63,7 +71,33 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const y2 = this.cy + Math.sin(this.sweepAngle) * this.radius;
     g.lineBetween(this.cx, this.cy, x2, y2);
 
+    this.drawRange();
+    this.drawPulse(delta);
     this.syncBlips();
+  }
+
+  // Ring showing how far out the passive sensors currently resolve contacts:
+  // a rock is invisible until it crosses inside this radius.
+  drawRange() {
+    const g = this.rangeGfx;
+    g.clear();
+    const s = this.latestState;
+    if (!s || s.sensorRange === undefined) return;
+    const rr = this.radius * Math.min(1, s.sensorRange / MAX_RANGE_S);
+    g.lineStyle(1.5, COLOR_ACCENT, 0.35);
+    g.strokeCircle(this.cx, this.cy, rr);
+  }
+
+  // Expanding ring for an active sensor pulse.
+  drawPulse(delta) {
+    const g = this.pulseGfx;
+    g.clear();
+    if (this.pulseT < 0) return;
+    this.pulseT += delta / 700;
+    if (this.pulseT >= 1) { this.pulseT = -1; return; }
+    const r = this.radius * this.pulseT;
+    g.lineStyle(3, COLOR_ACCENT, 1 - this.pulseT);
+    g.strokeCircle(this.cx, this.cy, r);
   }
 
   // Called by the page every time a new server snapshot arrives.
@@ -74,7 +108,10 @@ export class WeaponsScopeScene extends Phaser.Scene {
   syncBlips() {
     if (!this.latestState) return;
     const seen = new Set();
+    // Only render contacts the sensors have resolved (targetable); rocks outside
+    // passive range stay invisible until they close in or a pulse reveals them.
     for (const a of this.latestState.asteroids) {
+      if (!a.targetable) continue;
       seen.add(a.id);
       let blip = this.blips.get(a.id);
       if (!blip) {
@@ -98,8 +135,10 @@ export class WeaponsScopeScene extends Phaser.Scene {
 
   makeBlip(id) {
     const dot = this.add.circle(0, 0, 8, COLOR_DIM).setStrokeStyle(2, COLOR_DIM);
+    // Label is the contact NAME only — threat/speed data lives on the main
+    // screen so the captain (not the gunner) reads and calls out priorities.
     const label = this.add
-      .text(0, 13, '', { fontSize: '11px', color: '#7d8db3', fontFamily: 'monospace' })
+      .text(0, 13, '', { fontSize: '10px', color: '#7d8db3', fontFamily: 'monospace' })
       .setOrigin(0.5, 0);
     const container = this.add.container(this.cx, this.cy, [dot, label]);
     dot.setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Circle(0, 0, 16), hitAreaCallback: Phaser.Geom.Circle.Contains });
@@ -118,8 +157,9 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const color = targeted ? COLOR_TARGETED : urgent ? COLOR_BAD : COLOR_DIM;
     blip.dot.setFillStyle(color);
     blip.dot.setStrokeStyle(targeted ? 3 : 2, color);
-    blip.dot.setRadius(targeted ? 10 : 8);
-    blip.label.setText(`${Math.round(a.impactIn)}s`);
+    // Bigger rocks read as bigger blips (the captain's early-spot cue too).
+    blip.dot.setRadius((targeted ? 10 : 8) * (0.8 + 0.35 * (a.size ?? 1)));
+    blip.label.setText(a.label);
     blip.label.setColor(urgent ? '#ff5c5c' : '#7d8db3');
   }
 }

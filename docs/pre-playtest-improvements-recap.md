@@ -134,9 +134,106 @@ levers to close it later if you want to.
 - Not committed, not deployed. Two temp files remain untracked and intended to
   keep: `docs/playtest-visual-notes.md`, `docs/pre-playtest-improvements-recap.md`.
 
-## Files touched
+## Files touched (wave 1)
 
 Engine: `game.ts`, `mission.ts`, `missions/supply-run.ts`. Transports:
 `server-node.ts`, `worker/room-object.ts`. Bots: `scripts/lib/policies.mjs`.
 Client: `mainscreen.html/.js`, `helm.html`, `weapons.html`, `engineering.html`,
 `station.js`, `css/style.css`, new `js/audio.js`.
+
+---
+
+# Wave 2 — flight model, sensors, warp, and asteroid physics
+
+A second pass adding depth and a fourth engineering system. All tests still
+green (typecheck, `smoke`, `smoke:cf`, `lab`); every page loads error-free;
+verified in a real headless-browser session.
+
+## Flight model
+
+- **Engine power now buys maneuverability, not just speed.** Turn authority per
+  nudge rises with engine power. (#1)
+- **Throttle trades against turning.** High throttle = sluggish turns; ease off
+  to turn hard. Together with the above, you turn fast by feeding the engines
+  and/or slowing down. (#2)
+- **Nav gates now sit well off the current course** (a random port/starboard
+  bearing of 45–88°), so the helm must actively swing onto each gate's bearing
+  to fly it — which means slowing down or pouring power into engines. The helm's
+  alignment track shows the gate's pass-window band at its bearing, and the
+  read-out calls the direction ("swing starboard — ease throttle to turn
+  faster"). Gates are now scored as an optional bonus (up to +8), not a tax. (#3)
+
+## Emergency Warp (replaces Evasive Maneuvers) (#4)
+
+A last-resort helm button that jumps the ship elsewhere: all asteroid threats
+vanish (not destroyed — the ship is simply elsewhere), and the jump scatters
+the ship — **a big screen shake + white flash + sound**, **all four breakers
+trip**, **shields and the laser drop to zero**, **all power is unallocated**
+(engineering must re-power from scratch), the ship is thrown far off course
+with **throttle cut to zero**, it takes a little hull damage, and asteroid
+spawning pauses briefly. Long cooldown. Auto-engineering re-powers the ship
+after a jump so an unmanned engineer can't leave it dead in the water.
+
+## Laser recharge model (#14)
+
+Removed the fixed cooldown and the charge "battery bank." The charge bar is now
+purely a **recharge meter**: firing empties it; it refills at a rate set by
+weapon power; the laser is ready again only when full. So refire speed is
+emergent (more weapon power = faster refire), with no separate cooldown.
+
+## Sensors — a fourth engineering system (#16, #19, #20)
+
+- **Sensors is now a fourth powered system** on the engineering console
+  (engines/shields/weapons/sensors share the 6-unit budget; default 2/1/2/1).
+- Sensor power sets **detection range**: an asteroid is only **targetable on the
+  weapons scope once it closes to within range** (10s at zero sensor power,
+  +4s per effective unit). Low sensors ⇒ contacts resolve late ⇒ a shorter
+  shoot window. Asteroids are always visible on the main screen regardless —
+  sensors only gate targetability. (#16)
+- The **weapons scope draws a sensor-range ring**, and contacts stay invisible
+  on it until they cross inside; the main-screen label appears at the same
+  moment. (#20)
+- **Sensor Pulse button** (engineering, long cooldown ⇒ ~1–2 per mission):
+  lights up and makes targetable **every** current contact at once, without
+  changing the passive threshold. Draws an expanding ring on the weapons scope
+  and a cyan flash + ping on the main screen. (#19)
+
+## Asteroid variety (#15, #17, #18)
+
+- **Clusters:** ~1/3 of ambient spawns now arrive as a 2–3 rock burst in short
+  order, instead of always one-at-a-time. (#15)
+- **Per-rock size & speed → damage.** Each rock rolls a size (0.6–1.6) and speed
+  (0.75–1.35); bigger + faster = more damage. Fast rocks also close faster
+  (shorter window). (#18)
+- **Main-screen read-out:** rocks spawn **small and dim** (muted brown, no loud
+  red) and are **unlabeled until sensors resolve them** — giving the captain
+  time to spot one and call for more sensor power. Once targetable, the main
+  screen shows **name + speed (SLOW/MED/FAST) + a color-coded threat**. The
+  **weapons scope shows only the contact name** — threat data lives on the main
+  screen so the captain sets priorities and calls them to the gunner. (#17, #18)
+
+## Captain's HUD additions
+
+Now shows the sensor power split and detection range (`pwr e2 s1 w2 sen1 · det
+14s`) and the laser recharge state, so a screen-less commander can see when to
+order more sensors/weapons power — and the full "everything's down" picture
+right after an Emergency Warp.
+
+## Balance (`npm run lab`, 10 seeds/cell)
+
+The new systems create a real difficulty gradient — and, as a side effect,
+finally break the long-standing 100%-auto-arrival gap:
+
+- **skilled:** 100% arrival, ~72–79 score, low impacts.
+- **novice:** 100% arrival, ~64–69, scarred.
+- **auto (unmanned):** now **70% on supply-run/kepler, 50% on gen:long**, hull
+  often gutted — an abandoned ship genuinely struggles. No stalls anywhere.
+
+See `docs/console-complexity-analysis.md` for a per-console load + interplay
+analysis and the balance proposals that came out of this pass.
+
+## Files touched (wave 2)
+
+Engine: `game.ts`, `mission.ts`. Bots: `scripts/lib/policies.mjs`. Client:
+`mainscreen.js`, `helm.html`, `weapons.html`, `engineering.html`,
+`js/weapons-scope.js`, `js/audio.js`, `css/style.css`.

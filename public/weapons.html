@@ -81,17 +81,23 @@
         // calls back here with the id, same action any target-list UI would send.
         scopeScene.onTarget = (id) => net.action({ kind: 'target', id });
         scopeScene.setState(state);
-        scopeEmptyEl.style.display = state.asteroids.length === 0 ? '' : 'none';
+        // Trigger the pulse sweep animation when engineering fires a pulse.
+        if ((state.fx || []).some((e) => e.kind === 'sensorPulse')) scopeScene.pulse();
+        // Only sensor-resolved contacts show on the scope, so the empty message
+        // tracks how many are actually targetable.
+        const acquirable = state.asteroids.filter((a) => a.targetable);
+        scopeEmptyEl.style.display = acquirable.length === 0 ? '' : 'none';
         const targeted = state.asteroids.find((a) => a.id === state.targetId);
-        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label} (${targeted.dmg} dmg)` : '';
+        // Scope shows only the contact name — threat/speed data lives on the
+        // main screen so the captain can call priorities.
+        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label}` : '';
 
-        // Charge bar (cool while charging, green when there's enough to fire).
-        setChargeBar(document.getElementById('charge-bar'), state.charge, state.charge >= state.fireCost);
-        // Fire availability: needs charge, a target, and the phaser off cooldown.
-        const onCooldown = state.fireReadyIn > 0;
-        fireBtn.disabled = state.charge < state.fireCost || state.targetId === null || onCooldown;
-        fireBtn.textContent = onCooldown
-          ? `RECHARGING (${Math.ceil(state.fireReadyIn)}s)`
+        // Charge is the laser recharge meter — green and firable only at full.
+        const ready = state.charge >= 100;
+        setChargeBar(document.getElementById('charge-bar'), state.charge, ready);
+        fireBtn.disabled = !ready || state.targetId === null;
+        fireBtn.textContent = !ready
+          ? 'CHARGING…'
           : state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
         // Shield toggle reflects server state; sound the raise/lower edge.
         shieldsRaised = state.shields.raised;

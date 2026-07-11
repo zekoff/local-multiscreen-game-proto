@@ -328,6 +328,48 @@ export function createAudio() {
     o.start(t); o.stop(t + 0.17);
   }
 
+  // Emergency Warp: a big downward whoosh + sub boom (the ship tears away).
+  function warp() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(3000, t);
+    lp.frequency.exponentialRampToValueAtTime(120, t + 0.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
+    src.connect(lp); lp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 0.66);
+    const o = ctx.createOscillator();
+    const og = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+    og.gain.setValueAtTime(0.8, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    o.connect(og); og.connect(sfxGain);
+    o.start(t); o.stop(t + 0.56);
+  }
+
+  // Active sensor pulse: a clean rising sonar-style ping.
+  function sensorPulse() {
+    if (!ctx) return;
+    const t = now();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(500, t);
+    o.frequency.exponentialRampToValueAtTime(1400, t + 0.25);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.3, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    o.connect(g); g.connect(sfxGain);
+    o.start(t); o.stop(t + 0.42);
+  }
+
   function shield(up) { // filtered-noise whoosh, pitch up when raising
     if (!ctx) return;
     const t = now();
@@ -356,6 +398,8 @@ export function createAudio() {
     gateMiss,
     breakerTrip,
     breakerReset,
+    warp,
+    sensorPulse,
     shieldUp: () => shield(true),
     shieldDown: () => shield(false),
   };

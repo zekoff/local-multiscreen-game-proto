@@ -30,8 +30,17 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
     engineering(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
       const actions = [];
-      for (const sys of ['engines', 'shields', 'weapons']) {
+      for (const sys of ['engines', 'shields', 'weapons', 'sensors']) {
         if (state.breakers[sys]) actions.push({ kind: 'resetBreaker', system: sys });
+      }
+      // Re-power the ship if points are unallocated (e.g. after an Emergency
+      // Warp): fill toward a sensible default split.
+      const target = { engines: 2, weapons: 2, shields: 1, sensors: 1 };
+      const used = ['engines', 'shields', 'weapons', 'sensors'].reduce((n, s) => n + (state.power[s] || 0), 0);
+      if (used < 6) {
+        for (const s of ['engines', 'weapons', 'shields', 'sensors']) {
+          if ((state.power[s] || 0) < target[s]) { actions.push({ kind: 'power', system: s, delta: 1 }); break; }
+        }
       }
       return actions;
     },
@@ -39,24 +48,22 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
     weapons(state) {
       if (state.phase !== 'active') return [];
       const actions = [];
+      // Shields react to ANY inbound rock (even one sensors haven't resolved);
+      // hysteresis avoids flip-flopping, act only on a change of intent.
       const nearest = state.asteroids.length > 0
         ? Math.min(...state.asteroids.map((a) => a.impactIn))
         : Infinity;
-      // Shields are now a managed resource: raise as a rock closes, lower once
-      // clear so they recharge (and the ship speeds up). Hysteresis on the
-      // threshold avoids flip-flopping; only act when intent changes.
       const wantShields = state.shields.raised ? nearest <= 14 : nearest <= 10;
       if (wantShields !== state.shields.raised && rng() <= knobs.react) {
         actions.push({ kind: 'shields', raised: wantShields });
       }
       if (rng() > knobs.react) return actions;
-      if (state.asteroids.length > 0) {
-        const urgent = [...state.asteroids].sort((a, b) => a.impactIn - b.impactIn)[0];
+      // Firing needs a sensor-resolved (targetable) contact and a full recharge.
+      const acquirable = state.asteroids.filter((a) => a.targetable);
+      if (acquirable.length > 0) {
+        const urgent = [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0];
         if (state.targetId !== urgent.id) actions.push({ kind: 'target', id: urgent.id });
-        const chargeGate = Math.max(state.fireCost, knobs.fireAtCharge);
-        // Don't bother firing while the phaser is on cooldown.
-        const ready = (state.fireReadyIn ?? 0) <= 0;
-        if (ready && state.charge >= chargeGate && state.targetId !== null) actions.push({ kind: 'fire' });
+        if (state.charge >= 100 && state.targetId !== null) actions.push({ kind: 'fire' });
       }
       return actions;
     },
