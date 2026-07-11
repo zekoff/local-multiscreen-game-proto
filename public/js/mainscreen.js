@@ -8,7 +8,13 @@
 import { initStation, fmtTime, setHealthBar } from '/js/station.js';
 import { qrcode } from '/js/vendor/qrcode-generator.mjs';
 import { createAudio } from '/js/audio.js';
+import { playFxAudio } from '/js/fx-audio.js';
 import { mountDebugPanel } from '/js/debug-panel.js';
+
+// The music builds over this many seconds, then holds — so a 3-minute run
+// climaxes right at the end and a longer run stays at full for the extra time
+// (the "build over ~3 min, pad out to 5" arc).
+const MUSIC_BUILD_SECONDS = 180;
 
 const canvas = document.getElementById('viewscreen');
 const ctx = canvas.getContext('2d');
@@ -70,11 +76,13 @@ const net = initStation({
   render(state) {
     consumeFx(state); // must run before we overwrite `latest`
     latest = state;
-    // Music follows the phase; intensity grows with mission progress so the
-    // bed builds (percussion in, filter opens) as the run goes on.
+    // Music follows the phase; the build is driven by *time*, not progress, so
+    // the ambient->melody->beat arc lands over ~MUSIC_BUILD_SECONDS and then
+    // holds at full for the remainder of a longer mission.
     if (state.phase === 'active') {
       if (!musicRunning) { audio.startMusic(); musicRunning = true; }
-      audio.setIntensity(0.12 + 0.85 * (state.progress / 100));
+      const buildOver = Math.min(state.missionLength || MUSIC_BUILD_SECONDS, MUSIC_BUILD_SECONDS);
+      audio.setIntensity(Math.min(1, state.missionTime / buildOver));
     } else if (musicRunning) {
       audio.stopMusic();
       musicRunning = false;
@@ -149,15 +157,20 @@ let shake = 0;
 let warpFlash = 0;      // white full-screen flash on an Emergency Warp
 let pulseFlash = 0;     // cyan flash on an active sensor pulse
 
+// The main screen renders EVERY effect visually, but only plays the ship-wide
+// sounds (explosion/impact/warp). The laser is heard at weapons, gate chimes at
+// helm, sensor pings at engineering — see each station's playFxAudio call.
+const MAIN_AUDIO_KINDS = new Set(['explosion', 'impact', 'warp']);
 function consumeFx(state) {
   for (const e of state.fx || []) {
-    if (e.kind === 'laser') { lasers.push({ id: e.targetId, hit: e.hit, life: 0.28 }); audio.laser(); }
-    else if (e.kind === 'explosion') { explosions.push({ id: e.id, life: 0.55, max: 0.55 }); audio.explosion(); }
-    else if (e.kind === 'impact') { shake = Math.min(30, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6)); audio.impact(!e.absorbed); }
-    else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) { shake = Math.min(shake + 3, 30); audio.gatePass(); } else audio.gateMiss(); }
-    else if (e.kind === 'warp') { shake = 30; warpFlash = 0.7; audio.warp(); }
-    else if (e.kind === 'sensorPulse') { pulseFlash = 0.45; audio.sensorPulse(); }
+    if (e.kind === 'laser') { lasers.push({ id: e.targetId, hit: e.hit, life: 0.28 }); }
+    else if (e.kind === 'explosion') { explosions.push({ id: e.id, life: 0.55, max: 0.55 }); }
+    else if (e.kind === 'impact') { shake = Math.min(30, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6)); }
+    else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) shake = Math.min(shake + 3, 30); }
+    else if (e.kind === 'warp') { shake = 30; warpFlash = 0.7; }
+    else if (e.kind === 'sensorPulse') { pulseFlash = 0.45; }
   }
+  playFxAudio(state.fx, audio, MAIN_AUDIO_KINDS);
 }
 
 // --- Starfield (forward-facing perspective; see original for the math) ---
@@ -189,6 +202,40 @@ function asteroidBasePos(id, w, h) {
     x: (0.15 + ((id * 0.618) % 0.7)) * w,
     y: (0.2 + ((id * 0.377) % 0.55)) * h,
   };
+}
+
+// Last drawn screen position per asteroid id, so a laser/explosion can point at
+// where a rock WAS after it's been removed from the state (it's populated each
+// frame by drawAsteroids). Cleared if it grows unreasonably (session restarts).
+const astPos = new Map();
+
+// Where an asteroid sits on screen this frame: it starts off-axis at its
+// port/starboard bearing and drifts toward the vanishing point (the ship, dead
+// ahead) as it closes — and the whole field slides with the helm's steering
+// (yawPx), so rocks honor how the ship is aligned.
+function asteroidScreenPos(a, w, h, yawPx) {
+  const closeness = Math.max(0, Math.min(1, 1 - a.impactIn / 25));
+  const bx = (a.bearing ?? 0) / 100;       // -1..1 port/starboard
+  const idH = (a.id * 0.377) % 1;          // stable vertical spread per rock
+  const centerX = w / 2 + yawPx;
+  const centerY = h / 2;
+  const farX = w / 2 + bx * w * 0.42 + yawPx;
+  const farY = h * (0.22 + idH * 0.5);
+  const t = closeness * closeness;          // accelerate convergence near impact
+  return {
+    x: farX + (centerX - farX) * t,
+    y: farY + (centerY - farY) * t,
+    closeness,
+  };
+}
+
+// Screen position for an id that may already be gone from the state (laser /
+// explosion), from the cache, falling back to the deterministic base position.
+function cachedAstPos(id, w, h, yawPx) {
+  const p = astPos.get(id);
+  if (p) return p;
+  const base = asteroidBasePos(id, w, h);
+  return { x: base.x + yawPx, y: base.y };
 }
 
 let yaw = 0; // smoothed course bank, -1..1
@@ -365,45 +412,45 @@ function drawGates(w, h, cy, dpr) {
 }
 
 function drawAsteroids(w, h, yawPx, dpr) {
+  if (astPos.size > 400) astPos.clear();
   for (const a of latest.asteroids) {
-    const closeness = Math.max(0, 1 - a.impactIn / 25);
+    const { x: px, y: py, closeness } = asteroidScreenPos(a, w, h, yawPx);
+    astPos.set(a.id, { x: px, y: py });
     const size = a.size ?? 1;
-    const base = asteroidBasePos(a.id, w, h);
-    const px = base.x + yawPx;
-    const py = base.y;
-    // Small on spawn, growing as it nears; bigger rocks are visibly larger even
-    // far out (the captain's early-spot cue). Tint is a muted rocky brown that
-    // only warms slightly as it closes — no loud red until it's resolved.
-    const r = (2.5 + closeness * 24) * (0.7 + 0.5 * size) * dpr;
-    const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.6);
-    glow.addColorStop(0, `rgba(150, 120, 95, ${0.12 + closeness * 0.18})`);
+    // Tiny on spawn — about the size of a starfield star — then growing large as
+    // it bears down. Colour is a flat, low-saturation grey-brown rock (no red
+    // warming); threat is communicated by the ring, not the body.
+    const r = (0.8 + closeness * 26) * (0.7 + 0.5 * size) * dpr;
+    const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.7);
+    glow.addColorStop(0, `rgba(150, 140, 120, ${0.06 + closeness * 0.14})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(px, py, r * 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, r * 1.7, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${120 + closeness * 60}, ${104 - closeness * 24}, 92, 0.9)`;
+    ctx.fillStyle = 'rgba(150, 140, 122, 0.92)';
     ctx.fill();
 
-    // Unresolved contacts stay an unlabeled dot — the captain must spot them and
-    // call for more sensor power. Once targetable, show name + speed + a
-    // color-coded threat read (data lives here, not on the weapons scope).
+    // Unresolved contacts stay an unlabeled grey rock — the captain must spot
+    // them and call for more sensor power. Once targetable (target-acquired by
+    // sensors), ring it in its threat colour; the currently-locked target gets a
+    // brighter, thicker ring.
     if (!a.targetable) continue;
-    const targeted = a.id === latest.targetId;
-    if (targeted) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2 * dpr;
-      ctx.stroke();
-    }
     const spd = a.speed ?? 1;
     const speedTag = spd >= 1.15 ? 'FAST' : spd >= 0.95 ? 'MED' : 'SLOW';
     // Threat: fast or imminent = red, moderate = amber, else yellow-green.
     const threat = (spd >= 1.15 || a.impactIn < 6) ? '#ff5c5c'
       : (spd >= 0.95 || a.impactIn < 12) ? '#ffb347' : '#e0d24c';
+    const targeted = a.id === latest.targetId;
+    ctx.strokeStyle = threat;
+    ctx.globalAlpha = targeted ? 1 : 0.8;
+    ctx.lineWidth = (targeted ? 3.5 : 2) * dpr;
+    ctx.beginPath(); ctx.arc(px, py, r + (targeted ? 6 : 4) * dpr, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.fillStyle = threat;
     ctx.font = `${12 * dpr}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(`${a.label} ${speedTag} ${Math.ceil(a.impactIn)}s`, px, py - r - 6 * dpr);
+    ctx.fillText(`${a.label} ${speedTag} ${Math.ceil(a.impactIn)}s`, px, py - r - 8 * dpr);
   }
 }
 
@@ -412,9 +459,9 @@ function drawLasers(w, h, yawPx, dt, dpr) {
   const originY = h * 0.98;
   for (let i = lasers.length - 1; i >= 0; i--) {
     const l = lasers[i];
-    const base = asteroidBasePos(l.id, w, h);
-    let tx = base.x + yawPx;
-    const ty = base.y;
+    const p = cachedAstPos(l.id, w, h, yawPx);
+    let tx = p.x;
+    const ty = p.y;
     if (!l.hit) tx += (l.id % 2 ? 1 : -1) * 40 * dpr; // a miss sails wide
     const alpha = Math.max(0, l.life / 0.28);
     const originX = w / 2 + (l.id % 2 ? 22 : -22) * dpr;
@@ -433,9 +480,9 @@ function drawLasers(w, h, yawPx, dt, dpr) {
 function drawExplosions(w, h, yawPx, dt, dpr) {
   for (let i = explosions.length - 1; i >= 0; i--) {
     const e = explosions[i];
-    const base = asteroidBasePos(e.id, w, h);
-    const px = base.x + yawPx;
-    const py = base.y;
+    const p = cachedAstPos(e.id, w, h, yawPx);
+    const px = p.x;
+    const py = p.y;
     const t = 1 - e.life / e.max; // 0..1
     const r = (8 + t * 46) * dpr;
     const alpha = 1 - t;

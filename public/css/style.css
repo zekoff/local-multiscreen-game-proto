@@ -141,19 +141,29 @@ select {
 .stats-grid .label { align-self: center; }
 
 /* --- Toasts for game events --- */
-/* Anchored to the top-right corner (not the center content column) so they
-   never sit on top of a panel header; capped in count by JS. Hidden while a
-   full-screen overlay (lobby/debrief) is up so the end-of-mission event burst
-   can't bury the debrief. */
-#toasts { position: fixed; top: 3.4rem; right: 0.6rem; left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; pointer-events: none; z-index: 20; max-width: min(20rem, 70vw); }
+/* Crew stations (phones): anchored to the BOTTOM-right so they never cover the
+   controls at the top of the panels, they RISE up from the bottom edge
+   (newest nearest the edge via column-reverse), use a heavy-alpha translucent
+   background you can read the controls through, and are fully click-through
+   (pointer-events:none on the container AND the toasts). Capped in count by JS;
+   hidden while a full-screen overlay (lobby/debrief) is up. The main screen
+   overrides these (see .mainscreen-body #toasts) to sit larger on the side. */
+#toasts { position: fixed; bottom: 0.6rem; top: auto; right: 0.6rem; left: auto; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 0.4rem; pointer-events: none; z-index: 20; max-width: min(20rem, 72vw); }
 #toasts.suppressed { display: none; }
 .toast {
-  background: var(--panel); border: 1px solid var(--accent); border-radius: 8px;
+  background: rgba(19, 26, 42, 0.5); border: 1px solid var(--accent); border-radius: 8px;
   padding: 0.5rem 1rem; font-size: 0.9rem; max-width: 100%;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  animation: toast-fade 4s forwards;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  pointer-events: none; /* clicks pass straight through to the controls beneath */
+  animation: toast-rise 4s forwards;
 }
-@keyframes toast-fade { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes toast-rise {
+  0% { opacity: 0; transform: translateY(14px); }
+  8% { opacity: 1; transform: translateY(0); }
+  80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
 
 /* --- Main screen layout --- */
 /* overflow:hidden + min-height:0 keeps the bottom HUD from pushing content
@@ -183,5 +193,25 @@ select {
 .debug-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; justify-content: center; }
 .debug-btn { min-height: 40px; padding: 0.4rem 0.7rem; font-size: 0.95rem; }
 .debug-btn.on { background: var(--accent); color: #06090f; border-color: var(--accent); font-weight: 700; }
-/* On the main screen the panel floats over the top-center of the viewscreen. */
-.mainscreen-body #debug-panel { position: absolute; top: 3.6rem; left: 50%; transform: translateX(-50%); z-index: 6; text-align: center; }
+/* On the main screen the panel floats at the BOTTOM-center of the viewscreen,
+   out of the center of the view (was top-center, over the action). */
+.mainscreen-body #debug-panel { position: absolute; bottom: 0.8rem; top: auto; left: 50%; transform: translateX(-50%); z-index: 6; text-align: center; }
+/* On a phone-sized main screen, drop the debug panel into normal flow at the
+   bottom of the widget stack rather than floating it over the cramped view. */
+@media (max-width: 640px) {
+  .mainscreen-body #debug-panel { position: static; transform: none; margin: 0.4rem auto 0; }
+}
+
+/* --- Main-screen toasts: large and side-anchored (don't bury the viewport) ---
+   Sized relative to the window and pinned to the right edge, vertically
+   centered, so the center of the viewscreen stays clear. Captain HUD is
+   top-left, debug bottom-center — toasts take the right. */
+.mainscreen-body #toasts {
+  top: 50%; bottom: auto; right: 0.9rem; left: auto; transform: translateY(-50%);
+  flex-direction: column; align-items: flex-end; max-width: 30vw;
+}
+.mainscreen-body .toast {
+  font-size: clamp(0.95rem, 1.9vw, 1.7rem);
+  padding: 0.55rem 1.1rem;
+  background: rgba(8, 12, 20, 0.62);
+}

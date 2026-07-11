@@ -27,6 +27,14 @@ export class WeaponsScopeScene extends Phaser.Scene {
     this.latestState = null;
     this.onTarget = null; // set by the page: (asteroidId) => void
     this.blips = new Map(); // asteroid id -> blip handles
+    // Optimistic targeting: a tap paints the blip as acquired IMMEDIATELY
+    // (before the ~250ms server round-trip), then reconciles against the next
+    // few snapshots — cleared once the server confirms, or dropped if it never
+    // does (e.g. the contact wasn't actually targetable). Visual only; the
+    // authoritative target still comes from the server's targetId.
+    this.optimisticTargetId = null;
+    this.optimisticSnap = 0;
+    this.snapCount = 0;
   }
 
   create() {
@@ -103,6 +111,14 @@ export class WeaponsScopeScene extends Phaser.Scene {
   // Called by the page every time a new server snapshot arrives.
   setState(state) {
     this.latestState = state;
+    this.snapCount++;
+    // Reconcile the optimistic target: clear it once the server confirms the
+    // lock, or after a few snapshots if it never does (tap rejected/expired).
+    if (this.optimisticTargetId !== null) {
+      if (state.targetId === this.optimisticTargetId || this.snapCount - this.optimisticSnap >= 3) {
+        this.optimisticTargetId = null;
+      }
+    }
   }
 
   syncBlips() {
@@ -142,7 +158,13 @@ export class WeaponsScopeScene extends Phaser.Scene {
       .setOrigin(0.5, 0);
     const container = this.add.container(this.cx, this.cy, [dot, label]);
     dot.setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Circle(0, 0, 16), hitAreaCallback: Phaser.Geom.Circle.Contains });
-    dot.on('pointerdown', () => this.onTarget?.(id));
+    dot.on('pointerdown', () => {
+      // Paint this blip acquired right now; the next frame's updateBlip reads
+      // optimisticTargetId so the ring turns white before the server replies.
+      this.optimisticTargetId = id;
+      this.optimisticSnap = this.snapCount;
+      this.onTarget?.(id);
+    });
     return { container, dot, label };
   }
 
@@ -153,7 +175,8 @@ export class WeaponsScopeScene extends Phaser.Scene {
     blip.container.setPosition(this.cx + Math.cos(bearing) * r, this.cy + Math.sin(bearing) * r);
 
     const urgent = a.impactIn <= URGENT_S;
-    const targeted = a.id === this.latestState.targetId;
+    // Targeted if the server says so OR we optimistically locked it on tap.
+    const targeted = a.id === this.latestState.targetId || a.id === this.optimisticTargetId;
     const color = targeted ? COLOR_TARGETED : urgent ? COLOR_BAD : COLOR_DIM;
     blip.dot.setFillStyle(color);
     blip.dot.setStrokeStyle(targeted ? 3 : 2, color);

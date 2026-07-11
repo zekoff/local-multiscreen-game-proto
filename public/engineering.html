@@ -5,7 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Engineering Station</title>
   <link rel="stylesheet" href="/css/style.css">
-  <style>:root { --accent: #ffb347; }</style>
+  <style>
+    :root { --accent: #ffb347; }
+    /* Two-step breaker restore: drag the slider fully right to ARM, then tap
+       the button three times to re-power. A tripped system is fully offline. */
+    .breaker { display: block; margin-bottom: 0.6rem; }
+    .brk-label { font-weight: 600; margin-bottom: 0.3rem; }
+    .breaker.tripped .brk-label { color: #ff6f6f; }
+    .brk-restore { display: flex; flex-direction: column; gap: 0.4rem; }
+    .brk-restore.hidden { display: none; }
+    .brk-slider { width: 100%; accent-color: var(--accent); height: 2rem; }
+    .brk-tap { width: 100%; }
+    .brk-tap:disabled { opacity: 0.5; }
+  </style>
 </head>
 <body>
   <header>
@@ -63,17 +75,24 @@
   <script type="module">
     import { initStation, setHealthBar } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
+    import { playFxAudio } from '/js/fx-audio.js';
 
-    // Console-local audio: engineering hears its own breakers trip and reset.
+    // Console-local audio: engineering hears its own breakers (trip / arm / tap
+    // / re-power), power reallocation clicks, and — routed off the main screen —
+    // sensor contacts + the active sensor pulse.
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    const ENGINEERING_FX = new Set(['sensorContact', 'sensorPulse']);
     const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false };
+    // Per-system restore-gesture progress (armed via the slider, then 3 taps).
+    const RESTORE_TAPS = 3;
+    const restore = { engines: null, shields: null, weapons: null, sensors: null };
 
     const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors'];
     const POWER_MAX = 4;
     const POWER_TOTAL = 6;
 
-    // Build the three power rows once; render() updates pips and buttons.
+    // Build the power rows and breaker widgets once; render() updates state.
     const systemsEl = document.getElementById('power-systems');
     const breakersEl = document.getElementById('breakers');
     for (const sys of SYSTEMS) {
@@ -88,33 +107,55 @@
         <button data-sys="${sys}" data-delta="1" style="flex:0.5">+</button>`;
       systemsEl.appendChild(row);
 
-      const brk = document.createElement('button');
+      // Breaker widget: an OK label that, when tripped, reveals a slider (arm)
+      // and a 3-tap restore button.
+      const brk = document.createElement('div');
       brk.className = 'breaker';
       brk.id = `brk-${sys}`;
-      brk.textContent = `${sys}: OK`;
+      brk.innerHTML = `
+        <div class="brk-label">${sys}: OK</div>
+        <div class="brk-restore hidden">
+          <input type="range" class="brk-slider" min="0" max="100" value="0" aria-label="Slide to arm ${sys} breaker">
+          <button class="brk-tap" disabled>Slide to arm</button>
+        </div>`;
       breakersEl.appendChild(brk);
     }
+
+    // Reset a breaker's restore gesture back to the start (slider left, no taps).
+    function resetGesture(sys) {
+      restore[sys] = { armed: false, taps: 0 };
+      const brk = document.getElementById(`brk-${sys}`);
+      brk.querySelector('.brk-slider').value = 0;
+      const tap = brk.querySelector('.brk-tap');
+      tap.disabled = true;
+      tap.textContent = 'Slide to arm';
+    }
+    for (const sys of SYSTEMS) resetGesture(sys);
 
     const net = initStation({
       seat: 'engineering',
       render(state) {
+        // Engineering-local SFX from the fx stream (sensor contacts + pulse).
+        playFxAudio(state.fx, audio, ENGINEERING_FX);
         const used = SYSTEMS.reduce((sum, s) => sum + state.power[s], 0);
         document.getElementById('power-free').textContent = `${POWER_TOTAL - used} spare`;
         for (const sys of SYSTEMS) {
-          // Light up pips to match the current allocation.
+          const tripped = !!state.breakers[sys];
+          // A tripped system is fully offline — show no lit pips regardless of
+          // its allocation, so the "dark system" reads at a glance.
           const pips = document.querySelectorAll(`#pips-${sys} .pip`);
-          pips.forEach((p, i) => p.classList.toggle('on', i < state.power[sys]));
-          // Breaker button turns red only while tripped; neutral (and disabled)
-          // when OK so healthy systems don't read as danger buttons.
+          pips.forEach((p, i) => p.classList.toggle('on', !tripped && i < state.power[sys]));
           const brk = document.getElementById(`brk-${sys}`);
-          const tripped = state.breakers[sys];
-          // Sound the transition (trip vs reset) once, off the state edge.
-          if (tripped && !prevBreakers[sys]) audio.breakerTrip();
-          else if (!tripped && prevBreakers[sys]) audio.breakerReset();
-          prevBreakers[sys] = !!tripped;
-          brk.classList.toggle('tripped', !!tripped);
-          brk.textContent = tripped ? `${sys}: TRIPPED — TAP TO RESET` : `${sys}: OK`;
-          brk.disabled = !tripped;
+          const label = brk.querySelector('.brk-label');
+          const restoreEl = brk.querySelector('.brk-restore');
+          // Sound the transition (trip vs re-power) once, off the state edge, and
+          // reset the restore gesture when a breaker newly trips or finally clears.
+          if (tripped && !prevBreakers[sys]) { audio.breakerTrip(); resetGesture(sys); }
+          else if (!tripped && prevBreakers[sys]) { audio.breakerReset(); resetGesture(sys); }
+          prevBreakers[sys] = tripped;
+          brk.classList.toggle('tripped', tripped);
+          label.textContent = tripped ? `${sys}: TRIPPED — OFFLINE` : `${sys}: OK`;
+          restoreEl.classList.toggle('hidden', !tripped);
         }
         setHealthBar(document.getElementById('hull-bar'), state.hull);
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
@@ -130,15 +171,46 @@
     // Sensor pulse button.
     document.getElementById('pulse-btn').addEventListener('click', () => net.action({ kind: 'sensorPulse' }));
 
-    // Power +/- buttons.
+    // Power +/- buttons (soft click on each reallocation).
     systemsEl.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-sys]');
-      if (btn) net.action({ kind: 'power', system: btn.dataset.sys, delta: Number(btn.dataset.delta) });
+      if (btn) { net.action({ kind: 'power', system: btn.dataset.sys, delta: Number(btn.dataset.delta) }); audio.powerClick(); }
     });
-    // Breaker reset buttons.
+
+    // Two-step breaker restore. Step 1: drag the slider fully right to ARM.
+    breakersEl.addEventListener('input', (ev) => {
+      const slider = ev.target.closest('.brk-slider');
+      if (!slider) return;
+      const brk = slider.closest('.breaker');
+      const sys = brk.id.slice(4);
+      const g = restore[sys];
+      if (!g || g.armed) return;
+      if (Number(slider.value) >= 100) {
+        g.armed = true;
+        const tap = brk.querySelector('.brk-tap');
+        tap.disabled = false;
+        tap.textContent = `Tap ${RESTORE_TAPS}× to restore (0/${RESTORE_TAPS})`;
+        audio.breakerArm();
+      }
+    });
+    // Step 2: tap three times to re-power. The final tap sends resetBreaker; the
+    // widget waits on the server to actually clear the breaker (render resets it).
     breakersEl.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('button[id^="brk-"]');
-      if (btn && !btn.disabled) net.action({ kind: 'resetBreaker', system: btn.id.slice(4) });
+      const tap = ev.target.closest('.brk-tap');
+      if (!tap || tap.disabled) return;
+      const brk = tap.closest('.breaker');
+      const sys = brk.id.slice(4);
+      const g = restore[sys];
+      if (!g || !g.armed) return;
+      g.taps++;
+      audio.breakerTick();
+      if (g.taps >= RESTORE_TAPS) {
+        net.action({ kind: 'resetBreaker', system: sys });
+        tap.disabled = true;
+        tap.textContent = 'Restoring…';
+      } else {
+        tap.textContent = `Tap ${RESTORE_TAPS}× to restore (${g.taps}/${RESTORE_TAPS})`;
+      }
     });
   </script>
 </body>

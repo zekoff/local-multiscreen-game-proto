@@ -62,6 +62,43 @@ Clients never compute game outcomes locally; they render the latest snapshot
 and echo user input as actions. This is why a phone can lock, drop Wi-Fi,
 rejoin, and be fully current one tick later, on either transport.
 
+### Responsiveness: the optimistic-intent overlay
+
+Because a control's effect isn't visible until the next full-state broadcast,
+an input can feel up to ~250ms laggy (a target tap, a shield toggle). The
+architecture has **no client-side prediction** and deliberately keeps it that
+way — but individual controls can still feel instant with a tiny, low-risk
+pattern that does **not** touch the simulation:
+
+> **Optimistic-intent overlay.** On input, store the *intended* value locally
+> and let the renderer prefer it over the snapshot; on each incoming snapshot,
+> reconcile — clear the local intent once the authoritative state matches, or
+> expire it after ~2–3 snapshots if the server never confirms (the action was
+> rejected). The authoritative state always wins; the overlay only front-runs
+> the render by one round-trip.
+
+The weapons scope uses exactly this for target taps
+(`public/js/weapons-scope.js`: `optimisticTargetId`, reconciled in
+`setState`) — the blip paints as acquired on `pointerdown`, before the server
+echoes the lock.
+
+**Difficulty of extending this** depends entirely on the *kind* of action:
+
+- **Idempotent selection actions** (target a contact, raise/lower shields,
+  arm a control) — **trivial and safe.** The intent is a single value that the
+  next snapshot either confirms or overrides; there is no accumulation to get
+  wrong. This is the recommended, low-risk surface to keep improving.
+- **Continuous / stateful actions** (throttle position, power allocation,
+  laser charge, alignment) — **moderate effort and genuinely desync-prone.**
+  Predicting these means locally re-running a slice of the simulation and
+  reconciling divergence when the authoritative snapshot arrives (rollback,
+  or smoothing toward truth). That is a real prediction/reconciliation engine
+  with its own bug class (the client and server disagreeing about a number the
+  player is actively changing). It is **not** justified for this prototype.
+
+So: reach for the overlay for selection/toggle controls; do **not** build a
+general prediction layer for continuous state without a deliberate decision.
+
 ## Game engine (`src/engine/game.ts`)
 
 A single `Game` class per room, with **no dependencies on the network layer

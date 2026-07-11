@@ -16,32 +16,58 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
     ? { react: 0.35, alignTolerance: 30, fireAtCharge: 90, throttle: 85 }
     : { react: 1.0, alignTolerance: 10, fireAtCharge: 0, throttle: 100 };
 
+  // A skilled helm commits to a nav gate on final approach (easing the throttle
+  // to buy time and swing onto its bearing) for the slipstream reward; the
+  // novice's wide tolerance / low reaction means it mostly ignores gates.
+  const chaseGates = profile !== 'novice';
+
   return {
     helm(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
       const actions = [];
-      if (state.throttle < knobs.throttle) actions.push({ kind: 'throttle', value: knobs.throttle });
-      if (Math.abs(state.alignment) > knobs.alignTolerance) {
-        actions.push({ kind: 'nudge', dir: state.alignment > 0 ? -1 : 1 });
+      const gate = chaseGates && state.gates && state.gates.length
+        ? [...state.gates].sort((a, b) => a.reachIn - b.reachIn)[0]
+        : null;
+      // Only commit once a gate is close enough to line up on.
+      const seekGate = gate && gate.reachIn < 7;
+      const targetAlign = seekGate ? gate.bearing : 0;
+      // Ease the throttle while swinging onto a gate (turn harder, slow its
+      // approach); otherwise cruise at the profile's travel throttle.
+      const wantThrottle = seekGate ? 55 : knobs.throttle;
+      if (Math.abs(state.throttle - wantThrottle) > 5) actions.push({ kind: 'throttle', value: wantThrottle });
+      if (Math.abs(state.alignment - targetAlign) > knobs.alignTolerance) {
+        actions.push({ kind: 'nudge', dir: state.alignment > targetAlign ? -1 : 1 });
       }
       return actions;
     },
 
     engineering(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
+      const sys = ['engines', 'shields', 'weapons', 'sensors'];
       const actions = [];
-      for (const sys of ['engines', 'shields', 'weapons', 'sensors']) {
-        if (state.breakers[sys]) actions.push({ kind: 'resetBreaker', system: sys });
+      // Clear tripped breakers first — a tripped system is now fully offline.
+      for (const s of sys) {
+        if (state.breakers[s]) actions.push({ kind: 'resetBreaker', system: s });
       }
-      // Re-power the ship if points are unallocated (e.g. after an Emergency
-      // Warp): fill toward a sensible default split.
-      const target = { engines: 2, weapons: 2, shields: 1, sensors: 1 };
-      const used = ['engines', 'shields', 'weapons', 'sensors'].reduce((n, s) => n + (state.power[s] || 0), 0);
-      if (used < 6) {
-        for (const s of ['engines', 'weapons', 'shields', 'sensors']) {
-          if ((state.power[s] || 0) < target[s]) { actions.push({ kind: 'power', system: s, delta: 1 }); break; }
-        }
-      }
+      // Threat-aware power triage: when rocks are inbound, pump weapons + sensors
+      // (fast refire + early detection); when the sky is clear, feed the engines
+      // to travel. Novice's default split is flatter (it barely re-triages).
+      const nearest = state.asteroids.length
+        ? Math.min(...state.asteroids.map((a) => a.impactIn))
+        : Infinity;
+      const combat = nearest <= 20;
+      const target = profile === 'novice'
+        ? { engines: 2, weapons: 2, shields: 1, sensors: 1 }
+        : combat
+          ? { engines: 1, weapons: 3, shields: 0, sensors: 2 }
+          : { engines: 3, weapons: 1, shields: 1, sensors: 1 };
+      // Nudge one point toward the target split: free an over-allocated system,
+      // then raise an under-allocated one (net-neutral on the power budget, or a
+      // pure fill after an Emergency Warp zeroes everything).
+      const over = sys.find((s) => (state.power[s] || 0) > target[s]);
+      const under = sys.find((s) => (state.power[s] || 0) < target[s]);
+      if (over && (state.power[over] || 0) > 0) actions.push({ kind: 'power', system: over, delta: -1 });
+      if (under) actions.push({ kind: 'power', system: under, delta: 1 });
       return actions;
     },
 

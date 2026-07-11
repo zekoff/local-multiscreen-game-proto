@@ -3,7 +3,7 @@
 // bursts (added during the 2026-07 balance pass — ambient pacing alone let
 // an unmanned ship clear this mission untouched).
 
-import type { MissionDef } from '../mission.js';
+import { pacingFor, type MissionDef } from '../mission.js';
 
 export const supplyRun: MissionDef = {
   id: 'supply-run',
@@ -14,14 +14,13 @@ export const supplyRun: MissionDef = {
   arrivalName: 'Station Epsilon',
   destination: { kind: 'station', color: '#8fd6ff' }, // grows on the viewscreen approach
   kind: 'authored',
-  parTime: 260,
+  ...pacingFor(180), // the 3-minute baseline: targetSeconds + derived speedScale/parTime
   spawnEvery: { min: 9, max: 16 },
   impactIn: { min: 14, max: 22 },
   asteroidDmg: { min: 10, max: 20 },
   maxAsteroids: 4,
   breakerEvery: { min: 18, max: 30 },
   driftScale: 1,
-  speedScale: 1,
   events: [
     {
       id: 'belt-cluster',

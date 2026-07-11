@@ -18,7 +18,13 @@ export interface MissionDef {
   // marker. Focused on one mission for now (see supply-run).
   destination?: { kind: 'station' | 'planet'; color: string };
   kind: 'authored' | 'generated';
-  parTime: number;         // seconds; the debrief time score is relative to this
+  // Target duration (seconds) of a *well-executed* run. This is the single
+  // mission-length knob: speedScale and parTime are derived from it (see
+  // pacingFor) so a clean crew arrives in roughly this long. 180 = the 3-minute
+  // baseline; up to ~300 for a longer haul. Not exposed in player setup — it's
+  // a per-mission definition value.
+  targetSeconds: number;
+  parTime: number;         // seconds; the debrief time score is relative to this (derived from targetSeconds)
 
   // Ambient hazard pacing (per-seat difficulty multipliers apply on top).
   spawnEvery: Range;       // seconds between ambient asteroid spawns
@@ -34,6 +40,21 @@ export interface MissionDef {
 
   // Authored timeline: set pieces that fire once at a time or progress mark.
   events: ScriptedEvent[];
+}
+
+// Derive the velocity scale and par time from a target well-executed duration,
+// so authored and generated missions share one length model. Calibrated against
+// the engine's peak progress rate (~0.6 * speedScale /s) with the real losses a
+// clean run still takes (gate detours, turns) folded into SPEED_CALIB — tuned
+// against `npm run lab` so a `skilled` crew arrives near targetSeconds.
+// parTime sits above the well-executed time so the debrief time score has slack.
+export const SPEED_CALIB = 325;
+export function pacingFor(targetSeconds: number): { targetSeconds: number; speedScale: number; parTime: number } {
+  return {
+    targetSeconds,
+    speedScale: SPEED_CALIB / targetSeconds,
+    parTime: Math.round(targetSeconds * 1.35),
+  };
 }
 
 // A scripted event fires once when mission time (seconds) or progress

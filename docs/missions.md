@@ -19,6 +19,14 @@ A `MissionDef` has three layers:
    (`driftScale`, `speedScale`, `parTime`). This is the mission's baseline
    pressure; per-seat difficulty multipliers stack on top of it, preserving the
    design pillar that player difficulty is a parameter, not a code path.
+   **Mission length** is a single knob: `targetSeconds` (the duration of a
+   well-executed run). Rather than hand-set `speedScale`/`parTime`, spread
+   `pacingFor(targetSeconds)` (from `mission.ts`) into the def — it derives both
+   (`speedScale = SPEED_CALIB / targetSeconds`, `parTime = 1.35 × targetSeconds`)
+   so a clean crew arrives near `targetSeconds`. Ambient pacing is deliberately
+   *not* length-scaled, so a longer mission keeps the same per-minute intensity
+   and simply runs longer. Authored baselines: supply-run 180s (3 min),
+   kepler-rescue 150s, mined-corridor 260s; gen presets 180/240/300s.
    `asteroidDmg` is a *base* magnitude — each rock rolls a size (0.6-1.6) and
    speed (0.75-1.35) that scale its actual damage and closing rate, and ~1/3 of
    ambient spawns arrive as a 2-3 rock cluster.
@@ -79,6 +87,13 @@ in the debrief and consumed raw by the mission lab:
   `gatesMissed` (nav gates), `warpsUsed`, `pulsesUsed`
 - **Crew context**: which seats were human and their difficulty settings —
   without this, aggregate numbers are uninterpretable.
+- **Per-console effectiveness** (`perConsole`, **sim-report only** — not shown
+  on the player debrief): helm (gate pass rate, on-course %, alignment error),
+  weapons (hit rate, contact→acquire latency, threats neutralized), engineering
+  (power utilization, breaker downtime), and a **captain-coordination proxy**
+  (the captain has no device, so it's read off crew outcomes — defense, gate
+  discipline, and how fast contacts get handed to weapons). Surfaced as a second
+  table in `npm run lab`.
 
 Note: **sensors** (a fourth engineering-powered system) gate when a contact
 becomes *targetable* on the weapons scope — low sensor power means contacts
@@ -90,10 +105,14 @@ all threats but scatters the ship's systems. See the wave-2 section of
 ## The mission lab (`npm run lab`)
 
 In-process balance harness: runs every mission (or `LAB_MISSIONS=id,id`)
-against three crew baselines across fixed seeds (`LAB_RUNS`, default 10),
-driving the engine directly — a full sweep takes seconds. Bot policies live
-in `scripts/lib/policies.mjs` and are shared with the network smoke tests, so
-lab results and wire-level tests can't drift apart.
+against six crew scenarios across fixed seeds (`LAB_RUNS`, default 10),
+driving the engine directly — a full sweep takes seconds. The scenarios are the
+three baselines (`skilled` / `novice` / `auto`) plus three single-human mixes
+(`1h-helm` / `1h-eng` / `1h-weap` — one skilled operator, the rest on
+auto-assist) that verify the bot-balance target: an all-`auto` crew loses, and
+one human can carry a bot crew. Bot policies live in `scripts/lib/policies.mjs`
+and are shared with the network smoke tests, so lab results and wire-level
+tests can't drift apart.
 
 Crew baselines:
 - **skilled** — coordinated-crew ceiling

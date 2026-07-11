@@ -32,7 +32,9 @@ const POWER_MAX = 4;        // max units a single system can hold
 // Laser: no battery bank and no fixed cooldown. `charge` (0-100) is simply the
 // recharge meter — firing empties it and it refills at a rate set by weapon
 // power, so the "cooldown" is emergent (higher weapon power = faster refire).
-const LASER_CHARGE_RATE = 14; // charge points/s per allocated weapon power unit
+// Halved from the first pass so the laser feels like a deliberate, recharging
+// weapon rather than a rapid-fire turret — refire is now ~2x slower per power.
+const LASER_CHARGE_RATE = 7; // charge points/s per allocated weapon power unit
 
 // Emergency Warp: a drastic escape that jumps the ship elsewhere, scattering
 // its systems (see doWarp). Long cooldown so it's a last resort, not a rhythm.
@@ -46,15 +48,28 @@ const WARP_OFFCOURSE = { min: 65, max: 95 }; // how far off course the jump thro
 // off the throttle (the "slow down to catch a ring" dynamic).
 const BASE_TURN = 12;
 
-// Auto-weapons is a survival net for an abandoned seat, not an optimal gunner.
-const AUTO_WEAPONS_REACT_RANGE = 8;  // seconds-to-impact before auto-turret engages
-const AUTO_WEAPONS_MISS_CHANCE = 0.2; // fraction of auto shots that go wide
+// |alignment| at or under this counts as "on course" for helm effectiveness.
+const ON_COURSE_THRESHOLD = 15;
+
+// Auto-assist is a survival net for an abandoned seat, not a competent crew
+// member. Deliberately mediocre so a FULL bot crew loses, while one human at a
+// console (with bots elsewhere) can still pull a win out with the hull low.
+const AUTO_WEAPONS_REACT_RANGE = 7;  // seconds-to-impact before auto-turret engages (was 8 — reacts a touch later)
+const AUTO_WEAPONS_MISS_CHANCE = 0.38; // fraction of auto shots that go wide (was 0.2 — much worse aim)
+const AUTO_HELM_THROTTLE = 70;       // auto-helm cruises easy, not fast (was 80)
+const AUTO_HELM_CORRECTION = 5;      // course-correction authority per second (was 8 — drifts more)
+const AUTO_ENG_RESET_AGE = 9;        // seconds a breaker stays tripped before auto-eng restores it (was 6)
 
 // Sensors: detection range in seconds-to-impact. An asteroid is only targetable
 // on the weapons scope once its impactIn drops to within this range, which
 // grows with sensor power. A pulse (below) overrides it for a one-shot reveal.
-const SENSOR_BASE = 10;         // detection range (s) at zero sensor power
-const SENSOR_PER_POWER = 4;     // extra range (s) per effective sensor power unit
+// Nerfed from 10/4: the complaint was that each sensor point added too much
+// reach (2 power hit ~18s, nearly the scope edge, since the scope maps
+// impactIn/20 to the rim). Halving the per-point value to 2 puts 2 power at
+// ~12s (~60% radius) — a clear investment curve — while a slightly lower base
+// keeps the field readable enough for the (now 2x slower) laser to work.
+const SENSOR_BASE = 8;          // detection range (s) at zero sensor power
+const SENSOR_PER_POWER = 2;     // extra range (s) per effective sensor power unit
 const SENSOR_PULSE_COOLDOWN = 80; // long cooldown => ~1-2 pulses per mission
 
 // Raised shields draw off the drive: a real power-triage tradeoff instead of
@@ -75,11 +90,18 @@ const SHIELD_DRAIN_PER_SEC = 1.0;    // points/s bled while raised (idle upkeep)
 // widens with engine power (thrust authority makes the ship easier to aim),
 // but running the engines hot also makes asteroids close faster (see
 // closeRate) — the deliberate risk/reward the design calls for.
-const GATE_BASE_WINDOW = 18;       // |alignment - bearing| tolerance at minimum engine power
-const GATE_ENGINE_WINDOW = 26;     // extra tolerance at full engine power
+// Narrowed from 18/26: gates are harder to thread now (tighter tolerance), but
+// pay off far more (a slipstream burst — see GATE_SLIPSTREAM_*), so hitting one
+// is a real win rather than a small tax.
+const GATE_BASE_WINDOW = 12;       // |alignment - bearing| tolerance at minimum engine power
+const GATE_ENGINE_WINDOW = 18;     // extra tolerance at full engine power
 const GATE_CHARGE_REWARD = 20;     // laser recharge granted for a clean pass
-const GATE_PROGRESS_REWARD = 1.2;  // small slipstream progress boost on a pass
-const GATE_REACH: { min: number; max: number } = { min: 13, max: 19 }; // seconds to reach a gate
+// A clean pass no longer just adds a flat progress bump — it opens a short
+// slipstream that multiplies ship speed for a few seconds, so the ground gained
+// exceeds what staying on course would have covered in the same window.
+const GATE_SLIPSTREAM_MULT = 1.6;  // speed multiplier while the slipstream is open
+const GATE_SLIPSTREAM_SECS = 4;    // how long a pass keeps the slipstream open
+const GATE_REACH: { min: number; max: number } = { min: 8, max: 13 }; // seconds to reach a gate
 // Gates appear well off the current course: the helm must actively swing the
 // ship onto the gate's bearing (turning hard => ease throttle / feed engines).
 const GATE_BEARING = { min: 45, max: 88 };
@@ -87,10 +109,32 @@ const MAX_GATES = 2;               // concurrent gates ahead
 // How much running hot (throttle x engine power) shortens the time asteroids
 // take to close — the cost of the speed that makes gates easy.
 const SPEED_RISK = 0.6;
+// Gate approach is coupled *strongly* to ship speed (throttle x engine power):
+// running hot makes a ring rush in (little time to line up), easing the
+// throttle lets it drift in slowly (buying time to swing onto the bearing).
+// This is the "slow down to catch the ring" lever, sharper than the asteroid
+// closeRate. gateCloseRate() spans ~0.5 (idle) .. ~2.5 (full hot).
+const GATE_CLOSE_BASE = 0.5;
+const GATE_CLOSE_SPEED = 2.0;
 
 // Chance an ambient spawn arrives as a short 2-3 rock cluster instead of a
 // single contact, so it isn't always one-at-a-time with long gaps.
 const BURST_CHANCE = 0.32;
+
+// Narrative captain's-log tuning (see narrate()). Windows/thresholds that
+// decide when the ship's log comments on the action.
+const NARRATE_KILL_WINDOW = 12;    // s — window for counting a kill cluster
+const NARRATE_KILL_COUNT = 4;      // kills within the window to remark on it
+const NARRATE_DMG_WINDOW = 8;      // s — window for a damage burst
+const NARRATE_DMG_THRESHOLD = 30;  // hull damage within the window to warn on it
+const NARRATE_NOTE_COOLDOWN = 20;  // s — min gap between repeats of the same beat
+const NARRATE_CONSOLE_EVERY = 45;  // s — min gap between console-effectiveness notes
+
+// Each rock spawns with a lateral bearing (like a gate's), port or starboard,
+// so the main screen can place it off-axis and slide it with the helm's
+// steering — then drift it toward the vanishing point as it closes. Purely
+// positional (does not affect damage or time-to-impact).
+const ASTEROID_BEARING = { min: 12, max: 78 };
 
 export interface Asteroid {
   id: number;
@@ -101,6 +145,7 @@ export interface Asteroid {
   speed: number;    // 0.7..1.5 closing-rate multiplier — faster shortens the window
   revealed: boolean;  // a sensor pulse forced this one targetable regardless of range
   announced: boolean; // the "sensor contact" event has fired (on detection, not spawn)
+  bearing: number;    // -100..100 lateral offset for main-screen placement (port/starboard)
 }
 
 // A nav gate the ship flies through. Steering into it (low |alignment| when it
@@ -124,7 +169,8 @@ export type Effect =
   | { kind: 'impact'; hullDmg: number; absorbed: boolean }
   | { kind: 'gate'; id: number; passed: boolean }
   | { kind: 'warp' }          // Emergency Warp jump (big shake/flash + sound)
-  | { kind: 'sensorPulse' };  // active sensor sweep (expanding ring on the scope)
+  | { kind: 'sensorPulse' }   // active sensor sweep (expanding ring on the scope)
+  | { kind: 'sensorContact' }; // a contact just resolved on sensors (engineering ping)
 
 interface SeatState {
   playerId: string | null; // sticky id so a dropped client can resume its seat
@@ -150,6 +196,20 @@ export interface Telemetry {
   gatesMissed: number;
   warpsUsed: number;
   pulsesUsed: number;
+  // Per-console effectiveness + a captain-direction proxy. Sim-report only
+  // (surfaced in the mission-lab table, not the player-facing debrief). The
+  // captain has no device, so its numbers are a *proxy* read off crew
+  // coordination outcomes — see finish() for how each is derived.
+  perConsole: ConsoleMetrics;
+}
+
+export interface ConsoleMetrics {
+  helm: { gatePassRate: number; avgAlignmentError: number; onCoursePct: number };
+  weapons: { hitRate: number; avgAcquireLatency: number; neutralizedPct: number };
+  engineering: { avgPowerUtil: number; breakerDowntime: number };
+  // Captain proxy: coordinationScore is a 0..1 composite of the crew outcomes a
+  // good caller drives — defense, gate discipline, and fast target hand-offs.
+  captain: { coordinationScore: number; avgAcquireLatency: number; gatePassRate: number; defense: number };
 }
 
 export interface Debrief {
@@ -208,6 +268,7 @@ export class Game {
   targetId: number | null = null;
   warpCd = 0;            // seconds until Emergency Warp is ready
   sensorPulseCd = 0;     // seconds until the active sensor pulse is ready
+  gateBoostTimer = 0;    // seconds of open slipstream remaining after a clean gate pass
   // Debug/sim-supervisor controls (opt-in per run via the launch payload).
   debug = false;         // whether debug controls are exposed for this run
   timeScale = 1;         // simulation speed multiplier (0 = paused)
@@ -232,6 +293,22 @@ export class Game {
   private throttleSum = 0;
   private telSamples = 0;
   private log: { t: number; text: string }[] = [];
+
+  // --- Narrative log state (see narrate()): rolling windows the ship's log
+  // watches to comment on the run as it happens.
+  private killTimes: number[] = [];        // missionTime of recent kills (kill-cluster detection)
+  private damageWindow: { t: number; dmg: number }[] = []; // recent hull hits (damage-burst detection)
+  private narratedHalfway = false;         // the one-shot midpoint assessment
+  private lastKillNote = -999;             // throttle for kill-cluster lines
+  private lastDamageNote = -999;           // throttle for damage-burst lines
+  private lastConsoleNote = 0;             // throttle for occasional console-effectiveness notes
+
+  // --- Per-console effectiveness accumulators (sim-report telemetry, task 5) ---
+  private onCourseTime = 0;                // seconds spent roughly on course (helm)
+  private targetableSince = new Map<number, number>(); // asteroid id -> missionTime it first became targetable
+  private acquireLatencies: number[] = []; // seconds from targetable -> weapons acquired (captain/weapons coordination)
+  private threatsNeutralized = 0;          // contacts destroyed before impact (weapons)
+  private powerUtilSum = 0;                // sum of effective (non-tripped) power each sample (engineering)
 
   constructor() {
     // All seats start empty; unmanned crew seats get a basic auto-assist so
@@ -307,6 +384,7 @@ export class Game {
     this.targetId = null;
     this.warpCd = 0;
     this.sensorPulseCd = 0;
+    this.gateBoostTimer = 0;
     this.asteroids = [];
     this.gates = [];
     this.fx = [];
@@ -326,6 +404,17 @@ export class Game {
     this.throttleSum = 0;
     this.telSamples = 0;
     this.log = [];
+    this.killTimes = [];
+    this.damageWindow = [];
+    this.narratedHalfway = false;
+    this.lastKillNote = -999;
+    this.lastDamageNote = -999;
+    this.lastConsoleNote = 0;
+    this.onCourseTime = 0;
+    this.targetableSince = new Map();
+    this.acquireLatencies = [];
+    this.threatsNeutralized = 0;
+    this.powerUtilSum = 0;
     this.event(`Mission start: ${def.name}. Godspeed.`);
     this.event(def.briefing);
   }
@@ -368,7 +457,10 @@ export class Game {
       if (a.kind === 'target' && typeof a.id === 'number') {
         // Can only lock a contact the sensors have actually resolved.
         const t = this.asteroids.find((x) => x.id === a.id);
-        if (t && this.targetable(t)) this.targetId = a.id as number;
+        if (t && this.targetable(t)) {
+          this.targetId = a.id as number;
+          this.recordAcquire(a.id as number);
+        }
       } else if (a.kind === 'fire') {
         this.fire();
       } else if (a.kind === 'shields' && typeof a.raised === 'boolean') {
@@ -452,6 +544,12 @@ export class Game {
     this.asteroids = this.asteroids.filter((a) => a.id !== target.id);
     this.targetId = null;
     this.stats.destroyed++;
+    // Narrative + weapons-effectiveness tracking: a contact killed before it
+    // ever reached us counts as a neutralized threat, and feeds kill-cluster
+    // detection in the captain's log.
+    this.killTimes.push(this.missionTime);
+    this.threatsNeutralized++;
+    this.targetableSince.delete(target.id);
     // Laser then explosion — the main screen draws the beam to the contact and
     // pops it; the miss path (auto-turret) draws the beam with no explosion.
     this.pushFx({ kind: 'laser', targetId: target.id, hit: true });
@@ -472,9 +570,11 @@ export class Game {
     if (this.fx.length > 0) this.fx = [];
   }
 
-  // Effective power for a system: allocated units, halved while its breaker is tripped.
+  // Effective power for a system: allocated units, but ZERO while its breaker is
+  // tripped — a tripped system is fully offline (no thrust / no charge / no
+  // shield regen / sensors fall back to their base range) until it's restored.
   private eff(system: SystemId): number {
-    return this.power[system] * (this.breakers[system] !== null ? 0.5 : 1);
+    return this.breakers[system] !== null ? 0 : this.power[system];
   }
 
   // Turn authority per nudge: rises with engine power, falls with throttle — so
@@ -503,6 +603,15 @@ export class Game {
     return 1 + SPEED_RISK * (this.throttle / 100) * (this.eff('engines') / POWER_MAX);
   }
 
+  // How fast nav gates rush in, coupled *strongly* to ship speed (throttle x
+  // engine power). Running hot (~1.0 speed factor) makes a ring close at ~2.5x,
+  // easing the throttle drops it toward ~0.5x — the "slow down to catch the
+  // ring" lever the design leans on, sharper than the asteroid closeRate.
+  private gateCloseRate(): number {
+    const speedFactor = (this.throttle / 100) * (this.eff('engines') / POWER_MAX);
+    return GATE_CLOSE_BASE + GATE_CLOSE_SPEED * speedFactor;
+  }
+
   private spawnGate() {
     const id = this.nextGateId++;
     // Bearing is well off the current course, and randomly to port or starboard,
@@ -521,7 +630,9 @@ export class Game {
     if (passed) {
       this.stats.gatesPassed++;
       this.charge = Math.min(100, this.charge + GATE_CHARGE_REWARD);
-      this.progress = Math.min(100, this.progress + GATE_PROGRESS_REWARD);
+      // Open the slipstream: a few seconds of multiplied speed (applied in the
+      // tick speed calc), worth more ground than staying on the straight line.
+      this.gateBoostTimer = GATE_SLIPSTREAM_SECS;
       this.event(`Clean pass through ${g.label} — slipstream boost!`);
     } else {
       this.stats.gatesMissed++;
@@ -578,6 +689,8 @@ export class Game {
       speed,
       revealed: false,
       announced: false,
+      // Lateral placement for the main screen: off-axis to port or starboard.
+      bearing: sign(this.rng() - 0.5) * range(this.rng, ASTEROID_BEARING),
     };
     this.asteroids.push(a);
     this.tel.asteroidsSpawned++;
@@ -620,10 +733,12 @@ export class Game {
     }
     this.alignment = clamp(this.alignment + (this.driftBias + (this.rng() * 2 - 1) * 2.0) * dt, -100, 100);
 
-    // Auto-helm: hold throttle and gently steer back on course.
+    // Auto-helm: cruise at an easy throttle and weakly steer back on course. It
+    // never chases nav gates (a human earns those slipstream rewards), so a bot
+    // helm simply plods the straight line and drifts more than a crewed one.
     if (this.auto('helm')) {
-      this.throttle = 80;
-      const correction = Math.min(Math.abs(this.alignment), 8 * dt);
+      this.throttle = AUTO_HELM_THROTTLE;
+      const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * dt);
       this.alignment -= sign(this.alignment) * correction;
     }
 
@@ -631,7 +746,10 @@ export class Game {
     // and the mission's speed scale (longer trips = lower scale).
     const alignFactor = 1 - 0.6 * Math.min(1, Math.abs(this.alignment) / 100);
     const shieldPenalty = this.shieldRaised ? SHIELD_ENGINE_PENALTY : 1;
-    this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX) * shieldPenalty) * alignFactor * m.speedScale;
+    // A clean gate pass opens a short slipstream that multiplies speed.
+    this.gateBoostTimer = Math.max(0, this.gateBoostTimer - dt);
+    const slipstream = this.gateBoostTimer > 0 ? GATE_SLIPSTREAM_MULT : 1;
+    this.speed = (this.throttle / 100) * (0.15 + 0.45 * (this.eff('engines') / POWER_MAX) * shieldPenalty) * alignFactor * m.speedScale * slipstream;
     this.progress = Math.min(100, this.progress + this.speed * dt);
 
     // Shields: recharge (scaled by shield power) only while lowered; bleed a
@@ -650,12 +768,15 @@ export class Game {
     this.alignAbsSum += Math.abs(this.alignment);
     this.throttleSum += this.throttle;
     this.telSamples++;
+    // Per-console effectiveness accumulators (sim-report metrics).
+    if (Math.abs(this.alignment) <= ON_COURSE_THRESHOLD) this.onCourseTime += dt;
+    this.powerUtilSum += SYSTEMS.reduce((sum, s) => sum + this.eff(s), 0);
 
     // Age tripped breakers; auto-engineering resets them after a delay.
     for (const s of SYSTEMS) {
       if (this.breakers[s] !== null) {
         this.breakers[s]! += dt;
-        if (this.auto('engineering') && this.breakers[s]! > 6) this.resetBreaker(s);
+        if (this.auto('engineering') && this.breakers[s]! > AUTO_ENG_RESET_AGE) this.resetBreaker(s);
       }
     }
 
@@ -685,6 +806,7 @@ export class Game {
       this.shieldRaised = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE + 2;
       if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= 100) {
         this.targetId = closest.id;
+        this.recordAcquire(closest.id);
         if (this.rng() < AUTO_WEAPONS_MISS_CHANCE) {
           // Shot goes wide: the recharge is spent but the target survives.
           this.charge = 0;
@@ -706,9 +828,13 @@ export class Game {
     const closeRate = this.closeRate();
     for (const a of this.asteroids) a.impactIn -= dt * closeRate * a.speed;
     // Detection edge: announce a contact the first time sensors resolve it.
+    // Record when it became targetable (for contact->acquire latency) and emit a
+    // sensorContact fx so engineering — not the main screen — plays the ping.
     for (const a of this.asteroids) {
       if (!a.announced && this.targetable(a)) {
         a.announced = true;
+        this.targetableSince.set(a.id, this.missionTime);
+        this.pushFx({ kind: 'sensorContact' });
         this.event(`Sensor contact: asteroid ${a.label} acquired.`);
       }
     }
@@ -719,8 +845,11 @@ export class Game {
       this.targetId = null;
     }
 
-    // Advance nav gates and evaluate the ones the ship reaches this tick.
-    for (const g of this.gates) g.reachIn -= dt * closeRate;
+    // Advance nav gates (on their own speed-coupled rate) and evaluate the ones
+    // the ship reaches this tick. Easing the throttle slows their approach,
+    // buying time to swing onto the bearing.
+    const gateClose = this.gateCloseRate();
+    for (const g of this.gates) g.reachIn -= dt * gateClose;
     const reached = this.gates.filter((g) => g.reachIn <= 0);
     this.gates = this.gates.filter((g) => g.reachIn > 0);
     for (const g of reached) this.evaluateGate(g);
@@ -759,6 +888,9 @@ export class Game {
       this.gateTimer = range(this.rng, m.gateEvery ?? { min: 25, max: 40 }) / this.diff('helm');
     }
 
+    // Narrative captain's log: comment on how the run is going.
+    this.narrate();
+
     // End conditions.
     if (this.hull <= 0) this.finish('adrift');
     else if (this.progress >= 100) this.finish('arrived');
@@ -775,6 +907,9 @@ export class Game {
     this.hull = Math.max(0, this.hull - remaining);
     this.stats.impacts++;
     this.tel.hullDamageTaken += remaining;
+    // Feed the captain's-log damage-burst detector (only real hull damage).
+    if (remaining > 0) this.damageWindow.push({ t: this.missionTime, dmg: Math.round(remaining) });
+    this.targetableSince.delete(a.id);
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
     // Screen shake + sound scale off this on the main screen; absorbed hits get
     // a lighter shield-clang, hull hits a heavier jolt.
@@ -829,6 +964,29 @@ export class Game {
     this.tel.gatesMissed = this.stats.gatesMissed;
     this.tel.warpsUsed = this.stats.warpsUsed;
     this.tel.pulsesUsed = this.stats.pulsesUsed;
+    // --- Per-console effectiveness + captain proxy (sim-report metrics) ---
+    const gatesSeen = this.stats.gatesPassed + this.stats.gatesMissed;
+    const gatePassRate = gatesSeen > 0 ? round2(this.stats.gatesPassed / gatesSeen) : 0;
+    const shotsAtUs = this.stats.destroyed + this.stats.impacts;
+    const defense = shotsAtUs === 0 ? 1 : round2(this.stats.destroyed / shotsAtUs);
+    const hitRate = this.tel.shotsFired > 0 ? round2(this.stats.destroyed / this.tel.shotsFired) : 0;
+    const neutralizedPct = shotsAtUs === 0 ? 1 : round2(this.threatsNeutralized / shotsAtUs);
+    const avgAcquireLatency = this.acquireLatencies.length > 0
+      ? round1(this.acquireLatencies.reduce((s, v) => s + v, 0) / this.acquireLatencies.length)
+      : 0;
+    const onCoursePct = this.missionTime > 0 ? round2(this.onCourseTime / this.missionTime) : 0;
+    const avgPowerUtil = this.telSamples > 0 ? round2(this.powerUtilSum / this.telSamples / POWER_TOTAL) : 0;
+    // Captain coordination: the crew outcomes a good caller drives — defense,
+    // gate discipline, and how fast contacts get handed to weapons (a low
+    // latency, normalized against a ~6s "slow" reference, reads as tight comms).
+    const latencyScore = clamp(1 - avgAcquireLatency / 6, 0, 1);
+    const coordinationScore = round2(0.45 * defense + 0.30 * gatePassRate + 0.25 * latencyScore);
+    this.tel.perConsole = {
+      helm: { gatePassRate, avgAlignmentError: this.tel.avgAlignment, onCoursePct },
+      weapons: { hitRate, avgAcquireLatency, neutralizedPct },
+      engineering: { avgPowerUtil, breakerDowntime: this.tel.breakerDowntime },
+      captain: { coordinationScore, avgAcquireLatency, gatePassRate, defense },
+    };
     this.debrief = {
       outcome,
       grade,
@@ -863,10 +1021,84 @@ export class Game {
     this.event(outcome === 'arrived' ? `Docking complete at ${m.arrivalName}.` : 'The ship goes dark, adrift in the belt.');
   }
 
-  private event(text: string) {
+  // Log an event. It always enters the ship's rolling log (serialized, shown in
+  // the main-screen HUD). `toast` controls whether it *also* fires onEvent — the
+  // transient station toast. Ambient narrative beats pass toast:false so the
+  // captain's log reads as a story without spamming crew screens with popups.
+  private event(text: string, toast = true) {
     this.log.push({ t: Math.round(this.missionTime), text });
     if (this.log.length > 10) this.log.shift();
-    this.onEvent(text);
+    if (toast) this.onEvent(text);
+  }
+
+  // Narrative captain's log: watches rolling windows and comments on the run as
+  // it unfolds (kill clusters, damage bursts, a midpoint assessment, occasional
+  // console effectiveness). Most lines are log-only (toast:false) so they read
+  // as a story; only the genuine warnings pop a toast. Called each tick.
+  private narrate() {
+    const now = this.missionTime;
+    // Kill cluster: several rocks destroyed in a short window.
+    this.killTimes = this.killTimes.filter((t) => now - t <= NARRATE_KILL_WINDOW);
+    if (this.killTimes.length >= NARRATE_KILL_COUNT && now - this.lastKillNote > NARRATE_NOTE_COOLDOWN) {
+      this.lastKillNote = now;
+      this.event(`Weapons clearing the field — ${this.killTimes.length} contacts down in seconds.`, false);
+    }
+    // Damage burst: heavy hull loss over a short window (a genuine warning => toast).
+    this.damageWindow = this.damageWindow.filter((d) => now - d.t <= NARRATE_DMG_WINDOW);
+    const recentDmg = this.damageWindow.reduce((sum, d) => sum + d.dmg, 0);
+    if (recentDmg >= NARRATE_DMG_THRESHOLD && now - this.lastDamageNote > NARRATE_NOTE_COOLDOWN) {
+      this.lastDamageNote = now;
+      this.event(`Hull integrity falling fast — ${recentDmg} damage in a heartbeat!`, true);
+    }
+    // One-shot midpoint assessment, keyed off how the run is actually going.
+    if (!this.narratedHalfway && this.progress >= 50) {
+      this.narratedHalfway = true;
+      const shotsAtUs = this.stats.destroyed + this.stats.impacts;
+      const defense = shotsAtUs === 0 ? 1 : this.stats.destroyed / shotsAtUs;
+      const assess =
+        this.hull >= 75 && defense >= 0.7 ? 'Halfway home and barely a scratch — the crew is dialed in.'
+        : this.hull >= 45 ? 'Halfway home. Taking some hits, but holding together.'
+        : 'Halfway home and the hull is a mess — we need to tighten up or we won\'t make it.';
+      this.event(assess, true);
+    }
+    // Occasional console-effectiveness note (RNG-gated, throttled, log-only).
+    if (now - this.lastConsoleNote > NARRATE_CONSOLE_EVERY && this.rng() < 0.5) {
+      this.lastConsoleNote = now;
+      this.event(this.consoleNote(), false);
+    }
+  }
+
+  // Record how long a contact sat resolved-but-unengaged before weapons locked
+  // it — the core captain/weapons coordination signal. Only the first lock per
+  // contact counts (delete on record so retargets don't double-count).
+  private recordAcquire(id: number) {
+    const since = this.targetableSince.get(id);
+    if (since !== undefined) {
+      this.acquireLatencies.push(this.missionTime - since);
+      this.targetableSince.delete(id);
+    }
+  }
+
+  // Pick a short observation about how one console is performing right now.
+  private consoleNote(): string {
+    const gatesSeen = this.stats.gatesPassed + this.stats.gatesMissed;
+    const shots = this.tel.shotsFired;
+    const anyTripped = SYSTEMS.some((s) => this.breakers[s] !== null);
+    const options: string[] = [];
+    if (gatesSeen >= 2) {
+      options.push(this.stats.gatesPassed / gatesSeen >= 0.6
+        ? 'Helm is threading the nav gates cleanly — good hands on the stick.'
+        : 'Helm keeps missing the nav approaches — ease the throttle to buy time on the rings.');
+    }
+    if (shots >= 3) {
+      options.push(this.stats.destroyed / Math.max(1, shots) >= 0.6
+        ? 'Weapons is making shots count — most contacts never reach us.'
+        : 'Weapons is burning charge on wide shots — steady the aim.');
+    }
+    options.push(anyTripped
+      ? 'Engineering scrambling — a breaker is down and that system is dark.'
+      : 'Engineering keeping the grid steady — power holding across the board.');
+    return options[Math.floor(this.rng() * options.length)];
   }
 
   // Snapshot sent to every client after each tick. Floats are rounded to keep
@@ -878,6 +1110,9 @@ export class Game {
         ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null }
         : null,
       missionTime: Math.round(this.missionTime),
+      // Target duration of a well-executed run (seconds) — drives the music
+      // build arc on the main screen (build over ~180s, then hold/pad longer).
+      missionLength: this.mission?.targetSeconds ?? 180,
       progress: round1(this.progress),
       hull: Math.round(this.hull),
       // strength is a % of SHIELD_MAX, not an absolute point count — the UI
@@ -902,6 +1137,7 @@ export class Game {
       asteroids: this.asteroids.map((a) => ({
         id: a.id, label: a.label, impactIn: round1(a.impactIn), dmg: a.dmg,
         size: round1(a.size), speed: round1(a.speed), targetable: this.targetable(a),
+        bearing: Math.round(a.bearing),
       })),
       gates: this.gates.map((g) => ({ id: g.id, label: g.label, reachIn: round1(g.reachIn), bearing: Math.round(g.bearing) })),
       fx: this.fx,
@@ -938,6 +1174,12 @@ function freshTelemetry(): Telemetry {
     gatesMissed: 0,
     warpsUsed: 0,
     pulsesUsed: 0,
+    perConsole: {
+      helm: { gatePassRate: 0, avgAlignmentError: 0, onCoursePct: 0 },
+      weapons: { hitRate: 0, avgAcquireLatency: 0, neutralizedPct: 0 },
+      engineering: { avgPowerUtil: 0, breakerDowntime: 0 },
+      captain: { coordinationScore: 0, avgAcquireLatency: 0, gatePassRate: 0, defense: 0 },
+    },
   };
 }
 function clamp(v: number, lo: number, hi: number): number {
@@ -948,4 +1190,7 @@ function sign(v: number): number {
 }
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
+}
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
 }

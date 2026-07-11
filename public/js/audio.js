@@ -1,14 +1,20 @@
 // Procedural audio for the bridge: everything is synthesized with the Web
 // Audio API so there are no asset files to ship (matches the zero-build, no-CDN
-// client). One module, used two ways:
-//   - the main screen runs the music bed + ship-wide SFX (explosions, impacts,
-//     gate passes, laser fire heard across the bridge)
-//   - each console plays only its own local SFX (breaker trip/reset, shields)
+// client). One module, used per device (see the routing in each page):
+//   - the MAIN SCREEN runs the music bed + ship-wide SFX only (explosions,
+//     hull impacts, the warp whoosh). Music plays here and nowhere else.
+//   - each CONSOLE plays its own local SFX: weapons hears the laser + target
+//     lock + fire-ready; engineering hears sensor contacts/pulses + the breaker
+//     trip/arm/tick/restore + power clicks; helm hears steering + gate chimes.
 //
-// Music is an ambient drone that grows: as intensity climbs (mission progress)
-// the filter opens, a bass pulse comes in, and percussion builds from a soft
-// kick to a full kick/snare/hat pattern. Browsers block audio until a user
-// gesture, so callers must invoke resume() from a click/tap/keydown.
+// The music is a 3-phase build driven by `setIntensity` (0..1), which the main
+// screen derives from *time* (build over ~180s, then hold/pad for longer
+// missions):
+//   ambient (I<0.33)  -> drone pad + slow noise sweeps ("deep space")
+//   +melody (I<0.66)  -> a sequenced lead arpeggio fades in over the pad
+//   +beat   (I>=0.66) -> a driving kick/snare/hat groove + bass ramps to full
+// Browsers block audio until a user gesture, so callers must invoke resume()
+// from a click/tap/keydown.
 
 export function createAudio() {
   let ctx = null;
@@ -28,6 +34,12 @@ export function createAudio() {
   // A slow minor-ish progression the drone cycles through (root frequencies).
   const ROOTS = [110.0, 87.31, 130.81, 98.0]; // A2, F2, C3, G2
   let chordIdx = 0;
+  // 3-phase build thresholds (on the 0..1 intensity the main screen drives from
+  // mission time) and the lead-arpeggio walk (multiples of the chord root — a
+  // minor-pentatonic-ish contour that reads as a melody over the drone).
+  const MELODY_IN = 0.33;                 // intensity at which the melody starts
+  const BEAT_IN = 0.66;                   // intensity at which the driving beat starts
+  const MELODY_PATTERN = [4, 4.8, 6, 4.8, 5.33, 4, 3, 4]; // root multiples per eighth
 
   let failed = false;
   function ensure() {
@@ -145,23 +157,71 @@ export function createAudio() {
       nextStepTime += STEP;
       step = (step + 1) % 16;
       if (step % 8 === 0) setChord(chordIdx + 1); // advance harmony every half-bar
+      // Occasional slow noise sweep in the ambient/melody phases ("deep space").
+      if (step === 0 && intensity < BEAT_IN && Math.random() < 0.25) sweep();
     }
   }
 
-  // Percussion pattern grows with intensity: soft kick -> kick+hats -> full
-  // kick/snare/hat groove.
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+  // The 3-phase build. `intensity` (0..1, driven by mission time) gates each
+  // layer: pad drone always, melody arpeggio from MELODY_IN, driving beat from
+  // BEAT_IN (ramping to full across the final phase).
   function scheduleStep(s, t) {
     const I = intensity;
-    if (I < 0.12) return; // very early: drone only
-    // Kick on the downbeats; add the off-beats once things heat up.
-    if (s === 0 || s === 8 || (I > 0.6 && (s === 4 || s === 12))) kick(t, 0.6 + I * 0.5);
-    // Snare backbeat once we're past the midpoint.
-    if (I > 0.5 && (s === 4 || s === 12)) snare(t, 0.3 + I * 0.4);
-    // Hats: 8ths as intensity builds, 16ths near the climax.
-    if (I > 0.3 && s % 4 === 0) hat(t, 0.15 + I * 0.2);
-    if (I > 0.7 && s % 2 === 1) hat(t, 0.08 + I * 0.12);
-    // Bass pulse follows the kick in the mid range.
-    if (I > 0.35 && (s === 0 || s === 8)) bass(t, ROOTS[chordIdx] / 2, 0.3 + I * 0.3);
+    // Melody: a lead arpeggio that fades in for the middle phase and stays.
+    if (I >= MELODY_IN) {
+      const mv = clamp01((I - MELODY_IN) / 0.3) * 0.16;
+      if (s % 2 === 0) {
+        const note = MELODY_PATTERN[(s / 2) % MELODY_PATTERN.length];
+        lead(t, ROOTS[chordIdx] * note, mv);
+      }
+    }
+    // Driving beat: comes in for the final phase and ramps kick/snare/hat/bass
+    // from sparse to full as intensity climbs from BEAT_IN to 1.
+    if (I >= BEAT_IN) {
+      const b = clamp01((I - BEAT_IN) / (1 - BEAT_IN)); // 0..1 across the beat phase
+      if (s === 0 || s === 8 || (b > 0.5 && (s === 4 || s === 12))) kick(t, 0.6 + b * 0.5);
+      if (b > 0.3 && (s === 4 || s === 12)) snare(t, 0.3 + b * 0.4);
+      if (s % 4 === 0) hat(t, 0.12 + b * 0.2);
+      if (b > 0.6 && s % 2 === 1) hat(t, 0.07 + b * 0.12);
+      if (s === 0 || s === 8) bass(t, ROOTS[chordIdx] / 2, 0.3 + b * 0.3);
+    }
+  }
+
+  // Lead-synth note for the melody arpeggio (soft triangle through a lowpass).
+  function lead(t, freq, g) {
+    if (!ctx || g <= 0.001) return;
+    const o = ctx.createOscillator();
+    const gain = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.value = freq;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 2600;
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(g, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
+    o.connect(lp); lp.connect(gain); gain.connect(musicGain);
+    o.start(t); o.stop(t + 0.36);
+  }
+
+  // Slow band-swept noise swell — the ambient "deep space" texture under the pad.
+  function sweep() {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 1.5;
+    bp.frequency.setValueAtTime(200, t);
+    bp.frequency.exponentialRampToValueAtTime(1100, t + 3);
+    bp.frequency.exponentialRampToValueAtTime(200, t + 6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 2);
+    g.gain.linearRampToValueAtTime(0, t + 6);
+    src.connect(bp); bp.connect(g); g.connect(musicGain);
+    src.start(t); src.stop(t + 6.1);
   }
 
   function kick(t, g) {
@@ -386,6 +446,51 @@ export function createAudio() {
     src.start(t); src.stop(t + 0.36);
   }
 
+  // A short pure blip used by several console SFX: freq f0->f1 over `dur`.
+  function blip(f0, f1, vol, dur, type = 'sine') {
+    if (!ctx) return;
+    const t = now();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g); g.connect(sfxGain);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  // Weapons: crisp two-blip lock when a contact is acquired.
+  function targetLock() { blip(880, 1320, 0.18, 0.06); blip(1320, 1320, 0.14, 0.05); }
+  // Weapons: soft rising chime when the laser finishes recharging (ready to fire).
+  function fireReady() { blip(520, 780, 0.16, 0.12, 'triangle'); }
+  // Engineering: quick sonar-ish ping when a contact resolves on sensors (not
+  // the big pulse sweep — a small, frequent detection tick).
+  function sensorContact() { blip(760, 1180, 0.14, 0.1); }
+  // Engineering: mechanical "chunk" when a tripped breaker's slider is armed.
+  function breakerArm() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 500;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.35, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    src.connect(lp); lp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 0.13);
+    blip(160, 90, 0.25, 0.1, 'square');
+  }
+  // Engineering: short click for each of the three restore taps.
+  function breakerTick() { blip(600, 600, 0.18, 0.04, 'square'); }
+  // Engineering: tiny tick when a power point is reallocated.
+  function powerClick() { blip(440, 520, 0.1, 0.05, 'square'); }
+  // Helm: subtle blip per steering nudge (fires every tick while a button is held).
+  function nudgeTick() { blip(300, 360, 0.06, 0.04, 'square'); }
+
   return {
     resume,
     setIntensity,
@@ -400,6 +505,13 @@ export function createAudio() {
     breakerReset,
     warp,
     sensorPulse,
+    sensorContact,
+    targetLock,
+    fireReady,
+    breakerArm,
+    breakerTick,
+    powerClick,
+    nudgeTick,
     shieldUp: () => shield(true),
     shieldDown: () => shield(false),
   };
