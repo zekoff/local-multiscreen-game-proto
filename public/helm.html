@@ -205,16 +205,37 @@
     holdToSteer(document.getElementById('port-btn'), -1);
     holdToSteer(document.getElementById('starboard-btn'), 1);
 
-    // Console tutorial (the "?" in the header).
+    // Console tutorial (the "?" in the header): a schematic of the controls
+    // plus plain-language notes, readable from the lobby before launch.
     mountHelp({
       title: 'Helm — you fly the ship',
+      diagram: `
+        <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="9">
+          <!-- throttle slider -->
+          <rect x="14" y="20" width="14" height="86" rx="7" fill="none" stroke="#39456b"/>
+          <circle cx="21" cy="52" r="11" fill="currentColor"/>
+          <text x="21" y="14" fill="#7d8db3" text-anchor="middle">THROTTLE</text>
+          <text x="21" y="120" fill="#7d8db3" text-anchor="middle">= SPEED</text>
+          <!-- ship + steering -->
+          <polygon points="150,55 141,75 159,75" fill="currentColor"/>
+          <path d="M126 70 Q112 55 126 40" fill="none" stroke="#7d8db3" stroke-width="2" marker-end="none"/>
+          <path d="M174 70 Q188 55 174 40" fill="none" stroke="#7d8db3" stroke-width="2"/>
+          <text x="112" y="90" fill="#7d8db3" text-anchor="middle">◀ PORT</text>
+          <text x="190" y="90" fill="#7d8db3" text-anchor="middle">STBD ▶</text>
+          <text x="150" y="106" fill="#7d8db3" text-anchor="middle">HOLD TO TURN</text>
+          <!-- slipstream ring off to starboard -->
+          <ellipse cx="286" cy="50" rx="26" ry="21" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M162 62 Q225 70 264 58" fill="none" stroke="#7d8db3" stroke-dasharray="4 4"/>
+          <text x="286" y="86" fill="#7d8db3" text-anchor="middle">RING = STEER ONTO IT</text>
+          <text x="286" y="98" fill="#7d8db3" text-anchor="middle">FOR A SPEED BOOST</text>
+        </svg>`,
       lines: [
-        '<b>Throttle</b> sets speed. <b>Port / Starboard</b> steer (hold to keep turning).',
-        'Turns bite harder with more <b>engine power</b> (ask Engineering) and with the <b>throttle eased off</b> — slow down to swing hard.',
-        '<b>Slipstream rings</b> spawn off-course: swing onto the ring’s bearing before it arrives for a big speed boost.',
-        'In a <b>debris field</b>, keep the throttle under 40% or the hull scours.',
-        '<b>Emergency Warp</b> escapes everything but scatters every system — a last resort, not a habit.',
-        'Call out what you need — the captain sees the whole sky on the main screen.',
+        '<b>Throttle</b> sets speed. Hold <b>Port / Starboard</b> to turn.',
+        'The ship turns faster when <b>engine power</b> is higher (ask Engineering) and when the <b>throttle is lower</b>.',
+        'Steer onto a <b>slipstream ring&rsquo;s</b> position before it arrives to get a speed boost.',
+        'In a <b>debris field</b>, keep the throttle under 40% to avoid hull damage.',
+        '<b>Emergency Warp</b> escapes all threats but knocks every system out for a while. Last resort.',
+        'The captain sees the whole sky on the main screen — ask and answer.',
       ],
     });
     warpBtn.addEventListener('click', () => {

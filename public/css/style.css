@@ -173,6 +173,8 @@ select {
 .overlay.hidden { display: none; }
 /* Console tutorial: sits ABOVE lobby/debrief so it's readable while waiting. */
 .help-overlay { z-index: 30; }
+.help-diagram { color: var(--accent); }
+.help-diagram svg { width: min(22rem, 84vw); height: auto; display: block; }
 .help-list { text-align: left; max-width: 30rem; line-height: 1.55; color: var(--text); padding-left: 1.2rem; }
 .help-list li { margin-bottom: 0.6rem; }
 .help-list b { color: var(--accent); }

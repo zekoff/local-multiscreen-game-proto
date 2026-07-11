@@ -125,7 +125,7 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
 // Console tutorial: a small "?" in the header opens a brief what-this-console-
 // does overlay. Content is supplied per page; the overlay sits above the
 // lobby/debrief overlays so a waiting player can read it before launch.
-export function mountHelp({ title, lines }) {
+export function mountHelp({ title, lines, diagram = '' }) {
   const header = document.querySelector('header');
   const btn = document.createElement('button');
   btn.id = 'help-btn';
@@ -135,8 +135,11 @@ export function mountHelp({ title, lines }) {
 
   const overlay = document.createElement('div');
   overlay.className = 'overlay hidden help-overlay';
+  // `diagram` is an inline SVG schematic of the console's controls, so a new
+  // player waiting in the lobby can SEE what they're about to operate.
   overlay.innerHTML = `
     <h2>${title}</h2>
+    ${diagram ? `<div class="help-diagram">${diagram}</div>` : ''}
     <ul class="help-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
     <button class="primary" id="help-close">Back to console</button>`;
   document.body.appendChild(overlay);
