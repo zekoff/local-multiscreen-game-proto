@@ -11,7 +11,9 @@ import type { MissionDef, EventAction, SystemId } from './mission.js';
 import { mulberry32, range, randomSeed, type Rng } from './rng.js';
 
 export type Phase = 'lobby' | 'active' | 'debrief';
-export type SeatId = 'helm' | 'engineering' | 'weapons' | 'main';
+// 'main' and 'supervisor' are non-crew, view-only seats (multiple allowed);
+// 'supervisor' is the debug/sim-control role. Crew seats are the other three.
+export type SeatId = 'helm' | 'engineering' | 'weapons' | 'main' | 'supervisor';
 export type Difficulty = 'chill' | 'normal' | 'intense';
 export type { SystemId } from './mission.js';
 
@@ -206,6 +208,9 @@ export class Game {
   targetId: number | null = null;
   warpCd = 0;            // seconds until Emergency Warp is ready
   sensorPulseCd = 0;     // seconds until the active sensor pulse is ready
+  // Debug/sim-supervisor controls (opt-in per run via the launch payload).
+  debug = false;         // whether debug controls are exposed for this run
+  timeScale = 1;         // simulation speed multiplier (0 = paused)
   asteroids: Asteroid[] = [];
   gates: Gate[] = [];
   fx: Effect[] = [];     // one-shot effects for this broadcast (see clearFx)
@@ -280,11 +285,13 @@ export class Game {
   // Begin a mission run. The transport resolves the MissionDef (registry or
   // generator) and passes the run seed so (missionId, seed) reproduces the
   // run's randomness exactly.
-  start(def: MissionDef, seed?: number) {
+  start(def: MissionDef, seed?: number, debug = false) {
     if (this.phase === 'active') return;
     this.mission = def;
     this.runSeed = seed ?? randomSeed();
     this.rng = mulberry32(this.runSeed);
+    this.debug = debug;
+    this.timeScale = 1;
     // Reset all mission state for a fresh run.
     this.phase = 'active';
     this.missionTime = 0;
@@ -333,6 +340,12 @@ export class Game {
 
   action(seat: SeatId, a: Action) {
     if (this.phase !== 'active') return;
+    // Debug/sim-control actions come from the view-only main/supervisor seats
+    // and only when debug was enabled for this run.
+    if (seat === 'main' || seat === 'supervisor') {
+      if (this.debug) this.debugAction(a);
+      return;
+    }
     // Each action kind is only honored from the seat that owns it.
     if (seat === 'helm') {
       if (a.kind === 'throttle' && typeof a.value === 'number') {
@@ -415,6 +428,19 @@ export class Game {
     this.stats.pulsesUsed++;
     this.pushFx({ kind: 'sensorPulse' });
     this.event('Active sensor pulse — all contacts lit up.');
+  }
+
+  // Debug/sim-supervisor actions (only reached when this.debug is set).
+  private debugAction(a: Action) {
+    if (a.kind === 'setTimeScale' && typeof a.value === 'number') {
+      this.timeScale = clamp(a.value, 0, 4);
+      this.event(this.timeScale === 0 ? '[debug] Simulation paused.' : `[debug] Simulation speed set to ${this.timeScale}x.`);
+    } else if (a.kind === 'spawnAsteroid' && this.mission) {
+      this.spawnAsteroid(this.mission.impactIn, this.mission.asteroidDmg);
+      this.event('[debug] Spawned an asteroid.');
+    } else if (a.kind === 'spawnGate') {
+      this.spawnGate(); // emits its own "nav gate ahead" beat
+    }
   }
 
   private fire() {
@@ -575,6 +601,10 @@ export class Game {
 
   tick(dt: number) {
     if (this.phase !== 'active' || !this.mission) return;
+    // Debug time dilation: scale the whole simulation step (0 = paused). The
+    // transport still ticks and broadcasts, so debug controls stay responsive.
+    dt *= this.timeScale;
+    if (dt === 0) return;
     const m = this.mission;
     this.missionTime += dt;
     this.warpCd = Math.max(0, this.warpCd - dt);
@@ -858,6 +888,8 @@ export class Game {
       throttle: Math.round(this.throttle),
       alignment: round1(this.alignment),
       speed: round1(this.speed * 100), // display units
+      debug: this.debug,
+      timeScale: this.timeScale,
       // charge is the laser recharge meter (100 = ready to fire).
       charge: Math.round(this.charge),
       targetId: this.targetId,

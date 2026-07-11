@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Sim Supervisor</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #b18cff; }</style>
+</head>
+<body>
+  <header>
+    <h1>Sim Supervisor</h1>
+    <span class="room-code"></span>
+    <span class="conn-dot"></span>
+  </header>
+  <div id="toasts"></div>
+
+  <main>
+    <!-- Live simulation readout -->
+    <div class="panel">
+      <h2>Simulation</h2>
+      <div id="sup-readout" class="readout" style="font-size:1rem; line-height:1.7;">standing by…</div>
+    </div>
+
+    <!-- Debug controls (only actionable when the run was launched with debug on) -->
+    <div class="panel">
+      <h2>Debug Controls</h2>
+      <div id="debug-panel"></div>
+      <p id="debug-off-note" style="color:var(--dim); font-size:0.85rem; margin-top:0.6rem; display:none;">
+        This run was launched without debug enabled — relaunch with the main-screen
+        "Expose sim-debug controls" box checked (or use the launch button below).</p>
+    </div>
+
+    <!-- Ship's log so the supervisor can watch events -->
+    <div class="panel">
+      <h2>Ship's Log</h2>
+      <div class="log" id="log" style="max-height:12em;"></div>
+    </div>
+  </main>
+
+  <!-- Phase overlays (shared shell fills these in) -->
+  <div class="overlay hidden" id="lobby-overlay">
+    <h2>Standing By</h2>
+    <p id="lobby-crew" style="color:var(--dim)"></p>
+    <button class="primary" id="launch-btn">Launch (debug on)</button>
+  </div>
+  <div class="overlay hidden" id="debrief-overlay">
+    <h2>Mission Debrief</h2>
+    <div class="grade" id="debrief-grade"></div>
+    <p id="debrief-narrative" style="max-width:26rem"></p>
+    <button class="primary" id="return-btn">Return to Ready Room</button>
+  </div>
+
+  <script type="module">
+    import { initStation, fmtTime } from '/js/station.js';
+    import { mountDebugPanel } from '/js/debug-panel.js';
+
+    let debugPanel;
+    const net = initStation({
+      seat: 'supervisor',
+      // The supervisor's own launch always enables debug (it's the debug role);
+      // it launches the default mission (the main screen picks missions).
+      startPayload: () => ({ type: 'start', debug: true }),
+      render(state) {
+        const active = state.phase === 'active';
+        // Show the panel only when debug is actually on for this run.
+        document.getElementById('debug-panel').classList.toggle('hidden', !(active && state.debug));
+        document.getElementById('debug-off-note').style.display = (active && !state.debug) ? '' : 'none';
+        if (debugPanel) debugPanel.update(state);
+
+        const r = document.getElementById('sup-readout');
+        if (active) {
+          const speed = state.timeScale === 0 ? 'PAUSED' : `${state.timeScale}×`;
+          r.innerHTML =
+            `t ${fmtTime(state.missionTime)} · speed ${speed} · progress ${Math.round(state.progress)}%<br>` +
+            `hull ${state.hull}% · shields ${state.shields.strength}% · sensors ${Math.round(state.sensorRange)}s<br>` +
+            `contacts ${state.asteroids.length} · gates ${state.gates.length}`;
+        } else {
+          r.textContent = `phase: ${state.phase}`;
+        }
+        document.getElementById('log').innerHTML =
+          (state.log || []).map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
+      },
+    });
+
+    debugPanel = mountDebugPanel(document.getElementById('debug-panel'), net);
+  </script>
+</body>
+</html>

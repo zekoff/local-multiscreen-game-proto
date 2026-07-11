@@ -180,7 +180,9 @@ interface ClientMeta {
 }
 const meta = new Map<WebSocket, ClientMeta>();
 
-const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main'];
+const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main', 'supervisor'];
+// View-only seats: not exclusive crew, don't reserve a game seat, multiple ok.
+const VIEW_SEATS: SeatId[] = ['main', 'supervisor'];
 
 wss.on('connection', (ws) => {
   // Per-socket message rate window (resets every second). Oversized or
@@ -226,9 +228,9 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'error', message: 'This ship is at capacity.' }));
         return;
       }
-      // The main screen is view-only and multiple are allowed (e.g. TV + a
-      // laptop); crew seats are exclusive and handled by the game.
-      if (seat !== 'main') {
+      // View-only seats (main screen, sim supervisor) are non-exclusive and
+      // don't reserve a game seat; crew seats are exclusive and handled by the game.
+      if (!VIEW_SEATS.includes(seat)) {
         const result = room.game.join(seat, msg.playerId, String(msg.name || ''), msg.difficulty as Difficulty);
         if (!result.ok) {
           ws.send(JSON.stringify({ type: 'error', message: result.error }));
@@ -261,7 +263,7 @@ wss.on('connection', (ws) => {
           typeof msg.missionId === 'string' ? msg.missionId : undefined,
           typeof msg.seed === 'number' ? msg.seed : undefined,
         );
-        m.room.game.start(def, seed);
+        m.room.game.start(def, seed, msg.debug === true);
         ensureTicking(m.room);
       }
     } else if (msg.type === 'restart') {
@@ -278,7 +280,7 @@ wss.on('connection', (ws) => {
     m.room.clients.delete(ws);
     if (m.room.clients.size === 0) m.room.emptySince = Date.now();
     // Crew seats stay reserved for the playerId so reconnection resumes them.
-    if (m.seat !== 'main') m.room.game.disconnect(m.seat, m.playerId);
+    if (!VIEW_SEATS.includes(m.seat)) m.room.game.disconnect(m.seat, m.playerId);
   });
 });
 
