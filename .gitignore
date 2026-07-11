@@ -3,3 +3,7 @@ dist/
 *.log
 .wrangler/
 reports/
+
+# Claude Code: personal/ephemeral files (shared skills/commands ARE committed)
+.claude/settings.local.json
+.claude/worktrees/
