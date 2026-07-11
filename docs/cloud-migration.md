@@ -23,8 +23,8 @@ because rooms are fully independent:
 
 - `Game` instances share **no state** with each other — no cross-room reads,
   no global mutable state in the engine.
-- The engine (`src/game.ts`) is transport-free; it doesn't know WebSockets
-  exist.
+- The engine (`src/engine/game.ts`) is transport-free; it doesn't know
+  WebSockets exist.
 - Clients are stateless renderers; a reconnect needs only the next full
   state snapshot. There is no session state outside the room.
 - The wire protocol identifies everything by room code + seat + playerId.
@@ -73,9 +73,10 @@ the canonical DO use case.
 - Free tier covers prototype usage; paid usage is duration-based and small.
 - **The cost:** the transport layer is a rewrite. Workers runtime is not
   Node — Express and the `ws` package are replaced by Workers fetch routing
-  (or Hono) and the DO WebSocket API. `src/server.ts` (~200 lines) is
-  rewritten; **`src/game.ts` ports unchanged** — it's dependency-free
-  TypeScript. Clients are untouched except the items in Phase 1.
+  (or Hono) and the DO WebSocket API. The transport layer (`src/server-node.ts`
+  → `src/worker/*`) is rewritten; **`src/engine/game.ts` ports unchanged** —
+  it's dependency-free TypeScript. Clients are untouched except the items in
+  Phase 1.
 - Dev loop: `wrangler dev` (local, works on both dev machines), `wrangler
   deploy`. Fully CLI-drivable.
 
