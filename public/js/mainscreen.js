@@ -175,7 +175,7 @@ let pulseFlash = 0;     // cyan flash on an active sensor pulse
 // The main screen renders EVERY effect visually, but only plays the ship-wide
 // sounds (explosion/impact/warp). The laser is heard at weapons, gate chimes at
 // helm, sensor pings at engineering — see each station's playFxAudio call.
-const MAIN_AUDIO_KINDS = new Set(['explosion', 'impact', 'warp']);
+const MAIN_AUDIO_KINDS = new Set(['explosion', 'impact', 'warp', 'ionStorm', 'debris']);
 function consumeFx(state) {
   for (const e of state.fx || []) {
     if (e.kind === 'laser') { lasers.push({ id: e.targetId, hit: e.hit, life: 0.28 }); }

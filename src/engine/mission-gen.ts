@@ -93,6 +93,22 @@ export function generateMission(params: GenParams): MissionDef {
         { type: 'spawnRate', multiplier: lerp(1.3, 1.8, t) },
       ],
     }),
+    (mark, i) => ({
+      id: `gen-ionstorm-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Charged particle front rolling across the lane — instruments hazy.' },
+        { type: 'ionStorm', seconds: int(rng, 18, 28) },
+      ],
+    }),
+    (mark, i) => ({
+      id: `gen-debris-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Pulverized rock haze ahead — the fast way through costs paint and plating.' },
+        { type: 'debrisField', seconds: int(rng, 15, 25) },
+      ],
+    }),
   ];
   for (let i = 0; i < setPieces; i++) {
     events.push(pick(rng, pool)(marks[i], i));

@@ -28,6 +28,14 @@ export const keplerRescue: MissionDef = {
       ],
     },
     {
+      id: 'ion-front',
+      at: { progress: 30 },
+      actions: [
+        { type: 'log', text: 'The storm that broke Kepler Post is still radiating — ion front dead ahead.' },
+        { type: 'ionStorm', seconds: 25 },
+      ],
+    },
+    {
       id: 'midpoint-cascade',
       at: { progress: 50 },
       actions: [

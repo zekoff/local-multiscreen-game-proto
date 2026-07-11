@@ -54,6 +54,13 @@ const BASE_TURN = 12;
 // |alignment| at or under this counts as "on course" for helm effectiveness.
 const ON_COURSE_THRESHOLD = 15;
 
+// Debris field (scripted obstacle): pulverized rock that scours the hull
+// while the ship runs hot. No damage at or under the safe throttle; the
+// scrape scales quadratically above it, so full throttle through a field is
+// a real mistake while a cautious crawl is free — a helm judgment call.
+const DEBRIS_SAFE_THROTTLE = 40;
+const DEBRIS_DPS = 2.2; // hull/s at full throttle inside a field
+
 // Auto-assist is a survival net for an abandoned seat, not a competent crew
 // member. Post-playtest rebalance: the CPU is SLOW rather than INCOMPETENT —
 // no dice-roll misses, just deliberate reaction lag. A full bot crew should
@@ -188,7 +195,9 @@ export type Effect =
   | { kind: 'gate'; id: number; passed: boolean }
   | { kind: 'warp' }          // Emergency Warp jump (big shake/flash + sound)
   | { kind: 'sensorPulse' }   // active sensor sweep (expanding ring on the scope)
-  | { kind: 'sensorContact' }; // a contact just resolved on sensors (engineering ping)
+  | { kind: 'sensorContact' } // a contact just resolved on sensors (engineering ping)
+  | { kind: 'ionStorm' }      // ion storm front hits (engineering static + viewscreen wash)
+  | { kind: 'debris' };       // debris field entered (helm rumble + viewscreen specks)
 
 interface SeatState {
   playerId: string | null; // sticky id so a dropped client can resume its seat
@@ -307,6 +316,10 @@ export class Game {
   private autoFireAt: number | null = null;        // missionTime when the auto-turret's deliberate shot lands
   private autoShieldClearAt: number | null = null; // missionTime when auto shields drop after the sky clears
   private shipName = ''; // optional crew-chosen ship name (fiction only, set at launch)
+  // Timed environmental obstacles (scripted via mission events):
+  private ionStormUntil = 0;   // while active, sensor range is halved (engineering pressure)
+  private debrisUntil = 0;     // while active, running hot scrapes the hull (helm pressure)
+  private debrisTickTimer = 0; // paces the scrape feedback (fx/log) while in debris
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -440,6 +453,9 @@ export class Game {
     this.maxAsteroidsOverride = null;
     this.autoFireAt = null;
     this.autoShieldClearAt = null;
+    this.ionStormUntil = 0;
+    this.debrisUntil = 0;
+    this.debrisTickTimer = 0;
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
@@ -636,8 +652,11 @@ export class Game {
   }
 
   // Passive sensor detection range (seconds-to-impact), grows with sensor power.
+  // An active ion storm halves it — engineering can partially compensate with
+  // more sensor power, or punch through entirely with a pulse.
   private sensorRange(): number {
-    return SENSOR_BASE + SENSOR_PER_POWER * this.eff('sensors');
+    const base = SENSOR_BASE + SENSOR_PER_POWER * this.eff('sensors');
+    return this.missionTime < this.ionStormUntil ? base * 0.5 : base;
   }
 
   // A contact is targetable once it's within passive sensor range, or after a
@@ -723,6 +742,15 @@ export class Game {
       this.spawnGate();
     } else if (action.type === 'setMaxAsteroids') {
       this.maxAsteroidsOverride = action.value;
+    } else if (action.type === 'ionStorm') {
+      this.ionStormUntil = this.missionTime + action.seconds;
+      this.pushFx({ kind: 'ionStorm' });
+      this.event('ION STORM FRONT — sensor returns degraded. More sensor power or a pulse will cut through.');
+    } else if (action.type === 'debrisField') {
+      this.debrisUntil = this.missionTime + action.seconds;
+      this.debrisTickTimer = 0;
+      this.pushFx({ kind: 'debris' });
+      this.event('DEBRIS FIELD — pulverized rock in the lane. Ease the throttle or it will scour the hull.');
     }
   }
 
@@ -797,7 +825,9 @@ export class Game {
     // never chases nav gates (a human earns those slipstream rewards), so a bot
     // helm simply plods the straight line and drifts more than a crewed one.
     if (this.auto('helm')) {
-      this.throttle = AUTO_HELM_THROTTLE;
+      // The bot helm eases off in a debris field — sluggishly, to 45 (still a
+      // hair above the safe line), so it survives the field but pays a little.
+      this.throttle = this.missionTime < this.debrisUntil ? 45 : AUTO_HELM_THROTTLE;
       const gate = this.gates[0];
       if (gate) {
         // Poor slipstream attempt: crawl toward the ring's bearing. The step
@@ -961,6 +991,31 @@ export class Game {
         if (i > 0) this.asteroids[this.asteroids.length - 1].impactIn -= i * range(this.rng, { min: 0.5, max: 2 });
       }
       this.spawnTimer = range(this.rng, m.spawnEvery) / (this.diff('weapons') * this.spawnRateMult);
+    }
+
+    // Timed environmental obstacles. Debris: scrape the hull while running
+    // hot (quadratic above the safe throttle), with paced feedback so the
+    // room hears/sees the mistake without toast spam. Both obstacles announce
+    // once when they clear (the *Until fields are zeroed as the announcement).
+    if (this.missionTime < this.debrisUntil && this.throttle > DEBRIS_SAFE_THROTTLE) {
+      const hot = (this.throttle - DEBRIS_SAFE_THROTTLE) / (100 - DEBRIS_SAFE_THROTTLE);
+      const dps = DEBRIS_DPS * hot * hot;
+      this.hull = Math.max(0, this.hull - dps * dt);
+      this.tel.hullDamageTaken += dps * dt;
+      this.debrisTickTimer -= dt;
+      if (this.debrisTickTimer <= 0) {
+        this.debrisTickTimer = 3;
+        this.pushFx({ kind: 'impact', hullDmg: Math.max(1, Math.round(dps * 3)), absorbed: false });
+        this.event('Debris scouring the hull — ease the throttle!', false);
+      }
+    }
+    if (this.ionStormUntil > 0 && this.missionTime >= this.ionStormUntil) {
+      this.ionStormUntil = 0;
+      this.event('Ion storm front has passed — sensor returns clearing.');
+    }
+    if (this.debrisUntil > 0 && this.missionTime >= this.debrisUntil) {
+      this.debrisUntil = 0;
+      this.event('Clear of the debris field. Resume speed.');
     }
 
     // Trip breakers periodically, rate scaled by engineering difficulty.
@@ -1238,6 +1293,10 @@ export class Game {
       // Passive sensor range in seconds; sensor pulse readiness for engineering.
       sensorRange: round1(this.sensorRange()),
       sensorPulseReadyIn: round1(this.sensorPulseCd),
+      // Environmental obstacles: seconds remaining (0 = inactive). Engineering
+      // renders the storm warning, helm the debris warning, main screen both.
+      ionStormIn: round1(Math.max(0, this.ionStormUntil - this.missionTime)),
+      debrisIn: round1(Math.max(0, this.debrisUntil - this.missionTime)),
       // Contacts carry size/speed (for main-screen threat read-out) and whether
       // sensors have resolved them yet (targetable on the weapons scope).
       asteroids: this.asteroids.map((a) => ({

@@ -86,7 +86,7 @@
     // sensor contacts + the active sensor pulse.
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
-    const ENGINEERING_FX = new Set(['sensorContact', 'sensorPulse']);
+    const ENGINEERING_FX = new Set(['sensorContact', 'sensorPulse', 'ionStorm']);
     const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false };
     // Per-system restore-gesture progress (armed via the slider, then 3 taps).
     const RESTORE_TAPS = 3;
@@ -186,8 +186,13 @@
         }
         setHealthBar(document.getElementById('hull-bar'), state.hull);
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
-        // Sensors: current detection range + pulse cooldown.
-        document.getElementById('sensor-range').textContent = `${Math.round(state.sensorRange)}s range`;
+        // Sensors: current detection range + pulse cooldown. An ion storm
+        // halves the range — flag it loudly, this console owns the response.
+        const rangeEl = document.getElementById('sensor-range');
+        rangeEl.textContent = state.ionStormIn > 0
+          ? `${Math.round(state.sensorRange)}s range — ION STORM ${Math.ceil(state.ionStormIn)}s`
+          : `${Math.round(state.sensorRange)}s range`;
+        rangeEl.style.color = state.ionStormIn > 0 ? 'var(--bad)' : 'var(--accent)';
         const pulseBtn = document.getElementById('pulse-btn');
         const pulseReady = state.sensorPulseReadyIn <= 0;
         pulseBtn.disabled = !pulseReady;

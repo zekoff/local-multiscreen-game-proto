@@ -79,7 +79,7 @@
     // steering nudge. (Music + ship-wide booms live on the main screen.)
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
-    const HELM_FX = new Set(['gate']);
+    const HELM_FX = new Set(['gate', 'debris']);
 
     const throttle = document.getElementById('throttle');
     const warpBtn = document.getElementById('warp-btn');
@@ -121,8 +121,13 @@
         document.getElementById('align-state').textContent = lined ? (next ? 'on the gate' : 'on course') : 'off line';
         document.getElementById('align-state').style.color = lined ? 'var(--good)' : 'var(--warn)';
         // Next nav gate readout: closest gate, its bearing, and steering hint.
+        // A debris field takes over the line — throttle discipline is this
+        // console's call and outranks ring-chasing while the hull is scraping.
         const gateEl = document.getElementById('gate-readout');
-        if (next) {
+        if (state.debrisIn > 0) {
+          gateEl.textContent = `DEBRIS FIELD ${Math.ceil(state.debrisIn)}s — keep throttle under 40% or the hull scours.`;
+          gateEl.style.color = 'var(--bad)';
+        } else if (next) {
           const dir = next.bearing > 0 ? 'starboard' : 'port';
           gateEl.textContent = lined
             ? `${next.label} in ${Math.ceil(next.reachIn)}s — on the gate ✓`

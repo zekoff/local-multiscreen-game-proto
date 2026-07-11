@@ -30,6 +30,14 @@ export const minedCorridor: MissionDef = {
       ],
     },
     {
+      id: 'grinder-wake',
+      at: { progress: 30 },
+      actions: [
+        { type: 'log', text: 'The sweepers ground the mines they caught to dust. The dust is still here.' },
+        { type: 'debrisField', seconds: 22 },
+      ],
+    },
+    {
       id: 'false-calm',
       at: { progress: 42 },
       actions: [

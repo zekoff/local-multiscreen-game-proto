@@ -32,8 +32,11 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       const seekGate = gate && gate.reachIn < 7;
       const targetAlign = seekGate ? gate.bearing : 0;
       // Ease the throttle while swinging onto a gate (turn harder, slow its
-      // approach); otherwise cruise at the profile's travel throttle.
-      const wantThrottle = seekGate ? 55 : knobs.throttle;
+      // approach); otherwise cruise at the profile's travel throttle. A
+      // debris field overrides everything: running hot in one scours the
+      // hull, so drop under the safe threshold until it clears.
+      let wantThrottle = seekGate ? 55 : knobs.throttle;
+      if ((state.debrisIn || 0) > 0) wantThrottle = Math.min(wantThrottle, 35);
       if (Math.abs(state.throttle - wantThrottle) > 5) actions.push({ kind: 'throttle', value: wantThrottle });
       if (Math.abs(state.alignment - targetAlign) > knobs.alignTolerance) {
         actions.push({ kind: 'nudge', dir: state.alignment > targetAlign ? -1 : 1 });
@@ -48,6 +51,11 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       // Clear tripped breakers first — a tripped system runs at half power.
       for (const s of sys) {
         if (state.breakers[s]) actions.push({ kind: 'resetBreaker', system: s });
+      }
+      // Ion storm halves sensor range: burn the pulse to punch through if
+      // it's charged (the intended engineering counter-play).
+      if ((state.ionStormIn || 0) > 0 && state.sensorPulseReadyIn <= 0) {
+        actions.push({ kind: 'sensorPulse' });
       }
       // Threat-aware power triage over the 7-point pool: shift weight toward
       // weapons when a rock is genuinely close, keep the engines fed the rest

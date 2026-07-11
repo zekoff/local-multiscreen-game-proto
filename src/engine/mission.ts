@@ -87,7 +87,13 @@ export type EventAction =
   // Override the mission's concurrent-asteroid cap from this point on (last
   // value wins) — lets a mission ramp its ceiling over time, e.g. an intro
   // that starts at 1 and only allows 3 in the final stretch.
-  | { type: 'setMaxAsteroids'; value: number };
+  | { type: 'setMaxAsteroids'; value: number }
+  // Ion storm: halves passive sensor range for the duration — engineering
+  // pressure (compensate with sensor power, or punch through with a pulse).
+  | { type: 'ionStorm'; seconds: number }
+  // Debris field: running hot scours the hull for the duration — helm
+  // pressure (ease the throttle through it; a slow crawl is free).
+  | { type: 'debrisField'; seconds: number };
 
 // Parameters for the procedural generator: small enough to expose in a UI,
 // expressive enough to change how a run feels.
