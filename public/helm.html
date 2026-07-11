@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Helm Station</title>
   <link rel="stylesheet" href="/css/style.css">
-  <style>:root { --accent: #6fa8ff; }</style>
+  <style>
+    :root { --accent: #6fa8ff; }
+    /* Instant tactile ack for a steering nudge: the marker flares briefly. */
+    .align-marker.nudging { box-shadow: 0 0 10px 3px var(--accent); }
+  </style>
 </head>
 <body>
   <header>
@@ -69,6 +73,7 @@
     import { initStation } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio } from '/js/fx-audio.js';
+    import { createIntents } from '/js/optimistic.js';
 
     // Helm-local audio: the nav-gate pass/miss chimes and a subtle blip on each
     // steering nudge. (Music + ship-wide booms live on the main screen.)
@@ -80,15 +85,21 @@
     const warpBtn = document.getElementById('warp-btn');
     let draggingThrottle = false;
 
+    const intents = createIntents();
     const net = initStation({
       seat: 'helm',
+      intents,
       render(state) {
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         document.getElementById('speed').textContent = state.speed.toFixed(1);
         document.getElementById('dist').textContent = `${Math.max(0, 100 - state.progress).toFixed(0)}%`;
+        // Throttle is a commanded setpoint: echo the value just sent (intent)
+        // until the snapshot repeats it back, so the readout never snaps to a
+        // stale % for a tick. Derived values (speed) stay server-driven.
+        const shownThrottle = intents.get('throttle') ?? state.throttle;
         // Don't fight the player's finger: only sync the slider when idle.
-        if (!draggingThrottle) throttle.value = state.throttle;
-        document.getElementById('throttle-val').textContent = `${state.throttle}%`;
+        if (!draggingThrottle) throttle.value = shownThrottle;
+        document.getElementById('throttle-val').textContent = `${shownThrottle}%`;
         // Alignment marker: map -100..100 onto the track width.
         const pct = (state.alignment + 100) / 200;
         document.getElementById('align-marker').style.left = `calc(${(pct * 100).toFixed(1)}% - 5px)`;
@@ -96,8 +107,8 @@
         // The window is centered on the gate's BEARING (well off the 0 course
         // line) so the helm has to actively swing onto it; with no gate, the
         // band just marks the on-course zone around 0. A tripped engines breaker
-        // is fully offline (0 power), collapsing the window to its minimum.
-        const effEngines = state.breakers.engines ? 0 : state.power.engines;
+        // halves engine power (mirrors eff() in src/engine/game.ts).
+        const effEngines = state.power.engines * (state.breakers.engines ? 0.5 : 1);
         const win = 12 + 18 * (effEngines / 4);
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
@@ -121,18 +132,28 @@
           gateEl.textContent = 'No nav gate ahead.';
           gateEl.style.color = 'var(--dim)';
         }
-        // Emergency Warp availability.
-        warpBtn.disabled = state.warpReadyIn > 0;
-        warpBtn.textContent = state.warpReadyIn > 0
-          ? `Warp charging (${Math.ceil(state.warpReadyIn)}s)`
-          : 'Emergency Warp';
+        // Emergency Warp availability (a just-tapped warp reads engaged
+        // immediately via the optimistic flash, before the cooldown arrives).
+        const warping = intents.has('warped');
+        warpBtn.disabled = warping || state.warpReadyIn > 0;
+        warpBtn.textContent = warping
+          ? 'WARP!'
+          : state.warpReadyIn > 0
+            ? `Warp charging (${Math.ceil(state.warpReadyIn)}s)`
+            : 'Emergency Warp';
       },
     });
 
     // Throttle sends on change; track dragging so render() doesn't stomp it.
     throttle.addEventListener('pointerdown', () => (draggingThrottle = true));
     throttle.addEventListener('pointerup', () => (draggingThrottle = false));
-    throttle.addEventListener('input', () => net.action({ kind: 'throttle', value: Number(throttle.value) }));
+    throttle.addEventListener('input', () => {
+      const value = Number(throttle.value);
+      net.action({ kind: 'throttle', value });
+      // Setpoint echo: hold the commanded % until the server repeats it back.
+      intents.set('throttle', value, (s) => s.throttle === value);
+      document.getElementById('throttle-val').textContent = `${value}%`;
+    });
 
     // Hold-to-steer: the engine still turns once per tick, but the helmsman can
     // just hold the button down instead of tapping repeatedly. Pressing fires an
@@ -141,7 +162,15 @@
     function holdToSteer(btn, dir) {
       let timer = null;
       btn.style.touchAction = 'none'; // no scroll/zoom hijack of a held press
-      const fire = () => { net.action({ kind: 'nudge', dir }); audio.nudgeTick(); };
+      const marker = document.getElementById('align-marker');
+      const fire = () => {
+        net.action({ kind: 'nudge', dir });
+        audio.nudgeTick();
+        // Visual acknowledgment (not prediction): pulse the course marker so
+        // the press registers instantly; its position stays server-driven.
+        marker.classList.add('nudging');
+        setTimeout(() => marker.classList.remove('nudging'), 180);
+      };
       const start = (e) => {
         e.preventDefault();
         if (timer !== null) return;

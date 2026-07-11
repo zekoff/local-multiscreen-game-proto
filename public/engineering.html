@@ -76,6 +76,7 @@
     import { initStation, setHealthBar } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio } from '/js/fx-audio.js';
+    import { createIntents } from '/js/optimistic.js';
 
     // Console-local audio: engineering hears its own breakers (trip / arm / tap
     // / re-power), power reallocation clicks, and — routed off the main screen —
@@ -132,19 +133,42 @@
     }
     for (const sys of SYSTEMS) resetGesture(sys);
 
+    const intents = createIntents();
+    let lastPower = { engines: 0, shields: 0, weapons: 0, sensors: 0 }; // latest authoritative allocation
+    let lastBreakers = { engines: false, shields: false, weapons: false, sensors: false };
+
+    // The commanded allocation: optimistic intent if pending, else the snapshot.
+    const shownPower = (sys) => intents.get(`power-${sys}`) ?? lastPower[sys];
+
+    // Paint one system's pip row (+ the spare counter). Called from render()
+    // on every snapshot AND directly from the +/- click handler so a tap
+    // lands visually before the next broadcast.
+    function paintPips(sys) {
+      const tripped = intents.has(`brk-${sys}`) ? false : lastBreakers[sys];
+      const pips = document.querySelectorAll(`#pips-${sys} .pip`);
+      pips.forEach((p, i) => {
+        p.classList.toggle('on', !tripped && i < shownPower(sys));
+        p.classList.toggle('tripped', tripped && i < shownPower(sys));
+      });
+      const used = SYSTEMS.reduce((sum, s) => sum + shownPower(s), 0);
+      document.getElementById('power-free').textContent = `${POWER_TOTAL - used} spare`;
+    }
+
     const net = initStation({
       seat: 'engineering',
+      intents,
       render(state) {
         // Engineering-local SFX from the fx stream (sensor contacts + pulse).
         playFxAudio(state.fx, audio, ENGINEERING_FX);
-        const used = SYSTEMS.reduce((sum, s) => sum + state.power[s], 0);
-        document.getElementById('power-free').textContent = `${POWER_TOTAL - used} spare`;
+        lastPower = state.power;
         for (const sys of SYSTEMS) {
-          const tripped = !!state.breakers[sys];
-          // A tripped system is fully offline — show no lit pips regardless of
-          // its allocation, so the "dark system" reads at a glance.
-          const pips = document.querySelectorAll(`#pips-${sys} .pip`);
-          pips.forEach((p, i) => p.classList.toggle('on', !tripped && i < state.power[sys]));
+          lastBreakers[sys] = !!state.breakers[sys];
+          // Pips render the COMMANDED allocation; a tripped system limps at
+          // HALF power, so allocated pips stay visible but hollow (see
+          // .pip.tripped) — "still allocated, not fully functioning". The
+          // optimistic breaker-restore intent paints it healthy immediately.
+          paintPips(sys);
+          const tripped = intents.has(`brk-${sys}`) ? false : !!state.breakers[sys];
           const brk = document.getElementById(`brk-${sys}`);
           const label = brk.querySelector('.brk-label');
           const restoreEl = brk.querySelector('.brk-restore');
@@ -171,10 +195,21 @@
     // Sensor pulse button.
     document.getElementById('pulse-btn').addEventListener('click', () => net.action({ kind: 'sensorPulse' }));
 
-    // Power +/- buttons (soft click on each reallocation).
+    // Power +/- buttons (soft click on each reallocation). The tap paints the
+    // intended allocation immediately; if the server rejects it (pool spent,
+    // cap hit) the intent expires after 3 snapshots and the pips revert.
     systemsEl.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-sys]');
-      if (btn) { net.action({ kind: 'power', system: btn.dataset.sys, delta: Number(btn.dataset.delta) }); audio.powerClick(); }
+      if (!btn) return;
+      const sys = btn.dataset.sys;
+      const delta = Number(btn.dataset.delta);
+      net.action({ kind: 'power', system: sys, delta });
+      audio.powerClick();
+      const next = shownPower(sys) + delta;
+      if (next >= 0 && next <= POWER_MAX) {
+        intents.set(`power-${sys}`, next, (s) => s.power[sys] === next);
+        paintPips(sys); // land the tap visually before the next broadcast
+      }
     });
 
     // Two-step breaker restore. Step 1: drag the slider fully right to ARM.
@@ -206,6 +241,9 @@
       audio.breakerTick();
       if (g.taps >= RESTORE_TAPS) {
         net.action({ kind: 'resetBreaker', system: sys });
+        // Optimistic: paint the breaker healthy right now; the render loop
+        // reads this intent, and the reset SFX plays off the visual edge.
+        intents.set(`brk-${sys}`, false, (s) => !s.breakers[sys]);
         tap.disabled = true;
         tap.textContent = 'Restoring…';
       } else {

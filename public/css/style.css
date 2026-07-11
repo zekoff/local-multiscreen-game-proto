@@ -115,6 +115,9 @@ select {
 .pips { display: flex; gap: 5px; }
 .pip { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--panel-edge); background: #0d1322; }
 .pip.on { background: var(--accent); border-color: var(--accent); }
+/* Allocated to a system whose breaker is tripped: still spoken for, running
+   at half effect — outlined in the accent but hollow, not filled. */
+.pip.tripped { background: transparent; border: 2px solid var(--accent); opacity: 0.75; }
 
 /* --- Target list (weapons) --- */
 .target-btn { width: 100%; text-align: left; margin-bottom: 0.5rem; display: flex; justify-content: space-between; }

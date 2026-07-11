@@ -13,7 +13,11 @@ import { Net } from './net.js';
 //                  to build its mission picker
 //   startPayload - optional; () => message object sent by the Launch button
 //                  (defaults to a plain start; the main screen adds missionId)
-export function initStation({ seat, render, onJoined, startPayload }) {
+//   intents      - optional; an optimistic-intent store (js/optimistic.js).
+//                  Reconciled against every snapshot BEFORE render(state), so
+//                  pages can paint commanded values instantly and let the
+//                  authoritative state take over when it confirms.
+export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   const name = params.get('name') || '';
@@ -71,6 +75,7 @@ export function initStation({ seat, render, onJoined, startPayload }) {
     difficulty,
     handlers: {
       onState: (state) => {
+        intents?.reconcile(state); // expire/confirm optimistic values first
         renderPhase(state);
         render(state);
       },
