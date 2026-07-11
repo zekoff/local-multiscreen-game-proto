@@ -55,7 +55,7 @@
   </div>
 
   <script type="module">
-    import { initStation, setHealthBar, setChargeBar } from '/js/station.js';
+    import { initStation, setHealthBar, setChargeBar, mountHelp } from '/js/station.js';
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
     import { createAudio } from '/js/audio.js';
@@ -147,6 +147,18 @@
       intents.set('shields', want, (s) => s.shields.raised === want);
       shieldsRaised = want;
       shieldsBtn.textContent = want ? 'Lower Shields' : 'Raise Shields';
+    });
+
+    // Console tutorial (the "?" in the header).
+    mountHelp({
+      title: 'Weapons — you defend the ship',
+      lines: [
+        '<b>Tap a blip</b> on the scope to target it, then <b>FIRE</b> when the charge meter is full. Every shot that fires, hits.',
+        'The laser <b>recharges at a rate set by weapon power</b> — ask Engineering for more when rocks are thick.',
+        'Rocks only appear on your scope once <b>sensors resolve them</b> — more sensor power or a pulse means earlier locks.',
+        '<b>Shields</b> soak hits but bleed while raised and only recharge lowered. Raise for a volley, drop when the sky clears.',
+        'The scope shows names only — the <b>captain</b> reads speed and threat on the main screen and calls priorities.',
+      ],
     });
   </script>
 </body>

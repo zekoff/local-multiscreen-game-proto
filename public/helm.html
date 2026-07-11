@@ -70,7 +70,7 @@
   </div>
 
   <script type="module">
-    import { initStation } from '/js/station.js';
+    import { initStation, mountHelp } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
@@ -191,6 +191,19 @@
     }
     holdToSteer(document.getElementById('port-btn'), -1);
     holdToSteer(document.getElementById('starboard-btn'), 1);
+
+    // Console tutorial (the "?" in the header).
+    mountHelp({
+      title: 'Helm — you fly the ship',
+      lines: [
+        '<b>Throttle</b> sets speed. <b>Port / Starboard</b> steer (hold to keep turning).',
+        'Turns bite harder with more <b>engine power</b> (ask Engineering) and with the <b>throttle eased off</b> — slow down to swing hard.',
+        '<b>Slipstream rings</b> spawn off-course: swing onto the ring’s bearing before it arrives for a big speed boost.',
+        'In a <b>debris field</b>, keep the throttle under 40% or the hull scours.',
+        '<b>Emergency Warp</b> escapes everything but scatters every system — a last resort, not a habit.',
+        'Call out what you need — the captain sees the whole sky on the main screen.',
+      ],
+    });
     warpBtn.addEventListener('click', () => net.action({ kind: 'warp' }));
   </script>
 </body>

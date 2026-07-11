@@ -112,6 +112,29 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   return net;
 }
 
+// Console tutorial: a small "?" in the header opens a brief what-this-console-
+// does overlay. Content is supplied per page; the overlay sits above the
+// lobby/debrief overlays so a waiting player can read it before launch.
+export function mountHelp({ title, lines }) {
+  const header = document.querySelector('header');
+  const btn = document.createElement('button');
+  btn.id = 'help-btn';
+  btn.textContent = '?';
+  btn.setAttribute('aria-label', 'Console tutorial');
+  header.insertBefore(btn, header.querySelector('.room-code'));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay hidden help-overlay';
+  overlay.innerHTML = `
+    <h2>${title}</h2>
+    <ul class="help-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+    <button class="primary" id="help-close">Back to console</button>`;
+  document.body.appendChild(overlay);
+
+  btn.addEventListener('click', () => overlay.classList.remove('hidden'));
+  overlay.querySelector('#help-close').addEventListener('click', () => overlay.classList.add('hidden'));
+}
+
 // Format seconds as m:ss for mission clocks and countdowns.
 export function fmtTime(s) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
