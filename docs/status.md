@@ -4,7 +4,34 @@ Last updated: 2026-07-11 (post-playtest revision pass — branch
 `worktree-revision-pass`, draft PR open, deployed to Cloudflare). This file
 is the "resume here" note — read it with `CLAUDE.md` at the start of a session.
 
-## Latest pass: post-playtest revision (2026-07-11, after the first human playtests)
+## Latest: follow-up implementation pass (2026-07-11, same branch/PR #6)
+
+Owner-directed follow-up implementing report proposals 1/2/5 + polish:
+
+- **Difficulty at launch (P5)**: per-console chill/normal/intense selectors
+  in the main-screen lobby ("crew default" leaves join-URL choices alone);
+  every knob verified real per console (`npm run checks` asserts helm drift,
+  eng trips-per-hit — impact trips now scale with eng difficulty — and
+  weapons spawn pressure).
+- **New obstacles (P2)**: **ion storm** (halves sensor range; counter =
+  sensor power / pulse) and **debris field** (running hot scours the hull;
+  counter = throttle <40%). Scripted EventActions, authored uses (kepler,
+  mined-corridor), gen templates, per-console warnings, bot counters.
+- **Captain tools (P1)**: HUD THREAT row (closest rocks, converge warning,
+  hazards) + NAV row (next ring bearing/countdown); debrief Crew Performance
+  panel (per-console telemetry) + full **Captain's Log** written out.
+- **Music**: three tracks (Drift/Ember/Aurora) drawn at random per mission;
+  end-phase beat ~halved with breakdown bars; pattern rotation/rest bars
+  kill the loopiness. Still needs a real-device listen.
+- **Graphics pass**: nebula depth wash (seeded per mission), slipstream
+  streaks + 2.4× star rush, shield bow-arc + blue soak shimmer vs red hull
+  vignette, ion-storm interference, debris motes, scope blip halos, panel
+  accent hairlines; overlays scroll (Launch was off-screen at 720p — fixed).
+- **Console tutorials**: "?" on every crew console; readable from the lobby.
+- Balance targets re-verified (supply auto 60%/hull 18 barely arrives;
+  first-flight 100% for all; orderings intact; skilled on target).
+
+## Previous: post-playtest revision (2026-07-11, after the first human playtests)
 
 Full report: `docs/design/10-revision-playtest-report.md`; design-direction
 audit: `docs/design/09-design-direction-audit.md`. Highlights:
