@@ -8,7 +8,9 @@ import { Game, type SeatId, type Difficulty } from '../engine/game';
 import { missionCatalog, resolveMissionStart } from '../engine/mission-registry';
 import type { Env } from './env';
 
-const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main'];
+const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main', 'supervisor'];
+// View-only seats: non-exclusive, don't reserve a game seat (main screen, sim supervisor).
+const VIEW_SEATS: SeatId[] = ['main', 'supervisor'];
 
 // Same abuse caps as the Node transport (see docs/cloud-migration.md).
 const MAX_CLIENTS_PER_ROOM = 16;
@@ -127,8 +129,8 @@ export class RoomObject {
         return;
       }
       // Crew seats are exclusive (game enforces sticky-playerId resumption);
-      // the main screen is view-only and unlimited.
-      if (msg.seat !== 'main') {
+      // view-only seats (main screen, sim supervisor) are non-exclusive.
+      if (!VIEW_SEATS.includes(msg.seat)) {
         const result = this.game.join(msg.seat, msg.playerId, String(msg.name || ''), msg.difficulty as Difficulty);
         if (!result.ok) {
           ws.send(JSON.stringify({ type: 'error', message: result.error }));
@@ -155,7 +157,7 @@ export class RoomObject {
           typeof msg.missionId === 'string' ? msg.missionId : undefined,
           typeof msg.seed === 'number' ? msg.seed : undefined,
         );
-        this.game.start(def, seed);
+        this.game.start(def, seed, msg.debug === true);
         this.ensureTicking();
       }
     } else if (msg.type === 'restart') {
@@ -170,7 +172,7 @@ export class RoomObject {
     if (!m) return;
     this.clients.delete(ws);
     // Crew seats stay reserved for the playerId so reconnection resumes them.
-    if (m.seat !== 'main') this.game.disconnect(m.seat, m.playerId);
+    if (!VIEW_SEATS.includes(m.seat)) this.game.disconnect(m.seat, m.playerId);
   }
 
   // --- Tick loop: runs only while clients are connected or a mission is

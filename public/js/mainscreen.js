@@ -8,6 +8,7 @@
 import { initStation, fmtTime, setHealthBar } from '/js/station.js';
 import { qrcode } from '/js/vendor/qrcode-generator.mjs';
 import { createAudio } from '/js/audio.js';
+import { mountDebugPanel } from '/js/debug-panel.js';
 
 const canvas = document.getElementById('viewscreen');
 const ctx = canvas.getContext('2d');
@@ -50,9 +51,15 @@ function showMissionDesc() {
 }
 missionSelect.addEventListener('change', showMissionDesc);
 
-initStation({
+let debugPanel; // assigned after initStation returns the Net instance
+const net = initStation({
   seat: 'main',
-  startPayload: () => ({ type: 'start', missionId: missionSelect.value || undefined }),
+  // Launch carries the selected mission and whether to expose sim-debug controls.
+  startPayload: () => ({
+    type: 'start',
+    missionId: missionSelect.value || undefined,
+    debug: document.getElementById('debug-toggle').checked,
+  }),
   onJoined(msg) {
     catalog = msg.catalog || [];
     missionSelect.innerHTML = catalog
@@ -84,6 +91,10 @@ initStation({
     logEl.innerHTML = state.log.map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
     logEl.scrollTop = logEl.scrollHeight;
     updateCaptainHud(state);
+    // Sim-debug overlay: only when this run was launched with debug enabled.
+    const debugEl = document.getElementById('debug-panel');
+    debugEl.classList.toggle('hidden', !(state.debug && state.phase === 'active'));
+    if (debugPanel) debugPanel.update(state);
     // Debrief stats grid.
     if (state.phase === 'debrief' && state.debrief) {
       document.getElementById('debrief-mission').textContent =
@@ -99,6 +110,9 @@ initStation({
     }
   },
 });
+
+// Mount the sim-debug controls (hidden until a debug run is active).
+debugPanel = mountDebugPanel(document.getElementById('debug-panel'), net);
 
 // --- Captain's tactical readout: a one-glance status per station ---
 function updateCaptainHud(state) {

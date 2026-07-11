@@ -27,6 +27,9 @@
       <div class="cap-row" id="cap-wep"><span class="cap-name">WEP</span><span class="cap-val"></span></div>
     </div>
 
+    <!-- Sim-debug overlay (shown only when the run was launched with debug on) -->
+    <div id="debug-panel" class="hidden"></div>
+
     <!-- Ship status HUD along the bottom, visible to the whole room -->
     <div class="hud">
       <div class="cell">
@@ -65,6 +68,11 @@
       <div class="label" style="margin-bottom:0.3rem;">Mission</div>
       <select id="mission-select"></select>
       <p id="mission-desc" style="color:var(--dim); font-size:0.85rem; margin-top:0.5rem; min-height:3em;"></p>
+      <!-- Game setup: expose sim-debug controls (pause/speed/spawn) on the main
+           screen and to any "Sim Supervisor" role that joins the room. -->
+      <label style="display:flex; gap:0.5rem; align-items:center; color:var(--dim); font-size:0.9rem;">
+        <input type="checkbox" id="debug-toggle" style="width:auto;"> Expose sim-debug controls (pause / speed / spawn)
+      </label>
     </div>
     <button class="primary" id="launch-btn">Launch Mission</button>
   </div>
