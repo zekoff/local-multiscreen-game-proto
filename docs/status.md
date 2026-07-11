@@ -70,12 +70,13 @@ Last updated: 2026-07-10 (after weapons-scope deploy). This file is the
   UI changes this session also drove a real headless browser against a
   real running mission — see `weapons-scope` commit), owner explicitly
   says "commit and push" / "deploy" at milestones.
-- **`chromium-cli` is not installed in this environment.** For UI
-  verification this session fell back to a small ad-hoc Playwright driver
-  (installed via `npx playwright install chromium --with-deps`, then
-  imported straight from the npx cache path since the package isn't a
-  project dependency). Worth a `/run-skill-generator` pass if browser-driven
-  verification becomes routine.
+- **Browser-driven UI verification is now a skill:** `.claude/skills/run/`
+  (invoke `/run`) launches the LAN server and drives the station pages with
+  headless Chromium via Playwright. Playwright is a project devDependency;
+  the Chromium binary is a one-time `npx playwright install chromium` per
+  machine. There is still no `chromium-cli` wrapper — the skill writes a
+  small one-off `.mjs` driver run from the repo root (see the skill for the
+  app-specific gotchas: lobby-overlay timing, `#launch-btn`, motion ramp-up).
 
 ## Doc map
 

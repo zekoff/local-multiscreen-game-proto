@@ -71,7 +71,7 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
 
 - Adding a mechanic means touching all three of: `action()` (input),
   `tick()` (simulation), and `serialize()` (client visibility) in
-  `src/game.ts` — clients can only render what `serialize()` exposes.
+  `src/engine/game.ts` — clients can only render what `serialize()` exposes.
 - Actions are validated per seat; never let one station's client mutate
   another station's controls.
 - Per-role difficulty must stay a *parameter* (multiplier), not a separate

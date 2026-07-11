@@ -23,8 +23,8 @@ because rooms are fully independent:
 
 - `Game` instances share **no state** with each other — no cross-room reads,
   no global mutable state in the engine.
-- The engine (`src/game.ts`) is transport-free; it doesn't know WebSockets
-  exist.
+- The engine (`src/engine/game.ts`) is transport-free; it doesn't know
+  WebSockets exist.
 - Clients are stateless renderers; a reconnect needs only the next full
   state snapshot. There is no session state outside the room.
 - The wire protocol identifies everything by room code + seat + playerId.
