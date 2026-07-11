@@ -15,7 +15,7 @@ export const minedCorridor: MissionDef = {
   kind: 'authored',
   ...pacingFor(260),                       // a longer, wave-structured haul
   spawnEvery: { min: 14, max: 22 },       // quiet between the waves
-  impactIn: { min: 14, max: 22 },
+  impactIn: { min: 18, max: 26 }, // ambient rocks spawn beyond max sensor range (16s): seen dim on screen before sensors resolve them
   asteroidDmg: { min: 8, max: 14 },       // mines are numerous but small
   maxAsteroids: 6,                        // waves need headroom over ambient
   breakerEvery: { min: 30, max: 48 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
@@ -26,7 +26,7 @@ export const minedCorridor: MissionDef = {
       at: { progress: 18 },
       actions: [
         { type: 'log', text: 'Sensors: mine cluster ahead — brace!' },
-        { type: 'spawnAsteroids', count: 4, impactIn: { min: 8, max: 13 }, dmg: { min: 8, max: 12 } },
+        { type: 'spawnAsteroids', count: 4, impactIn: { min: 12, max: 16 }, dmg: { min: 8, max: 12 } },
       ],
     },
     {
@@ -42,7 +42,7 @@ export const minedCorridor: MissionDef = {
       at: { progress: 58 },
       actions: [
         { type: 'log', text: 'Contact! Drifting mines, all quadrants!' },
-        { type: 'spawnAsteroids', count: 6, impactIn: { min: 8, max: 14 }, dmg: { min: 8, max: 14 } },
+        { type: 'spawnAsteroids', count: 6, impactIn: { min: 12, max: 16 }, dmg: { min: 8, max: 14 } },
         { type: 'tripBreaker' },
       ],
     },

@@ -16,7 +16,7 @@ export const supplyRun: MissionDef = {
   kind: 'authored',
   ...pacingFor(180), // the 3-minute baseline: targetSeconds + derived speedScale/parTime
   spawnEvery: { min: 9, max: 16 },
-  impactIn: { min: 14, max: 22 },
+  impactIn: { min: 18, max: 26 }, // ambient rocks spawn beyond max sensor range (16s): seen dim on screen before sensors resolve them
   asteroidDmg: { min: 10, max: 20 },
   maxAsteroids: 4,
   breakerEvery: { min: 27, max: 45 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
@@ -27,7 +27,7 @@ export const supplyRun: MissionDef = {
       at: { progress: 35 },
       actions: [
         { type: 'log', text: 'The belt narrows here — cluster of rocks dead ahead!' },
-        { type: 'spawnAsteroids', count: 3, impactIn: { min: 8, max: 13 }, dmg: { min: 10, max: 16 } },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 12, max: 16 }, dmg: { min: 10, max: 16 } },
       ],
     },
     {
@@ -35,7 +35,7 @@ export const supplyRun: MissionDef = {
       at: { progress: 75 },
       actions: [
         { type: 'log', text: 'Scatter field on final approach to Epsilon — stay sharp.' },
-        { type: 'spawnAsteroids', count: 3, impactIn: { min: 8, max: 13 }, dmg: { min: 10, max: 16 } },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 12, max: 16 }, dmg: { min: 10, max: 16 } },
       ],
     },
   ],

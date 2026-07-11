@@ -6,11 +6,13 @@
 import type { MissionDef, CatalogEntry, GenParams } from './mission.js';
 import { generateMission } from './mission-gen.js';
 import { randomSeed } from './rng.js';
+import { firstFlight } from './missions/first-flight.js';
 import { supplyRun } from './missions/supply-run.js';
 import { minedCorridor } from './missions/mined-corridor.js';
 import { keplerRescue } from './missions/kepler-rescue.js';
 
-const AUTHORED: MissionDef[] = [supplyRun, minedCorridor, keplerRescue];
+// first-flight leads the list: it's the intro mission a new crew should see first.
+const AUTHORED: MissionDef[] = [firstFlight, supplyRun, minedCorridor, keplerRescue];
 
 // Generator presets exposed in the lobby. Intensity is fixed per preset for
 // now; a fuller mission-setup UI can expose GenParams directly later.

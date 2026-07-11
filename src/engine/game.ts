@@ -287,6 +287,7 @@ export class Game {
   private breakerTimer = 22;
   private spawnRateMult = 1;  // scripted 'spawnRate' actions replace this
   private calmUntil = 0;      // missionTime before which ambient spawns pause
+  private maxAsteroidsOverride: number | null = null; // scripted 'setMaxAsteroids' (null = use MissionDef)
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -398,6 +399,7 @@ export class Game {
     this.breakerTimer = range(this.rng, def.breakerEvery);
     this.spawnRateMult = 1;
     this.calmUntil = 0;
+    this.maxAsteroidsOverride = null;
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
@@ -674,7 +676,17 @@ export class Game {
       this.spawnRateMult = action.multiplier;
     } else if (action.type === 'calm') {
       this.calmUntil = this.missionTime + action.seconds;
+    } else if (action.type === 'spawnGate') {
+      this.spawnGate();
+    } else if (action.type === 'setMaxAsteroids') {
+      this.maxAsteroidsOverride = action.value;
     }
+  }
+
+  // Concurrent-asteroid ceiling: the mission's cap unless a scripted
+  // setMaxAsteroids event has overridden it (intro-style difficulty ramps).
+  private maxAsteroids(): number {
+    return this.maxAsteroidsOverride ?? this.mission!.maxAsteroids;
   }
 
   private spawnAsteroid(impactIn: { min: number; max: number }, dmg: { min: number; max: number }) {
@@ -864,14 +876,14 @@ export class Game {
     this.spawnTimer -= dt;
     if (
       this.spawnTimer <= 0 &&
-      this.asteroids.length < m.maxAsteroids &&
+      this.asteroids.length < this.maxAsteroids() &&
       this.missionTime >= this.calmUntil
     ) {
       // Usually one rock, but sometimes a 2-3 cluster arrives in short order so
       // it isn't always one-at-a-time. Cluster rocks are staggered slightly and
       // still respect the concurrent cap.
       const burst = this.rng() < BURST_CHANCE ? (this.rng() < 0.4 ? 3 : 2) : 1;
-      for (let i = 0; i < burst && this.asteroids.length < m.maxAsteroids; i++) {
+      for (let i = 0; i < burst && this.asteroids.length < this.maxAsteroids(); i++) {
         this.spawnAsteroid(m.impactIn, m.asteroidDmg);
         if (i > 0) this.asteroids[this.asteroids.length - 1].impactIn -= i * range(this.rng, { min: 0.5, max: 2 });
       }

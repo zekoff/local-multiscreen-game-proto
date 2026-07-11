@@ -14,7 +14,7 @@ export const keplerRescue: MissionDef = {
   kind: 'authored',
   ...pacingFor(150),                       // short, hot dash — arrive fast if you keep the engines fed
   spawnEvery: { min: 7, max: 12 },
-  impactIn: { min: 12, max: 18 },
+  impactIn: { min: 18, max: 24 }, // ambient rocks spawn beyond max sensor range (16s): seen dim on screen before sensors resolve them
   asteroidDmg: { min: 8, max: 16 },
   maxAsteroids: 5,
   breakerEvery: { min: 21, max: 36 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
@@ -34,7 +34,7 @@ export const keplerRescue: MissionDef = {
         { type: 'log', text: 'Debris strike aft! Electrical cascade across the grid!' },
         { type: 'tripBreaker', system: 'engines' },
         { type: 'tripBreaker', system: 'weapons' },
-        { type: 'spawnAsteroids', count: 3, impactIn: { min: 7, max: 12 }, dmg: { min: 10, max: 16 } },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 12, max: 16 }, dmg: { min: 10, max: 16 } },
       ],
     },
     {
@@ -42,7 +42,7 @@ export const keplerRescue: MissionDef = {
       at: { progress: 72 },
       actions: [
         { type: 'log', text: 'The rockslide that hit Kepler is still spreading — swarm inbound!' },
-        { type: 'spawnAsteroids', count: 3, impactIn: { min: 8, max: 13 }, dmg: { min: 8, max: 14 } },
+        { type: 'spawnAsteroids', count: 3, impactIn: { min: 12, max: 16 }, dmg: { min: 8, max: 14 } },
       ],
     },
     {

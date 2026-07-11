@@ -65,7 +65,7 @@ export function generateMission(params: GenParams): MissionDef {
       at: { progress: mark },
       actions: [
         { type: 'log', text: 'Debris storm ahead — multiple contacts inbound!' },
-        { type: 'spawnAsteroids', count: int(rng, 3, 4 + Math.round(t)), impactIn: { min: 7, max: 13 } },
+        { type: 'spawnAsteroids', count: int(rng, 3, 4 + Math.round(t)), impactIn: { min: 12, max: 16 } },
       ],
     }),
     (mark, i) => ({
@@ -107,7 +107,7 @@ export function generateMission(params: GenParams): MissionDef {
     targetSeconds: pacing.targetSeconds,
     parTime: pacing.parTime,
     spawnEvery: { min: spawnMid * 0.75, max: spawnMid * 1.35 },
-    impactIn: { min: lerp(16, 12, t), max: lerp(24, 18, t) },
+    impactIn: { min: lerp(20, 18, t), max: lerp(28, 24, t) }, // ambient spawns stay beyond max sensor range (16s)
     asteroidDmg: { min: dmgLo, max: dmgHi },
     maxAsteroids: 4 + Math.round(t * 2),
     breakerEvery: { min: breakerMid * 0.75, max: breakerMid * 1.35 },

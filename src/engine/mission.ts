@@ -78,7 +78,14 @@ export type EventAction =
   // last value wins). >1 = more frequent spawns.
   | { type: 'spawnRate'; multiplier: number }
   // Suppress ambient spawning for a stretch (scripted quiet before a storm).
-  | { type: 'calm'; seconds: number };
+  | { type: 'calm'; seconds: number }
+  // Spawn a nav gate right now (scripted set piece — e.g. an intro mission's
+  // first guaranteed ring), in addition to the ambient gateEvery cadence.
+  | { type: 'spawnGate' }
+  // Override the mission's concurrent-asteroid cap from this point on (last
+  // value wins) — lets a mission ramp its ceiling over time, e.g. an intro
+  // that starts at 1 and only allows 3 in the final stretch.
+  | { type: 'setMaxAsteroids'; value: number };
 
 // Parameters for the procedural generator: small enough to expose in a UI,
 // expressive enough to change how a run feels.
