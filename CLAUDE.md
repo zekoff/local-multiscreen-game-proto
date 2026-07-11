@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **At the start of a session, read `docs/status.md`** — it's the canonical
+> "resume here" snapshot (what's built/deployed, what's open, current
+> decisions). This file (`CLAUDE.md`) covers the stable how-the-repo-works
+> facts; `status.md` covers the moving current state.
+
 ## Project
 
 A co-located, multi-device cooperative spaceship bridge game. Each player crews
