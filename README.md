@@ -1,4 +1,4 @@
-# local-multiscreen-game-proto
+# bridge-crew
 
 Prototype of a co-located, multi-device cooperative spaceship bridge game.
 Each player crews a station from their own phone/tablet/laptop browser; an

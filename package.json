@@ -1,5 +1,5 @@
 {
-  "name": "local-multiscreen-game-proto",
+  "name": "bridge-crew",
   "version": "0.1.0",
   "description": "Prototype: co-located multi-device spaceship bridge crew game",
   "type": "module",
