@@ -45,7 +45,8 @@
         <div class="meter"><div id="shield-bar"></div></div>
       </div>
       <div class="cell">
-        <div class="label" id="progress-label">Distance to Destination</div>
+        <div class="label"><span id="progress-label">Distance to Destination</span>
+          <span id="readout-val" style="color:var(--text); font-family:monospace; margin-left:0.4rem; text-transform:none; letter-spacing:0;"></span></div>
         <div class="meter"><div id="progress-bar"></div></div>
       </div>
       <div class="cell">
@@ -91,6 +92,14 @@
           <select id="diff-weapons" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
         </label>
       </div>
+      <!-- Mission speed: a real-time multiplier on the whole simulation.
+           Slower = more thinking time for a learning crew. -->
+      <div class="label" style="margin-bottom:0.3rem;">Mission speed</div>
+      <select id="pace-select" style="margin-bottom:0.7rem;">
+        <option value="0.75">Relaxed (0.75×)</option>
+        <option value="1" selected>Standard (1×)</option>
+        <option value="1.25">Brisk (1.25×)</option>
+      </select>
       <!-- Game setup: expose sim-debug controls (pause/speed/spawn) on the main
            screen and to any "Sim Supervisor" role that joins the room. -->
       <label style="display:flex; gap:0.5rem; align-items:center; color:var(--dim); font-size:0.9rem;">

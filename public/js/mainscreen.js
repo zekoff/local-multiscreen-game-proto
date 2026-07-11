@@ -58,6 +58,8 @@ function showMissionDesc() {
 missionSelect.addEventListener('change', showMissionDesc);
 
 let debugPanel; // assigned after initStation returns the Net instance
+let debriefShownSeed = null; // guards one-time debrief population per run
+let debriefScrollRaf = 0;    // the captain's-log auto-scroll animation handle
 const net = initStation({
   seat: 'main',
   // Launch carries the selected mission and whether to expose sim-debug controls.
@@ -76,18 +78,23 @@ const net = initStation({
       // Crew-chosen ship name (optional fiction; engine sanitizes/limits it).
       shipName: document.getElementById('ship-name').value.trim() || undefined,
       difficulties: Object.keys(difficulties).length ? difficulties : undefined,
+      // Ready-room mission speed (real-time multiplier; engine clamps).
+      pace: Number(document.getElementById('pace-select').value) || 1,
     };
   },
   onJoined(msg) {
     catalog = msg.catalog || [];
+    // Each mission shows its difficulty rating right in the picker.
     missionSelect.innerHTML = catalog
-      .map((c) => `<option value="${c.id}">${c.name}</option>`)
+      .map((c) => `<option value="${c.id}">${c.name} — ${c.rating}</option>`)
       .join('');
     showMissionDesc();
   },
   render(state) {
     consumeFx(state); // must run before we overwrite `latest`
     latest = state;
+    // Feed the alignment interpolator (smooth turning between snapshots).
+    if (state.phase === 'active') onAlignmentSnapshot(state.alignment);
     // Music follows the phase; the build is driven by *time*, not progress, so
     // the ambient->melody->beat arc lands over ~MUSIC_BUILD_SECONDS and then
     // holds at full for the remainder of a longer mission.
@@ -104,8 +111,14 @@ const net = initStation({
     setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
     document.getElementById('shield-state').textContent = state.shields.raised ? '(raised)' : '(down)';
     document.getElementById('progress-bar').style.width = `${state.progress}%`;
-    if (state.mission) {
-      document.getElementById('progress-label').textContent = `Distance to ${state.mission.arrivalName}`;
+    if (state.mission && state.readout) {
+      // Mission-configurable readout: parsecs count down to 0 at dock;
+      // countdown missions show time left on the failure clock instead.
+      const r = state.readout;
+      document.getElementById('progress-label').textContent =
+        r.label || (r.kind === 'countdown' ? 'Time Remaining' : `Distance to ${state.mission.arrivalName}`);
+      document.getElementById('readout-val').textContent =
+        r.kind === 'countdown' ? fmtTime(r.remaining) : `${r.remaining.toFixed(1)} ${r.unit}`;
     }
     // Header carries the crew's ship name once one is set (fiction beat #1).
     document.querySelector('header h1').textContent =
@@ -115,11 +128,18 @@ const net = initStation({
     logEl.scrollTop = logEl.scrollHeight;
     updateCaptainHud(state);
     // Sim-debug overlay: only when this run was launched with debug enabled.
+    // Pinned bottom-LEFT, riding just above the HUD strip so it never covers
+    // the hull/shield cells.
     const debugEl = document.getElementById('debug-panel');
     debugEl.classList.toggle('hidden', !(state.debug && state.phase === 'active'));
+    const hudEl = document.querySelector('.hud');
+    if (hudEl) debugEl.style.bottom = `${hudEl.offsetHeight + 10}px`;
     if (debugPanel) debugPanel.update(state);
-    // Debrief stats grid.
-    if (state.phase === 'debrief' && state.debrief) {
+    // Debrief: populate ONCE per run (innerHTML rewrites reset the log's
+    // scroll position, which the auto-scroller owns during the debrief).
+    if (state.phase !== 'debrief') debriefShownSeed = null;
+    if (state.phase === 'debrief' && state.debrief && state.debrief.seed !== debriefShownSeed) {
+      debriefShownSeed = state.debrief.seed;
       document.getElementById('debrief-mission').textContent =
         `${state.debrief.missionName} (seed ${state.debrief.seed})`;
       const s = state.debrief.stats;
@@ -141,9 +161,24 @@ const net = initStation({
           <div class="label">Engineering — power used / downtime</div><div>${pctf(pc.engineering.avgPowerUtil)} · ${Math.round(pc.engineering.breakerDowntime || 0)}s</div>
           <div class="label">Crew coordination</div><div>${pctf(pc.captain.coordinationScore)}</div>`;
       }
-      // The full captain's log, written out for review.
+      // The full captain's log, written out for review — and read aloud by a
+      // slow auto-scroll so the room can relive the run from the couch.
       const dl = document.getElementById('debrief-log');
       dl.innerHTML = (state.debrief.log || []).map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
+      dl.scrollTop = 0;
+      cancelAnimationFrame(debriefScrollRaf);
+      let lastScrollTs = performance.now() + 1800; // hold the top a beat first
+      const scrollStep = (ts) => {
+        if (!latest || latest.phase !== 'debrief') return;
+        if (ts > lastScrollTs) {
+          dl.scrollTop += (ts - lastScrollTs) * 0.022; // ~22px/s reading pace
+          lastScrollTs = ts;
+        }
+        if (dl.scrollTop + dl.clientHeight < dl.scrollHeight - 1) {
+          debriefScrollRaf = requestAnimationFrame(scrollStep);
+        }
+      };
+      debriefScrollRaf = requestAnimationFrame(scrollStep);
     }
   },
 });
@@ -292,6 +327,26 @@ function asteroidBasePos(id, w, h) {
 // frame by drawAsteroids). Cleared if it grows unreasonably (session restarts).
 const astPos = new Map();
 
+// Per-rock angular silhouette (classic-Asteroids style, but filled): a seeded
+// ring of 9-12 vertices with jittered radii plus a slow spin. Cached per id so
+// a rock keeps its shape for its whole approach.
+const astShapes = new Map();
+function astShapeFor(id) {
+  let s = astShapes.get(id);
+  if (s) return s;
+  let seed = (id * 2654435761) >>> 0;
+  const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+  const n = 9 + Math.floor(rand() * 4);
+  const pts = Array.from({ length: n }, (_, i) => ({
+    a: (i / n) * Math.PI * 2 + (rand() - 0.5) * 0.35, // jittered angle
+    m: 0.68 + rand() * 0.58,                          // jittered radius multiplier
+  }));
+  s = { pts, spin: (rand() - 0.5) * 0.8 }; // radians/sec, either direction
+  astShapes.set(id, s);
+  if (astShapes.size > 400) astShapes.clear();
+  return s;
+}
+
 // Where an asteroid sits on screen this frame: it starts off-axis at its
 // port/starboard bearing and drifts toward the vanishing point (the ship, dead
 // ahead) as it closes — and the whole field slides with the helm's steering
@@ -321,6 +376,24 @@ function cachedAstPos(id, w, h, yawPx) {
   return { x: base.x + yawPx, y: base.y };
 }
 
+// --- Snapshot interpolation for the ship's alignment ---
+// The server steps alignment once per 250ms tick; rendering the raw value
+// makes the world (and gate rings) jump-then-smooth under continuous turning.
+// Instead we interpolate from the previously DISPLAYED value toward each new
+// snapshot over one tick interval, which stays smooth through held turns.
+let alignPrev = 0;
+let alignCurr = 0;
+let alignAt = 0;
+function onAlignmentSnapshot(v) {
+  alignPrev = displayAlignment();
+  alignCurr = v;
+  alignAt = performance.now();
+}
+function displayAlignment() {
+  const t = Math.max(0, Math.min(1, (performance.now() - alignAt) / 280));
+  return alignPrev + (alignCurr - alignPrev) * t;
+}
+
 let yaw = 0; // smoothed course bank, -1..1
 let lastTs = performance.now();
 function frame(ts) {
@@ -332,11 +405,11 @@ function frame(ts) {
   const h = canvas.height;
   const dpr = devicePixelRatio;
 
-  // Smooth the bank toward the ship's current course error (alignment). A
-  // positive alignment (drifting starboard) swings the view so the world
-  // slides to port — as if the nose is yawing to correct.
-  const targetYaw = latest && latest.phase === 'active' ? Math.max(-1, Math.min(1, latest.alignment / 100)) : 0;
-  yaw += (targetYaw - yaw) * Math.min(1, dt * 3);
+  // Bank the view with the interpolated alignment (see onAlignmentSnapshot):
+  // the interpolation supplies tick-to-tick smoothness, so the easing here
+  // just follows it briskly instead of doing the smoothing itself.
+  const targetYaw = latest && latest.phase === 'active' ? Math.max(-1, Math.min(1, displayAlignment() / 100)) : 0;
+  yaw += (targetYaw - yaw) * Math.min(1, dt * 8);
   const yawPx = -yaw * w * 0.16;
 
   ctx.save();
@@ -396,10 +469,13 @@ function frame(ts) {
     drawExplosions(w, h, yawPx, dt, dpr);
     if (latest.debrisIn > 0) drawDebris(w, h, cx, cy, projScale, dt, dpr);
     if (latest.ionStormIn > 0) drawIonStorm(w, h);
-    if (slipstream) drawSlipstream(w, h, cx, cy, dpr);
   }
 
   ctx.restore();
+
+  // Slipstream streaks are drawn in FIXED screen space, centered on where the
+  // ship is pointed (the reticle), not on the destination's vanishing point.
+  if (latest && latest.phase === 'active' && slipstream) drawSlipstream(w, h, w / 2, h / 2, dpr);
 
   // Forward reticle in fixed screen space (the ship's heading): the world
   // banks behind it, so "centered under the crosshair" reads as on-course.
@@ -586,12 +662,15 @@ function drawPlanet(x, y, r, color) {
 // under the reticle only when the helm has steered onto that bearing.
 function drawGates(w, h, cy, dpr) {
   const GATE_MAX_REACH = 19;
+  // Interpolated alignment: rings glide as the ship swings instead of
+  // jumping once per server tick.
+  const align = displayAlignment();
   for (const gate of latest.gates || []) {
     const t = Math.max(0, Math.min(1, 1 - gate.reachIn / GATE_MAX_REACH)); // 0 far .. 1 here
     const r = (14 + t * t * Math.min(w, h) * 0.7);
     // Screen x from how far the ship's alignment is off the gate's bearing.
-    const cx = w / 2 + ((gate.bearing - latest.alignment) / 100) * (w * 0.5);
-    const lined = Math.abs(latest.alignment - gate.bearing) <= 30;
+    const cx = w / 2 + ((gate.bearing - align) / 100) * (w * 0.5);
+    const lined = Math.abs(align - gate.bearing) <= 30;
     const color = lined ? '#8fd6ff' : '#ffb347';
     ctx.strokeStyle = hexA(color, 0.35 + t * 0.5);
     ctx.lineWidth = (2 + t * 3) * dpr;
@@ -633,8 +712,17 @@ function drawAsteroids(w, h, yawPx, dpr) {
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(px, py, r * 1.7, 0, Math.PI * 2); ctx.fill();
+    // The rock body: an irregular filled polygon (per-id silhouette + slow
+    // spin) instead of a flat circle — reads as a tumbling asteroid.
+    const shape = astShapeFor(a.id);
+    const rot = (performance.now() / 1000) * shape.spin;
     ctx.beginPath();
-    ctx.arc(px, py, r, 0, Math.PI * 2);
+    shape.pts.forEach((p, i) => {
+      const vx = px + Math.cos(p.a + rot) * r * p.m;
+      const vy = py + Math.sin(p.a + rot) * r * p.m;
+      i === 0 ? ctx.moveTo(vx, vy) : ctx.lineTo(vx, vy);
+    });
+    ctx.closePath();
     ctx.fillStyle = 'rgba(150, 140, 122, 0.92)';
     ctx.fill();
 

@@ -9,14 +9,21 @@
     :root { --accent: #ffb347; }
     /* Two-step breaker restore: drag the slider fully right to ARM, then tap
        the button three times to re-power. A tripped system runs at half power.
-       The restore block RESERVES its space when healthy (visibility, not
-       display) so the panel never reflows as breakers trip and clear. */
-    .breaker { display: block; margin-bottom: 0.6rem; }
-    .brk-label { font-weight: 600; margin-bottom: 0.3rem; }
+       Each breaker is an OUTLINED box with a fixed height — you can see where
+       the restore controls will appear even while it's healthy, and the panel
+       never reflows. Healthy = the status line centered in the box. */
+    .breaker {
+      border: 1px solid var(--panel-edge); border-radius: 8px;
+      padding: 0.6rem 0.7rem; margin-bottom: 0.6rem;
+      min-height: 9.6rem;
+      display: flex; flex-direction: column; justify-content: center; gap: 0.45rem;
+    }
+    .breaker.tripped { justify-content: flex-start; border-color: #ff6f6f66; }
+    .brk-label { font-weight: 600; }
     .breaker.tripped .brk-label { color: #ff6f6f; }
     .brk-restore { display: flex; flex-direction: column; gap: 0.4rem; }
-    .brk-restore.idle { visibility: hidden; }
-    .brk-slider { width: 100%; accent-color: var(--accent); height: 2rem; }
+    .brk-restore.idle { display: none; }
+    .brk-slider { width: 100%; accent-color: var(--accent); }
     .brk-tap { width: 100%; }
     .brk-tap:disabled { opacity: 0.5; }
   </style>
@@ -72,6 +79,8 @@
     <h2 id="debrief-title">Mission Debrief</h2>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:26rem"></p>
+    <div class="label" style="margin-top:0.6rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 22vh; width: min(26rem, 88vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 

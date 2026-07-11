@@ -33,6 +33,7 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const debriefOverlay = document.getElementById('debrief-overlay');
   const toasts = document.getElementById('toasts');
 
+  let lastDebriefSeed = null; // populate the debrief log once per run (keeps scroll position)
   const MAX_TOASTS = 3; // keep the corner stack short; drop the oldest beyond this
   function toast(text) {
     const el = document.createElement('div');
@@ -76,6 +77,15 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
       // Color the grade by score band so a near-failure doesn't read as a win.
       grade.style.color = scoreColor(state.debrief.score);
       document.getElementById('debrief-narrative').textContent = state.debrief.narrative;
+      // Captain's log for review (populated once per run so a player's scroll
+      // position isn't reset by each snapshot).
+      const dlog = document.getElementById('debrief-log');
+      if (dlog && state.debrief.seed !== lastDebriefSeed) {
+        lastDebriefSeed = state.debrief.seed;
+        dlog.innerHTML = (state.debrief.log || [])
+          .map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`)
+          .join('');
+      }
     }
     // Suppress the toast corner while a full-screen overlay is up, so the
     // end-of-mission event burst can't bury the debrief (or the lobby QR).

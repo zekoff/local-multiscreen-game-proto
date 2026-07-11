@@ -24,7 +24,7 @@
     <div class="panel">
       <div class="spread">
         <div><div class="label">Velocity</div><div class="readout" id="speed">0</div></div>
-        <div style="text-align:right"><div class="label">Distance to Station</div><div class="readout" id="dist">100%</div></div>
+        <div style="text-align:right"><div class="label" id="dist-label">Distance to Station</div><div class="readout" id="dist">—</div></div>
       </div>
     </div>
 
@@ -66,11 +66,13 @@
     <h2 id="debrief-title">Mission Debrief</h2>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:26rem"></p>
+    <div class="label" style="margin-top:0.6rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 22vh; width: min(26rem, 88vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 
   <script type="module">
-    import { initStation, mountHelp } from '/js/station.js';
+    import { initStation, mountHelp, fmtTime } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
@@ -92,7 +94,15 @@
       render(state) {
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         document.getElementById('speed').textContent = state.speed.toFixed(1);
-        document.getElementById('dist').textContent = `${Math.max(0, 100 - state.progress).toFixed(0)}%`;
+        // Mission-configurable readout: parsecs count down to 0 at dock, or a
+        // failure-clock countdown on missions that define one.
+        if (state.readout) {
+          document.getElementById('dist-label').textContent = state.readout.label
+            || (state.readout.kind === 'countdown' ? 'Time Remaining' : `Distance to ${state.mission?.arrivalName ?? 'Destination'}`);
+          document.getElementById('dist').textContent = state.readout.kind === 'countdown'
+            ? fmtTime(state.readout.remaining)
+            : `${state.readout.remaining.toFixed(1)} ${state.readout.unit}`;
+        }
         // Throttle is a commanded setpoint: echo the value just sent (intent)
         // until the snapshot repeats it back, so the readout never snaps to a
         // stale % for a tick. Derived values (speed) stay server-driven.
