@@ -386,7 +386,13 @@ export class Game {
   // Begin a mission run. The transport resolves the MissionDef (registry or
   // generator) and passes the run seed so (missionId, seed) reproduces the
   // run's randomness exactly.
-  start(def: MissionDef, seed?: number, debug = false, shipName = '') {
+  start(
+    def: MissionDef,
+    seed?: number,
+    debug = false,
+    shipName = '',
+    difficulties?: Partial<Record<SeatId, Difficulty>>,
+  ) {
     if (this.phase === 'active') return;
     this.mission = def;
     this.runSeed = seed ?? randomSeed();
@@ -395,6 +401,15 @@ export class Game {
     // The crew's ship name (optional, set at launch): pure fiction, zero
     // mechanics — it flavors the log, the main-screen header, and the debrief.
     this.shipName = shipName.trim().slice(0, 24);
+    // Launch-time per-seat difficulty (the main-screen lobby surfaces this so
+    // the whole party sees it). Only explicitly-chosen seats are overridden —
+    // a player's own join-URL difficulty stands otherwise.
+    if (difficulties) {
+      for (const s of Object.keys(difficulties) as SeatId[]) {
+        const d = difficulties[s];
+        if (this.seats[s] && d && DIFF_MULT[d]) this.seats[s].difficulty = d;
+      }
+    }
     this.timeScale = 1;
     // Reset all mission state for a fresh run.
     this.phase = 'active';
@@ -984,11 +999,18 @@ export class Game {
     this.tel.hullDamageTaken += remaining;
     // Feed the captain's-log damage-burst detector (only real hull damage).
     if (remaining > 0) this.damageWindow.push({ t: this.missionTime, dmg: Math.round(remaining) });
-    // A hull-damaging strike jolts a random breaker loose — impacts, not the
-    // ambient timer, are now the main source of engineering emergencies. Hits
-    // fully absorbed by shields do NOT trip anything: good shield play spares
-    // the engineer, which is the cooperation loop the design wants.
-    if (remaining > 0) this.tripBreaker();
+    // A hull-damaging strike jolts a breaker loose — impacts, not the ambient
+    // timer, are now the main source of engineering emergencies. Hits fully
+    // absorbed by shields do NOT trip anything: good shield play spares the
+    // engineer. The chance scales with the ENGINEERING seat's difficulty so
+    // the knob really changes that console's workload: chill ~60% of hull
+    // hits trip one, normal always trips one, intense always trips one and
+    // half the time jolts a second loose.
+    if (remaining > 0) {
+      const engDiff = this.diff('engineering'); // 0.6 / 1 / 1.5
+      if (this.rng() < Math.min(1, engDiff)) this.tripBreaker();
+      if (engDiff > 1 && this.rng() < engDiff - 1) this.tripBreaker();
+    }
     this.targetableSince.delete(a.id);
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
     // Screen shake + sound scale off this on the main screen; absorbed hits get

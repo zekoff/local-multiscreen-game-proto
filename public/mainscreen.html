@@ -72,6 +72,21 @@
       <div class="label" style="margin-bottom:0.3rem;">Mission</div>
       <select id="mission-select"></select>
       <p id="mission-desc" style="color:var(--dim); font-size:0.85rem; margin-top:0.5rem; min-height:3em;"></p>
+      <!-- Per-console difficulty, visible to the whole party (design pillar:
+           varied skill levels on one crew). "Crew default" leaves whatever the
+           player chose on their own join screen untouched. -->
+      <div class="label" style="margin-bottom:0.3rem;">Console difficulty</div>
+      <div id="difficulty-row" style="display:flex; gap:0.5rem; margin-bottom:0.7rem;">
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Helm
+          <select id="diff-helm" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Engineering
+          <select id="diff-engineering" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Weapons
+          <select id="diff-weapons" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+      </div>
       <!-- Game setup: expose sim-debug controls (pause/speed/spawn) on the main
            screen and to any "Sim Supervisor" role that joins the room. -->
       <label style="display:flex; gap:0.5rem; align-items:center; color:var(--dim); font-size:0.9rem;">

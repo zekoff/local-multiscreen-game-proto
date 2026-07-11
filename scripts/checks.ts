@@ -122,6 +122,68 @@ function measureRecharge(game: Game, secs: number): number {
   check('recharge ≈ 56 over 2s at weapons=4', Math.abs(got - 56) <= 4, `got=${got}`);
 }
 
+// --- 7. Difficulty knobs measurably change each console's burden ---
+// Each seat's chill/intense multiplier must move the thing that seat manages:
+// helm = course drift, engineering = breaker trips per hull hit, weapons =
+// asteroid spawn pressure. Same seed both sides, so the comparison is exact.
+
+function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons', difficulty: 'chill' | 'intense'): Game {
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons'] as const) {
+    game.join(s, `chk-${s}`, `chk-${s}`, s === seat ? difficulty : 'normal');
+  }
+  game.start(def, 42);
+  return game;
+}
+
+{
+  // Helm: drift pressure scales with the helm seat's difficulty.
+  const driftDef: MissionDef = { ...SANDBOX, driftScale: 1 };
+  const drift = (d: 'chill' | 'intense') => {
+    const game = gameWithSeat(driftDef, 'helm', d);
+    tickFor(game, 60);
+    return Math.abs(game.serialize().alignment as number);
+  };
+  const chill = drift('chill');
+  const intense = drift('intense');
+  check('helm difficulty scales course drift', intense > chill && intense >= chill * 1.5, `chill=${chill} intense=${intense}`);
+}
+
+{
+  // Engineering: breaker trips per hull hit scale with the eng seat's
+  // difficulty (chill ~60% of hits, normal every hit, intense adds seconds).
+  const trips = (d: 'chill' | 'intense') => {
+    const game = gameWithSeat(SANDBOX, 'engineering', d) as any;
+    for (let i = 0; i < 20; i++) {
+      game.applyImpact({ id: 900 + i, label: `CHK-${i}`, dmg: 0.5, impactIn: 0, size: 1, speed: 1, bearing: 0, revealed: true });
+      for (const s of ['engines', 'shields', 'weapons', 'sensors']) game.resetBreaker(s);
+    }
+    return game.stats.breakersTripped as number;
+  };
+  const chill = trips('chill');
+  const intense = trips('intense');
+  check('eng difficulty scales impact breaker trips', chill <= 17 && intense >= 22 && intense > chill, `chill=${chill}/20 hits, intense=${intense}/20 hits`);
+}
+
+{
+  // Weapons: ambient spawn pressure scales with the weapons seat's difficulty.
+  const spawnDef: MissionDef = {
+    ...SANDBOX,
+    spawnEvery: { min: 8, max: 8 },
+    impactIn: { min: 99999, max: 99999 }, // never actually arrive
+    maxAsteroids: 999,
+  };
+  const spawned = (d: 'chill' | 'intense') => {
+    const game = gameWithSeat(spawnDef, 'weapons', d) as any;
+    tickFor(game, 100);
+    return game.tel.asteroidsSpawned as number;
+  };
+  const chill = spawned('chill');
+  const intense = spawned('intense');
+  check('weapons difficulty scales spawn pressure', intense >= chill * 1.5 && intense > chill, `chill=${chill} intense=${intense}`);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) FAILED`);
   process.exit(1);

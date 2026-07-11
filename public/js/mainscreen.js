@@ -61,13 +61,23 @@ let debugPanel; // assigned after initStation returns the Net instance
 const net = initStation({
   seat: 'main',
   // Launch carries the selected mission and whether to expose sim-debug controls.
-  startPayload: () => ({
-    type: 'start',
-    missionId: missionSelect.value || undefined,
-    debug: document.getElementById('debug-toggle').checked,
-    // Crew-chosen ship name (optional fiction; engine sanitizes/limits it).
-    shipName: document.getElementById('ship-name').value.trim() || undefined,
-  }),
+  startPayload: () => {
+    // Per-seat difficulty overrides: only send seats the party explicitly
+    // set — "crew default" leaves each player's own join-time choice alone.
+    const difficulties = {};
+    for (const seat of ['helm', 'engineering', 'weapons']) {
+      const v = document.getElementById(`diff-${seat}`).value;
+      if (v) difficulties[seat] = v;
+    }
+    return {
+      type: 'start',
+      missionId: missionSelect.value || undefined,
+      debug: document.getElementById('debug-toggle').checked,
+      // Crew-chosen ship name (optional fiction; engine sanitizes/limits it).
+      shipName: document.getElementById('ship-name').value.trim() || undefined,
+      difficulties: Object.keys(difficulties).length ? difficulties : undefined,
+    };
+  },
   onJoined(msg) {
     catalog = msg.catalog || [];
     missionSelect.innerHTML = catalog

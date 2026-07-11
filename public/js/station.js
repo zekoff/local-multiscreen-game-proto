@@ -50,7 +50,12 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
       const crewed = ['helm', 'engineering', 'weapons']
-        .map((s) => `${s}: ${state.seats[s].connected ? state.seats[s].name : 'auto'}`)
+        .map((s) => {
+          const seat = state.seats[s];
+          // Show non-default difficulty so the party can see who's on chill/intense.
+          const diff = seat.difficulty && seat.difficulty !== 'normal' ? ` (${seat.difficulty})` : '';
+          return `${s}: ${seat.connected ? seat.name : 'auto'}${diff}`;
+        })
         .join(' · ');
       document.getElementById('lobby-crew').textContent = crewed;
     }
