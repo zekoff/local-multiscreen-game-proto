@@ -22,12 +22,12 @@ const GEN_PRESETS: Record<string, { name: string; description: string; params: O
   },
   'gen:standard': {
     name: 'Generated: Standard Run',
-    description: 'A full-length generated mission (~5 min).',
+    description: 'A full-length generated mission (~4 min).',
     params: { length: 'standard', intensity: 0.55 },
   },
   'gen:long': {
     name: 'Generated: Deep Haul',
-    description: 'A long, grinding generated voyage (~7 min).',
+    description: 'A long, grinding generated voyage (~5 min).',
     params: { length: 'long', intensity: 0.6 },
   },
 };

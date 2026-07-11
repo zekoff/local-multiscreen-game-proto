@@ -59,11 +59,17 @@
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
     import { createAudio } from '/js/audio.js';
+    import { playFxAudio } from '/js/fx-audio.js';
 
-    // Console-local audio: weapons hears its own shields raise/lower.
+    // Console-local audio: weapons hears its own laser, target lock, fire-ready
+    // chime, and shields raise/lower. The laser is deliberately NOT on the main
+    // screen — it fires from here.
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    const WEAPONS_FX = new Set(['laser']);
     let prevShieldsRaised = false;
+    let prevTargetId = null;
+    let prevReady = false;
 
     const scopeEmptyEl = document.getElementById('scope-empty');
     const scopeTargetEl = document.getElementById('scope-target');
@@ -81,6 +87,14 @@
         // calls back here with the id, same action any target-list UI would send.
         scopeScene.onTarget = (id) => net.action({ kind: 'target', id });
         scopeScene.setState(state);
+        // Weapons-local SFX: laser (from the fx stream), a lock chime when a new
+        // contact is acquired, and a soft chime the moment the bank recharges.
+        playFxAudio(state.fx, audio, WEAPONS_FX);
+        if (state.targetId !== null && state.targetId !== prevTargetId) audio.targetLock();
+        prevTargetId = state.targetId;
+        const chargeReady = state.charge >= 100;
+        if (chargeReady && !prevReady) audio.fireReady();
+        prevReady = chargeReady;
         // Trigger the pulse sweep animation when engineering fires a pulse.
         if ((state.fx || []).some((e) => e.kind === 'sensorPulse')) scopeScene.pulse();
         // Only sensor-resolved contacts show on the scope, so the empty message

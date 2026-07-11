@@ -3,7 +3,7 @@
 // approach. Shows off the scripted-event system — the tension comes from
 // authored set pieces, not ambient pressure.
 
-import type { MissionDef } from '../mission.js';
+import { pacingFor, type MissionDef } from '../mission.js';
 
 export const minedCorridor: MissionDef = {
   id: 'mined-corridor',
@@ -13,14 +13,13 @@ export const minedCorridor: MissionDef = {
     'the blockade. Sweepers cleared a lane — mostly. Fly it slow and stay sharp.',
   arrivalName: 'Depot Tycho',
   kind: 'authored',
-  parTime: 320,
+  ...pacingFor(260),                       // a longer, wave-structured haul
   spawnEvery: { min: 14, max: 22 },       // quiet between the waves
   impactIn: { min: 14, max: 22 },
   asteroidDmg: { min: 8, max: 14 },       // mines are numerous but small
   maxAsteroids: 6,                        // waves need headroom over ambient
   breakerEvery: { min: 20, max: 32 },
   driftScale: 1,
-  speedScale: 0.85,                        // longer trip than the baseline
   events: [
     {
       id: 'first-field',

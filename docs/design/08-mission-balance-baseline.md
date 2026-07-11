@@ -72,3 +72,45 @@ Ordered by expected impact; re-run the lab after each:
 4. **Then re-baseline**: target ≈ skilled 90-100% arrival / 75-90 hull,
    novice 70-90% arrival / visible scarring, auto 30-60% arrival on the
    baseline mission and worse on kepler-rescue.
+
+---
+
+## Re-baseline: gameplay-overhaul pass (2026-07-11)
+
+This supersedes the numeric targets above. The overhaul made mission length a
+`MissionDef` parameter (`targetSeconds`, via `pacingFor()` in `mission.ts`,
+`SPEED_CALIB = 325`) and retuned the mechanics. Current constants of note
+(`src/engine/game.ts` unless noted):
+
+- Laser: `LASER_CHARGE_RATE = 7` (halved — ~2x slower refire per weapon-power).
+- Breakers: a tripped system is **fully offline** (`eff() → 0`, was ×0.5).
+- Sensors: `SENSOR_BASE = 8`, `SENSOR_PER_POWER = 2` (per-point range nerfed
+  from 10/4; 2 power ≈ 12s ≈ 60% scope radius).
+- Nav gates: `GATE_BASE_WINDOW/ENGINE_WINDOW = 12/18` (tighter),
+  `GATE_REACH = {8,13}` (faster), speed-coupled approach
+  (`GATE_CLOSE_BASE/SPEED = 0.5/2.0`), and a `GATE_SLIPSTREAM_MULT/SECS =
+  1.6/4` speed burst replacing the old flat progress bump.
+- Auto-assist (bots): `AUTO_WEAPONS_REACT_RANGE = 7`,
+  `AUTO_WEAPONS_MISS_CHANCE = 0.38`, `AUTO_HELM_THROTTLE = 70`,
+  `AUTO_HELM_CORRECTION = 5`, `AUTO_ENG_RESET_AGE = 9`.
+
+Length model: `targetSeconds` → `speedScale = 325/targetSeconds`,
+`parTime = round(1.35 * targetSeconds)`. Ambient hazard pacing is intentionally
+**not** length-scaled (per-minute intensity stays constant; a longer mission
+just runs longer with more total events). Authored: supply-run 180, kepler 150,
+mined-corridor 260; gen short/standard/long 180/240/300.
+
+Lab targets now met (`npm run lab`, 10 seeds/cell):
+
+- **skilled**: ~100% arrival, hull ~55-85, time within ~10-20s of target
+  (supply 183s/180, kepler 159/150, gen:long 301/300 — the 3-min→5-min span).
+- **novice**: 10-80% arrival, visibly scarred.
+- **auto (all-bot)**: loses — 0% on most missions, scraping in at 1-3 hull on
+  the two easiest.
+- **one human + 3 bots** (new mixed lab scenarios): a human at **weapons**
+  wins ~70-80% with low hull (15-35) on standard-length missions; a human at
+  helm or engineering mostly can't overcome bot weapons — weapons is the
+  survival-critical console by design.
+
+Per-console + captain-coordination metrics are in `telemetry.perConsole`
+(sim-report only) and shown in the lab's second table.

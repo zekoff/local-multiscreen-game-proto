@@ -67,6 +67,14 @@
 
   <script type="module">
     import { initStation } from '/js/station.js';
+    import { createAudio } from '/js/audio.js';
+    import { playFxAudio } from '/js/fx-audio.js';
+
+    // Helm-local audio: the nav-gate pass/miss chimes and a subtle blip on each
+    // steering nudge. (Music + ship-wide booms live on the main screen.)
+    const audio = createAudio();
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    const HELM_FX = new Set(['gate']);
 
     const throttle = document.getElementById('throttle');
     const warpBtn = document.getElementById('warp-btn');
@@ -75,6 +83,7 @@
     const net = initStation({
       seat: 'helm',
       render(state) {
+        playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         document.getElementById('speed').textContent = state.speed.toFixed(1);
         document.getElementById('dist').textContent = `${Math.max(0, 100 - state.progress).toFixed(0)}%`;
         // Don't fight the player's finger: only sync the slider when idle.
@@ -83,12 +92,13 @@
         // Alignment marker: map -100..100 onto the track width.
         const pct = (state.alignment + 100) / 200;
         document.getElementById('align-marker').style.left = `calc(${(pct * 100).toFixed(1)}% - 5px)`;
-        // Nav-gate pass window (widens with effective engine power): 18 + 26*(eff/4).
+        // Nav-gate pass window (widens with effective engine power): 12 + 18*(eff/4).
         // The window is centered on the gate's BEARING (well off the 0 course
         // line) so the helm has to actively swing onto it; with no gate, the
-        // band just marks the on-course zone around 0.
-        const effEngines = state.power.engines * (state.breakers.engines ? 0.5 : 1);
-        const win = 18 + 26 * (effEngines / 4);
+        // band just marks the on-course zone around 0. A tripped engines breaker
+        // is fully offline (0 power), collapsing the window to its minimum.
+        const effEngines = state.breakers.engines ? 0 : state.power.engines;
+        const win = 12 + 18 * (effEngines / 4);
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
         const center = next ? next.bearing : 0;
@@ -124,8 +134,29 @@
     throttle.addEventListener('pointerup', () => (draggingThrottle = false));
     throttle.addEventListener('input', () => net.action({ kind: 'throttle', value: Number(throttle.value) }));
 
-    document.getElementById('port-btn').addEventListener('click', () => net.action({ kind: 'nudge', dir: -1 }));
-    document.getElementById('starboard-btn').addEventListener('click', () => net.action({ kind: 'nudge', dir: 1 }));
+    // Hold-to-steer: the engine still turns once per tick, but the helmsman can
+    // just hold the button down instead of tapping repeatedly. Pressing fires an
+    // immediate nudge, then repeats every tick (~250ms) until release.
+    const NUDGE_MS = 250; // matches the server tick, so held = one nudge per tick
+    function holdToSteer(btn, dir) {
+      let timer = null;
+      btn.style.touchAction = 'none'; // no scroll/zoom hijack of a held press
+      const fire = () => { net.action({ kind: 'nudge', dir }); audio.nudgeTick(); };
+      const start = (e) => {
+        e.preventDefault();
+        if (timer !== null) return;
+        fire();
+        timer = setInterval(fire, NUDGE_MS);
+      };
+      const stop = () => { if (timer !== null) { clearInterval(timer); timer = null; } };
+      btn.addEventListener('pointerdown', start);
+      btn.addEventListener('pointerup', stop);
+      btn.addEventListener('pointerleave', stop);
+      btn.addEventListener('pointercancel', stop);
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+    holdToSteer(document.getElementById('port-btn'), -1);
+    holdToSteer(document.getElementById('starboard-btn'), 1);
     warpBtn.addEventListener('click', () => net.action({ kind: 'warp' }));
   </script>
 </body>

@@ -1,8 +1,50 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-11 (two-wave pre-playtest pass + sim-debug controls — all
-deployed and merged to `main`). This file is the "resume here" note — read it
-with `CLAUDE.md` at the start of a session.
+Last updated: 2026-07-11 (gameplay-overhaul pass — implemented, verified,
+committed to branch `gameplay-overhaul`, and deployed to Cloudflare). This file
+is the "resume here" note — read it with `CLAUDE.md` at the start of a session.
+
+## Latest pass: gameplay overhaul (2026-07-11)
+
+A large tuning + UX pass on top of the pre-playtest work. All of it typechecks,
+passes `npm run smoke`/`smoke:cf`, sweeps clean in `npm run lab`, and renders
+error-free under the `/run` headless driver. Committed on branch
+`gameplay-overhaul` and deployed; **not yet merged to `main`** (open the PR /
+merge when the playtest confirms it).
+
+- **Mission length is now a parameter.** `MissionDef.targetSeconds` (via
+  `pacingFor()` in `mission.ts`, `SPEED_CALIB=325`) derives `speedScale` +
+  `parTime`; a well-executed run lands near it. Authored missions:
+  supply-run 180s (the 3-min baseline), kepler 150s, mined-corridor 260s;
+  gen presets short/standard/long = 180/240/300s. Lab confirms skilled crews
+  arrive on target (3 min → 5 min preserved).
+- **Balance:** laser recharge halved (`LASER_CHARGE_RATE 14→7`); tripped
+  breakers are **fully offline** (`eff→0`, was ×0.5); sensor per-point range
+  nerfed (`SENSOR_BASE/PER_POWER 10/4 → 8/2`); nav gates faster, tighter, and
+  speed-coupled with a **slipstream** reward (see the `GATE_*` block in
+  `game.ts`); asteroids carry a lateral `bearing`.
+- **Bots:** auto-assist weakened (`AUTO_WEAPONS_*`, `AUTO_HELM_*`,
+  `AUTO_ENG_RESET_AGE`). Lab target met: an all-bot crew loses; one human at
+  **weapons** carries a bot crew to a low-hull win (helm/eng humans can't
+  overcome bot weapons — weapons is the survival linchpin).
+- **UX:** crew-station toasts moved to the bottom, translucent + click-through;
+  main-screen toasts larger on the right; hold-to-steer helm; two-step breaker
+  restore (slider → 3 taps) with the system reading offline; optimistic
+  weapons-scope target tap; asteroids small/grey-brown with threat rings,
+  drifting to center; debug panel off-center.
+- **Audio:** rebuilt into a time-driven 3-phase build (ambient → +melody →
+  +driving beat) over 180s, held for longer missions; SFX routed per device
+  (music main-screen only; laser→weapons; sensor pings→engineering; gate
+  chimes→helm) via `public/js/fx-audio.js`; many new SFX.
+- **Metrics:** per-console + a captain-coordination **proxy** in
+  `telemetry.perConsole` (sim-report only), surfaced as a second table in
+  `npm run lab` alongside new mixed one-human scenarios.
+- **Docs:** the optimistic-intent overlay pattern + difficulty assessment is in
+  `architecture.md` (answer to "can stations feel instant?": yes for
+  selection/toggle controls, no general prediction engine).
+- **Open:** audio is code+render verified but **not heard** (headless is
+  silent — needs a real-device listen); branch not yet merged to `main`, pending
+  the human playtest.
 
 ## Where things stand
 

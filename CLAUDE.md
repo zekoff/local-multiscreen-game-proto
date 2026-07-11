@@ -52,7 +52,9 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   `lobby → active → debrief`. Seats reconnect via sticky `playerId`; unmanned
   seats run auto-assist through the same code paths as human actions.
 - **Missions are data** (`src/engine/mission.ts`): the engine consumes a
-  `MissionDef` — pacing ranges, scales, and scripted one-shot events.
+  `MissionDef` — pacing ranges, scales, and scripted one-shot events. Mission
+  length is `targetSeconds` (the well-executed run time); `pacingFor()` derives
+  `speedScale`/`parTime` from it (calibrated via `SPEED_CALIB`).
   Authored missions live in `src/engine/missions/`; the seeded procedural
   generator is `mission-gen.ts`; transports resolve start requests through
   `mission-registry.ts`. Every run is reproducible from (missionId, seed).
@@ -71,9 +73,12 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   `js/mainscreen.js` (canvas viewscreen: starfield, destination, gates,
   asteroids, laser/explosion/warp effects, captain HUD + client-side QR from
   `js/vendor/qrcode-generator.mjs`). `js/audio.js` is a procedural Web-Audio
-  music+SFX module (no asset files); `js/weapons-scope.js` is the Phaser radar
-  scope mounted via `js/phaser-station.js`. `supervisor.html` is the optional
-  "Sim Supervisor" debug role and `js/debug-panel.js` its shared controls.
+  music+SFX module (no asset files) — **music plays on the main screen only**;
+  SFX are routed per device (laser→weapons, sensor pings→engineering, gate
+  chimes→helm, ship-wide booms→main screen) via the `js/fx-audio.js` helper.
+  `js/weapons-scope.js` is the Phaser radar scope mounted via
+  `js/phaser-station.js`. `supervisor.html` is the optional "Sim Supervisor"
+  debug role and `js/debug-panel.js` its shared controls.
 - Seats: crew (`helm`/`engineering`/`weapons`) are exclusive; `main` and
   `supervisor` are view-only, non-exclusive (multiple allowed, no game seat
   reserved). Debug actions (pause/speed/spawn) come only from `main`/
@@ -87,10 +92,11 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
 - Adding a mechanic means touching all three of: `action()` (input),
   `tick()` (simulation), and `serialize()` (client visibility) in
   `src/engine/game.ts` — clients can only render what `serialize()` exposes.
-- One-shot events (laser fire, explosions, impacts, gate/warp/pulse) go
-  through the transient `fx` stream: push an `Effect` during a tick; both
-  transports include it in the broadcast and call `clearFx()` after. It drives
-  the main-screen effects and the procedural audio (`public/js/audio.js`).
+- One-shot events (laser fire, explosions, impacts, gate/warp/pulse/sensor
+  contact) go through the transient `fx` stream: push an `Effect` during a tick;
+  both transports include it in the broadcast and call `clearFx()` after. It
+  drives the main-screen visual effects and the per-device procedural audio
+  (each page consumes only its own `fx` kinds via `public/js/fx-audio.js`).
 - Actions are validated per seat; never let one station's client mutate
   another station's controls.
 - Per-role difficulty must stay a *parameter* (multiplier), not a separate

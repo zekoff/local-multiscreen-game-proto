@@ -4,7 +4,7 @@
 // mission lab exactly like authored ones.
 
 import { mulberry32, pick, int, type Rng } from './rng.js';
-import type { MissionDef, GenParams, ScriptedEvent } from './mission.js';
+import { pacingFor, type MissionDef, type GenParams, type ScriptedEvent } from './mission.js';
 
 // Name tables for generated destinations and mission titles.
 const PLACE_TYPES = ['Station', 'Outpost', 'Relay', 'Depot', 'Beacon', 'Platform'];
@@ -21,12 +21,14 @@ const BRIEFING_TEMPLATES = [
   (dest: string) => `A routine run to ${dest}, according to the flight plan. The flight plan has been wrong before.`,
 ];
 
-// Length presets: progress is always 0..100, so trip duration is shaped by
-// the speed scale, with par time matched to it.
+// Length presets, expressed as the target well-executed duration (seconds).
+// speedScale and parTime are derived from these via pacingFor. Ambient hazard
+// pacing is deliberately NOT scaled by length, so a longer mission keeps the
+// same per-minute intensity and simply runs longer (more total events).
 const LENGTHS = {
-  short: { parTime: 180, speedScale: 1.3 },
-  standard: { parTime: 260, speedScale: 1.0 },
-  long: { parTime: 370, speedScale: 0.72 },
+  short: 180,     // the 3-minute baseline
+  standard: 240,  // ~4 minutes
+  long: 300,      // ~5 minutes
 } as const;
 
 // Linear interpolation helper for intensity scaling.
@@ -35,7 +37,7 @@ const lerp = (lo: number, hi: number, t: number) => lo + (hi - lo) * t;
 export function generateMission(params: GenParams): MissionDef {
   const rng = mulberry32(params.seed);
   const t = Math.max(0, Math.min(1, params.intensity));
-  const len = LENGTHS[params.length];
+  const pacing = pacingFor(LENGTHS[params.length]);
 
   const dest = `${pick(rng, PLACE_TYPES)} ${pick(rng, PLACE_NAMES)}`;
   const name = pick(rng, TITLE_TEMPLATES)(dest);
@@ -102,14 +104,15 @@ export function generateMission(params: GenParams): MissionDef {
     briefing,
     arrivalName: dest,
     kind: 'generated',
-    parTime: len.parTime,
+    targetSeconds: pacing.targetSeconds,
+    parTime: pacing.parTime,
     spawnEvery: { min: spawnMid * 0.75, max: spawnMid * 1.35 },
     impactIn: { min: lerp(16, 12, t), max: lerp(24, 18, t) },
     asteroidDmg: { min: dmgLo, max: dmgHi },
     maxAsteroids: 4 + Math.round(t * 2),
     breakerEvery: { min: breakerMid * 0.75, max: breakerMid * 1.35 },
     driftScale: lerp(0.8, 1.35, t),
-    speedScale: len.speedScale,
+    speedScale: pacing.speedScale,
     events,
   };
 }
