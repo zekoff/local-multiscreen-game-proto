@@ -55,13 +55,28 @@ const BASE_TURN = 12;
 const ON_COURSE_THRESHOLD = 15;
 
 // Auto-assist is a survival net for an abandoned seat, not a competent crew
-// member. Deliberately mediocre so a FULL bot crew loses, while one human at a
-// console (with bots elsewhere) can still pull a win out with the hull low.
-const AUTO_WEAPONS_REACT_RANGE = 7;  // seconds-to-impact before auto-turret engages (was 8 — reacts a touch later)
-const AUTO_WEAPONS_MISS_CHANCE = 0.38; // fraction of auto shots that go wide (was 0.2 — much worse aim)
-const AUTO_HELM_THROTTLE = 70;       // auto-helm cruises easy, not fast (was 80)
-const AUTO_HELM_CORRECTION = 5;      // course-correction authority per second (was 8 — drifts more)
-const AUTO_ENG_RESET_AGE = 9;        // seconds a breaker stays tripped before auto-eng restores it (was 6)
+// member. Post-playtest rebalance: the CPU is SLOW rather than INCOMPETENT —
+// no dice-roll misses, just deliberate reaction lag. A full bot crew should
+// barely scrape to the station; a human at any console beats the bot at it
+// (and a human ENGINEER now genuinely helps a bot gunner: pumping weapon
+// power shortens the recharge wait, which the CPU can actually use).
+const AUTO_WEAPONS_REACT_RANGE = 7;  // seconds-to-impact before auto-turret engages
+// Deliberate pause between "charged + target acquired" and pulling the
+// trigger (replaces the old 38% miss chance — every shot now lands, the cost
+// is time). Seeded per shot via this.rng.
+const AUTO_WEAPONS_FIRE_DELAY = { min: 1, max: 2 };
+// Auto shield doctrine: raise only when a real volley is incoming (more than
+// one rock inside the threat window), drop a beat after the sky is clear.
+const AUTO_SHIELD_THREAT_WINDOW = 5; // seconds-to-impact that counts as "incoming"
+const AUTO_SHIELD_THREAT_COUNT = 2;  // rocks inside the window before shields go up
+const AUTO_SHIELD_LINGER = 3;        // seconds shields stay up after the last contact clears
+const AUTO_HELM_THROTTLE = 70;       // auto-helm cruises easy, not fast
+const AUTO_HELM_CORRECTION = 5;      // course-correction authority per second
+// Auto-helm makes a POOR attempt at slipstream rings: it swings toward the
+// gate bearing, but with so little turn authority that only a ring that
+// spawned near the current heading is actually catchable.
+const AUTO_HELM_GATE_STEP = 3;       // degrees/second toward a gate's bearing
+const AUTO_ENG_RESET_AGE = 4;        // seconds a breaker stays tripped before auto-eng restores it (was 9 — impacts trip breakers now, so the bot engineer keeps up)
 
 // Sensors: detection range in seconds-to-impact. An asteroid is only targetable
 // on the weapons scope once its impactIn drops to within this range, which
@@ -288,6 +303,8 @@ export class Game {
   private spawnRateMult = 1;  // scripted 'spawnRate' actions replace this
   private calmUntil = 0;      // missionTime before which ambient spawns pause
   private maxAsteroidsOverride: number | null = null; // scripted 'setMaxAsteroids' (null = use MissionDef)
+  private autoFireAt: number | null = null;        // missionTime when the auto-turret's deliberate shot lands
+  private autoShieldClearAt: number | null = null; // missionTime when auto shields drop after the sky clears
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -400,6 +417,8 @@ export class Game {
     this.spawnRateMult = 1;
     this.calmUntil = 0;
     this.maxAsteroidsOverride = null;
+    this.autoFireAt = null;
+    this.autoShieldClearAt = null;
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
@@ -755,8 +774,19 @@ export class Game {
     // helm simply plods the straight line and drifts more than a crewed one.
     if (this.auto('helm')) {
       this.throttle = AUTO_HELM_THROTTLE;
-      const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * dt);
-      this.alignment -= sign(this.alignment) * correction;
+      const gate = this.gates[0];
+      if (gate) {
+        // Poor slipstream attempt: crawl toward the ring's bearing. The step
+        // is small enough that only near-heading rings are catchable — a
+        // human helm still earns the far ones.
+        const delta = gate.bearing - this.alignment;
+        const step = Math.min(Math.abs(delta), AUTO_HELM_GATE_STEP * dt);
+        this.alignment += sign(delta) * step;
+      } else {
+        // No rings up: ease back onto the course line.
+        const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * dt);
+        this.alignment -= sign(this.alignment) * correction;
+      }
     }
 
     // Speed derives from throttle, effective engine power, course alignment,
@@ -808,32 +838,48 @@ export class Game {
       }
     }
 
-    // Auto-weapons: manage shields (raise near a threat, lower to recharge) and
-    // only engage once a contact is close (reaction latency), sometimes missing
-    // (accuracy penalty) — an unmanned seat survives, it doesn't perform like a
-    // crewed one. Respects the phaser cooldown like a human would.
+    // Auto-weapons: every shot lands, but only after a deliberate 1-2s pause
+    // once the laser is charged and a target is in range — the CPU's cost is
+    // TIME, not aim. A human engineer pumping weapon power shortens the wait
+    // between shots, so the bot gunner visibly benefits from crew support.
     if (this.auto('weapons')) {
       // Only contacts the sensors have resolved can be engaged.
       const acquirable = this.asteroids.filter((a) => this.targetable(a));
       const closest = acquirable.length > 0
         ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
         : null;
-      // Shield triage with hysteresis: up when something's inbound, down to
-      // recharge when the sky is clear.
-      this.shieldRaised = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE + 2;
+      // Shield doctrine: raise only for a real volley (2+ rocks inside the
+      // threat window); once the sky is clear of targetable contacts, keep
+      // them up a linger beat, then drop to recharge.
+      const imminent = acquirable.filter((a) => a.impactIn <= AUTO_SHIELD_THREAT_WINDOW).length;
+      if (imminent >= AUTO_SHIELD_THREAT_COUNT) {
+        this.shieldRaised = true;
+        this.autoShieldClearAt = null; // threat live: cancel any pending drop
+      } else if (acquirable.length === 0 && this.shieldRaised) {
+        if (this.autoShieldClearAt === null) {
+          this.autoShieldClearAt = this.missionTime + AUTO_SHIELD_LINGER;
+        } else if (this.missionTime >= this.autoShieldClearAt) {
+          this.shieldRaised = false;
+          this.autoShieldClearAt = null;
+        }
+      } else {
+        // Contacts remain (but no volley): hold the current shield state.
+        this.autoShieldClearAt = null;
+      }
+      // Deliberate fire: once (charged && target in range) first holds, roll
+      // the pause, then pull the trigger when the clock reaches it. Any break
+      // in the condition (target destroyed/impacted, charge gone) re-arms it.
       if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= 100) {
         this.targetId = closest.id;
         this.recordAcquire(closest.id);
-        if (this.rng() < AUTO_WEAPONS_MISS_CHANCE) {
-          // Shot goes wide: the recharge is spent but the target survives.
-          this.charge = 0;
-          this.tel.shotsFired++;
-          this.pushFx({ kind: 'laser', targetId: closest.id, hit: false });
-          this.targetId = null;
-          this.event(`Auto-turret shot goes wide — ${closest.label} still inbound!`);
-        } else {
+        if (this.autoFireAt === null) {
+          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY);
+        } else if (this.missionTime >= this.autoFireAt) {
           this.fire();
+          this.autoFireAt = null;
         }
+      } else {
+        this.autoFireAt = null;
       }
     }
 
