@@ -1,8 +1,8 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-11 (after the two-wave pre-playtest pass — deployed and
-merged to `main`). This file is the "resume here" note — read it with
-`CLAUDE.md` at the start of a session.
+Last updated: 2026-07-11 (two-wave pre-playtest pass + sim-debug controls — all
+deployed and merged to `main`). This file is the "resume here" note — read it
+with `CLAUDE.md` at the start of a session.
 
 ## Where things stand
 
@@ -39,6 +39,13 @@ merged to `main`). This file is the "resume here" note — read it with
     scope shows only the name, so the captain calls priorities).
   - **Audio**: procedural Web-Audio music bed (builds with progress) + ship-wide
     and console-local SFX. No asset files. Fails silently if unsupported.
+  - **Sim-debug controls** (opt-in via an "Expose sim-debug controls" checkbox
+    in main-screen game setup): pause / dilate simulation speed (0–4×) and
+    spawn an asteroid or a nav ring on demand. Controllable from the main
+    screen overlay and from a new non-exclusive **Sim Supervisor** seat/page
+    (`supervisor.html`, joinable from the landing page). Built to extend — a
+    new debug option is one `case` in `debugAction()` + one button in
+    `js/debug-panel.js`. `debug` and `timeScale` are per-run (set at launch).
 - **All green**: `npm run typecheck`, `npm run smoke` (Node), `npm run smoke:cf`
   (Workers), `npm run lab` (balance sweep). Every page loads error-free
   (verified by headless-browser driving via the `/run` skill).

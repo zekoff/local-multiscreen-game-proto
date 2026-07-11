@@ -240,9 +240,16 @@ step.
   (explosion/impact/laser/gate/warp/pulse), and console-local SFX on the
   consoles (breaker trip/reset, shields). Starts on the first user gesture;
   fails silently if the platform blocks Web Audio.
+- **`supervisor.html` + `js/debug-panel.js`** — optional "Sim Supervisor"
+  debug role (a view-only, non-exclusive seat). Shared debug controls — pause /
+  dilate simulation speed (`setTimeScale`, 0 = pause) and spawn an asteroid /
+  nav ring — mounted here and as a main-screen overlay. The controls only act
+  when the run was launched with `debug` on (a game-setup checkbox); the engine
+  gates them in `debugAction()` and scales the tick `dt` by `timeScale`.
 - **`index.html`** — landing page for both flows: *host* (create room →
   become main screen) and *player* (code + name + difficulty → station
-  page). The QR link lands here with `?room=` prefilled.
+  page, incl. the Sim Supervisor). The QR link lands here with `?room=`
+  prefilled.
 
 ## Testing
 

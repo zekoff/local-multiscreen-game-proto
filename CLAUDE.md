@@ -67,7 +67,13 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   asteroids, laser/explosion/warp effects, captain HUD + client-side QR from
   `js/vendor/qrcode-generator.mjs`). `js/audio.js` is a procedural Web-Audio
   music+SFX module (no asset files); `js/weapons-scope.js` is the Phaser radar
-  scope mounted via `js/phaser-station.js`.
+  scope mounted via `js/phaser-station.js`. `supervisor.html` is the optional
+  "Sim Supervisor" debug role and `js/debug-panel.js` its shared controls.
+- Seats: crew (`helm`/`engineering`/`weapons`) are exclusive; `main` and
+  `supervisor` are view-only, non-exclusive (multiple allowed, no game seat
+  reserved). Debug actions (pause/speed/spawn) come only from `main`/
+  `supervisor` and only when the run was launched with `debug` enabled — see
+  `debugAction()` in `game.ts` and the `VIEW_SEATS` list in both transports.
 - Rooms are fully independent by design — no cross-room state, ever. That
   invariant is what lets Durable Objects scale rooms horizontally.
 
