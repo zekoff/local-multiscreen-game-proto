@@ -177,16 +177,20 @@ select {
 .hud { display: flex; gap: 1rem; padding: 0.8rem 1rem; background: var(--panel); border-top: 1px solid var(--panel-edge); flex-wrap: wrap; max-height: 32vh; overflow: hidden; }
 .hud .cell { flex: 1; min-width: 130px; }
 
-/* Captain's tactical readout overlaid on the top-left of the viewscreen. */
-.captain-hud { position: absolute; top: 3.6rem; left: 1rem; z-index: 5; display: flex; flex-direction: column; gap: 0.25rem;
-  background: rgba(10, 14, 23, 0.72); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.5rem 0.7rem;
-  font-size: 0.8rem; letter-spacing: 0.02em; min-width: 15rem; pointer-events: none; }
+/* Captain's tactical readout: a horizontal status bar spread across the TOP
+   of the viewscreen, sized to be readable from a couch at living-room-TV
+   distance (was a small 0.8rem block tucked in the top-left corner). */
+.captain-hud { position: absolute; top: 0.7rem; left: 1rem; right: 1rem; z-index: 5; display: flex; flex-direction: row; gap: 1rem;
+  background: rgba(10, 14, 23, 0.72); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.55rem 1rem;
+  font-size: clamp(0.95rem, 1.5vw, 1.45rem); letter-spacing: 0.02em; pointer-events: none; }
 .captain-hud.hidden { display: none; }
-.cap-row { display: flex; gap: 0.6rem; align-items: baseline; }
-.cap-row .cap-name { color: var(--dim); font-weight: 700; width: 3.2rem; letter-spacing: 0.12em; }
-.cap-row .cap-val { color: var(--text); font-family: monospace; }
+.cap-row { display: flex; gap: 0.6rem; align-items: baseline; flex: 1; min-width: 0; }
+.cap-row .cap-name { color: var(--dim); font-weight: 700; letter-spacing: 0.12em; flex-shrink: 0; }
+.cap-row .cap-val { color: var(--text); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cap-row.alert .cap-val { color: var(--bad); font-weight: 700; }
 .cap-row.warn .cap-val { color: var(--warn); }
+/* Narrow screens: fall back to a stacked block so rows stay readable. */
+@media (max-width: 900px) { .captain-hud { flex-direction: column; gap: 0.25rem; right: auto; min-width: 15rem; } }
 .mainscreen-body main { position: relative; } /* anchor for the captain-hud overlay */
 
 /* --- Sim-debug controls (main-screen overlay + supervisor inline panel) --- */
@@ -211,10 +215,11 @@ select {
    top-left, debug bottom-center — toasts take the right. */
 .mainscreen-body #toasts {
   top: 50%; bottom: auto; right: 0.9rem; left: auto; transform: translateY(-50%);
-  flex-direction: column; align-items: flex-end; max-width: 30vw;
+  flex-direction: column; align-items: flex-end; max-width: 26vw;
 }
 .mainscreen-body .toast {
-  font-size: clamp(0.95rem, 1.9vw, 1.7rem);
-  padding: 0.55rem 1.1rem;
+  /* Slightly smaller than the first pass (playtest: they crowded the view). */
+  font-size: clamp(0.85rem, 1.5vw, 1.35rem);
+  padding: 0.45rem 0.9rem;
   background: rgba(8, 12, 20, 0.62);
 }

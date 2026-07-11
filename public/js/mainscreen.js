@@ -135,7 +135,7 @@ function updateCaptainHud(state) {
   const p = state.power;
   setCapRow('cap-eng',
     `pwr e${p.engines} s${p.shields} w${p.weapons} sen${p.sensors} · det ${Math.round(state.sensorRange)}s`
-      + (tripped.length ? ` · ${tripped.join(',')} TRIPPED` : ''),
+      + (tripped.length ? ` · ${tripped.join(',')} TRIPPED ×½` : ''), // tripped = running at half power
     tripped.length ? 'alert' : '');
   const sh = state.shields.raised ? `shields ${state.shields.strength}%` : 'shields DOWN';
   const laser = state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
@@ -417,12 +417,16 @@ function drawAsteroids(w, h, yawPx, dpr) {
     const { x: px, y: py, closeness } = asteroidScreenPos(a, w, h, yawPx);
     astPos.set(a.id, { x: px, y: py });
     const size = a.size ?? 1;
-    // Tiny on spawn — about the size of a starfield star — then growing large as
-    // it bears down. Colour is a flat, low-saturation grey-brown rock (no red
-    // warming); threat is communicated by the ring, not the body.
-    const r = (0.8 + closeness * 26) * (0.7 + 0.5 * size) * dpr;
+    // Star-sized while beyond max sensor reach (16s), then growing as it bears
+    // down: growth keys off impactIn vs the 16s sensor ceiling, NOT the
+    // position-drift closeness, so a fresh spawn (18-26s out) is a bare dot
+    // indistinguishable from the far starfield — the captain has to SPOT it.
+    // Colour is a flat, low-saturation grey-brown rock (no red warming);
+    // threat is communicated by the ring, not the body.
+    const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
+    const r = (0.7 + Math.pow(growth, 1.25) * 26) * (0.7 + 0.5 * size) * dpr;
     const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.7);
-    glow.addColorStop(0, `rgba(150, 140, 120, ${0.06 + closeness * 0.14})`);
+    glow.addColorStop(0, `rgba(150, 140, 120, ${0.05 + growth * 0.15})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(px, py, r * 1.7, 0, Math.PI * 2); ctx.fill();

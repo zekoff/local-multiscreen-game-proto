@@ -8,12 +8,14 @@
   <style>
     :root { --accent: #ffb347; }
     /* Two-step breaker restore: drag the slider fully right to ARM, then tap
-       the button three times to re-power. A tripped system is fully offline. */
+       the button three times to re-power. A tripped system runs at half power.
+       The restore block RESERVES its space when healthy (visibility, not
+       display) so the panel never reflows as breakers trip and clear. */
     .breaker { display: block; margin-bottom: 0.6rem; }
     .brk-label { font-weight: 600; margin-bottom: 0.3rem; }
     .breaker.tripped .brk-label { color: #ff6f6f; }
     .brk-restore { display: flex; flex-direction: column; gap: 0.4rem; }
-    .brk-restore.hidden { display: none; }
+    .brk-restore.idle { visibility: hidden; }
     .brk-slider { width: 100%; accent-color: var(--accent); height: 2rem; }
     .brk-tap { width: 100%; }
     .brk-tap:disabled { opacity: 0.5; }
@@ -43,7 +45,8 @@
       <button id="pulse-btn" style="width:100%">Sensor Pulse</button>
     </div>
 
-    <!-- Breakers: trip randomly and halve a system's power until reset -->
+    <!-- Breakers: trip (on hull impacts, occasionally at random) and halve a
+         system's power until restored -->
     <div class="panel">
       <h2>Breakers</h2>
       <div id="breakers"></div>
@@ -66,7 +69,7 @@
     <button class="primary" id="launch-btn">Launch Mission</button>
   </div>
   <div class="overlay hidden" id="debrief-overlay">
-    <h2>Mission Debrief</h2>
+    <h2 id="debrief-title">Mission Debrief</h2>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:26rem"></p>
     <button class="primary" id="return-btn">Return to Ready Room</button>
@@ -115,7 +118,7 @@
       brk.id = `brk-${sys}`;
       brk.innerHTML = `
         <div class="brk-label">${sys}: OK</div>
-        <div class="brk-restore hidden">
+        <div class="brk-restore idle">
           <input type="range" class="brk-slider" min="0" max="100" value="0" aria-label="Slide to arm ${sys} breaker">
           <button class="brk-tap" disabled>Slide to arm</button>
         </div>`;
@@ -178,8 +181,8 @@
           else if (!tripped && prevBreakers[sys]) { audio.breakerReset(); resetGesture(sys); }
           prevBreakers[sys] = tripped;
           brk.classList.toggle('tripped', tripped);
-          label.textContent = tripped ? `${sys}: TRIPPED — OFFLINE` : `${sys}: OK`;
-          restoreEl.classList.toggle('hidden', !tripped);
+          label.textContent = tripped ? `${sys}: TRIPPED — HALF POWER` : `${sys}: OK`;
+          restoreEl.classList.toggle('idle', !tripped); // reserve space either way (no reflow)
         }
         setHealthBar(document.getElementById('hull-bar'), state.hull);
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);

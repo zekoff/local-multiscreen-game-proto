@@ -57,6 +57,15 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     // Debrief: show outcome summary.
     debriefOverlay.classList.toggle('hidden', state.phase !== 'debrief');
     if (state.phase === 'debrief' && state.debrief) {
+      // Destruction must not read like an arrival: the header keys off the
+      // outcome ('adrift' = hull gone / ship lost) so the one binary the
+      // fiction demands is unmistakable. Scores stay non-binary below it.
+      const title = document.getElementById('debrief-title');
+      if (title) {
+        const lost = state.debrief.outcome === 'adrift';
+        title.textContent = lost ? 'SHIP LOST' : 'Mission Debrief';
+        title.style.color = lost ? 'var(--bad)' : '';
+      }
       const grade = document.getElementById('debrief-grade');
       grade.textContent = `${state.debrief.grade} — ${state.debrief.score}/100`;
       // Color the grade by score band so a near-failure doesn't read as a win.
