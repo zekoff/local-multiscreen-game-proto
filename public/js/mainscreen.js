@@ -176,10 +176,10 @@ function updateCaptainHud(state) {
   const inbound = [...state.asteroids].sort((a, b) => a.impactIn - b.impactIn);
   const soon = inbound.filter((a) => a.impactIn <= 15).length;
   const parts = inbound.slice(0, 3).map((a) => `${a.targetable ? a.label : '??'} ${Math.ceil(a.impactIn)}s`);
-  let thr = parts.length ? parts.join(' · ') : 'clear';
-  if (soon >= 2) thr = `${soon} CONVERGE ≤15s · ${thr}`;
-  if (state.ionStormIn > 0) thr += ` · ION STORM ${Math.ceil(state.ionStormIn)}s`;
-  if (state.debrisIn > 0) thr += ` · DEBRIS ${Math.ceil(state.debrisIn)}s`;
+  if (soon >= 2) parts.unshift(`${soon} CONVERGE ≤15s`);
+  if (state.ionStormIn > 0) parts.push(`ION STORM ${Math.ceil(state.ionStormIn)}s`);
+  if (state.debrisIn > 0) parts.push(`DEBRIS ${Math.ceil(state.debrisIn)}s`);
+  const thr = parts.length ? parts.join(' · ') : 'clear';
   setCapRow('cap-threat', thr,
     (inbound[0] && inbound[0].impactIn <= 6) || soon >= 2 ? 'alert'
       : inbound.length > 0 || state.debrisIn > 0 || state.ionStormIn > 0 ? 'warn' : '');
@@ -204,6 +204,8 @@ const gateFx = [];      // { passed, life }
 let shake = 0;
 let warpFlash = 0;      // white full-screen flash on an Emergency Warp
 let pulseFlash = 0;     // cyan flash on an active sensor pulse
+let shieldFlash = 0;    // cool blue edge shimmer when the shields soak a hit
+let stormFlash = 0;     // brief wash when an ion storm front arrives
 
 // The main screen renders EVERY effect visually, but only plays the ship-wide
 // sounds (explosion/impact/warp). The laser is heard at weapons, gate chimes at
@@ -213,10 +215,16 @@ function consumeFx(state) {
   for (const e of state.fx || []) {
     if (e.kind === 'laser') { lasers.push({ id: e.targetId, hit: e.hit, life: 0.28 }); }
     else if (e.kind === 'explosion') { explosions.push({ id: e.id, life: 0.55, max: 0.55 }); }
-    else if (e.kind === 'impact') { shake = Math.min(30, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6)); }
+    else if (e.kind === 'impact') {
+      shake = Math.min(30, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6));
+      // A soaked hit shimmers blue at the edges — the shield doing its job
+      // reads differently from the hull taking it.
+      if (e.absorbed) shieldFlash = 0.5;
+    }
     else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) shake = Math.min(shake + 3, 30); }
     else if (e.kind === 'warp') { shake = 30; warpFlash = 0.7; }
     else if (e.kind === 'sensorPulse') { pulseFlash = 0.45; }
+    else if (e.kind === 'ionStorm') { stormFlash = 0.6; }
   }
   playFxAudio(state.fx, audio, MAIN_AUDIO_KINDS);
 }
@@ -242,6 +250,33 @@ function resize() {
   canvas.height = canvas.clientHeight * devicePixelRatio;
 }
 window.addEventListener('resize', resize);
+
+// --- Nebula depth wash: 3 large, very faint color blobs behind the stars.
+// Stable per mission (seeded from the mission id) so the sky has an identity
+// without flickering; drifts at half-parallax for a sense of depth.
+let nebulaBlobs = [];
+let nebulaKey = '';
+function nebulaFor(missionId) {
+  if (missionId === nebulaKey) return nebulaBlobs;
+  nebulaKey = missionId;
+  let hsh = 0;
+  for (const c of missionId) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;
+  const rand = () => { hsh = (hsh * 1664525 + 1013904223) >>> 0; return hsh / 2 ** 32; };
+  const palettes = [[96, 110, 200], [70, 140, 160], [140, 90, 170], [90, 130, 120]];
+  nebulaBlobs = Array.from({ length: 3 }, () => ({
+    x: 0.1 + rand() * 0.8, y: 0.1 + rand() * 0.6,
+    r: 0.25 + rand() * 0.3,
+    c: palettes[Math.floor(rand() * palettes.length)],
+    a: 0.035 + rand() * 0.03,
+    drift: (rand() - 0.5) * 0.004, // slow horizontal drift, fraction of width/s
+  }));
+  return nebulaBlobs;
+}
+
+// --- Debris-field specks: brown motes streaming past while inside a field,
+// faster when the ship runs hot (the visual argument for easing off).
+const debrisSpecks = Array.from({ length: 42 }, () => ({ x: 0, y: 0, z: 0 }));
+let debrisInit = false;
 
 // Deterministic screen position for an asteroid id (stable so it doesn't jump),
 // in unyawed base coords; the caller adds the current yaw offset.
@@ -322,10 +357,27 @@ function frame(ts) {
   const cy = h / 2;
   const projScale = Math.min(w, h) * 0.5;
   const shipSpeed = latest && latest.phase === 'active' ? latest.speed : 5;
+  const slipstream = !!(latest && latest.phase === 'active' && latest.slipstream);
 
-  // Starfield streaks toward the (yawed) vanishing point.
+  // Nebula wash behind everything: barely-there color, half-parallax drift.
+  if (latest?.mission?.id) {
+    const tNow = performance.now() / 1000;
+    for (const b of nebulaFor(latest.mission.id)) {
+      const bx = ((b.x + b.drift * tNow) % 1.2) * w + yawPx * 0.5;
+      const by = b.y * h;
+      const br = b.r * Math.min(w, h) * 1.6;
+      const g = ctx.createRadialGradient(bx, by, br * 0.1, bx, by, br);
+      g.addColorStop(0, `rgba(${b.c[0]}, ${b.c[1]}, ${b.c[2]}, ${b.a})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Starfield streaks toward the (yawed) vanishing point. An open slipstream
+  // more than doubles the apparent star rush — speed you can feel.
   for (const s of stars) {
-    s.z -= (0.07 + shipSpeed * 0.0055) * dt;
+    s.z -= (0.07 + shipSpeed * 0.0055) * (slipstream ? 2.4 : 1) * dt;
     if (s.z <= STAR_NEAR_Z) resetStar(s);
     const px = cx + (s.x / s.z) * projScale;
     const py = cy + (s.y / s.z) * projScale;
@@ -342,19 +394,122 @@ function frame(ts) {
     drawAsteroids(w, h, yawPx, dpr);
     drawLasers(w, h, yawPx, dt, dpr);
     drawExplosions(w, h, yawPx, dt, dpr);
+    if (latest.debrisIn > 0) drawDebris(w, h, cx, cy, projScale, dt, dpr);
+    if (latest.ionStormIn > 0) drawIonStorm(w, h);
+    if (slipstream) drawSlipstream(w, h, cx, cy, dpr);
   }
 
   ctx.restore();
 
   // Forward reticle in fixed screen space (the ship's heading): the world
   // banks behind it, so "centered under the crosshair" reads as on-course.
-  if (latest && latest.phase === 'active') drawReticle(w, h, dpr);
+  if (latest && latest.phase === 'active') {
+    drawReticle(w, h, dpr);
+    drawShieldArc(w, h, dpr);
+    drawHullVignette(w, h);
+  }
   drawGateFlash(w, h, dt);
   drawFlashes(w, h, dt);
 
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// Raised shields: a faint energy arc over the bow (bottom of the viewscreen),
+// its presence/brightness tracking the shield's remaining strength — the whole
+// room can see the defense posture at a glance.
+function drawShieldArc(w, h, dpr) {
+  if (!latest.shields?.raised) return;
+  const strength = (latest.shields.strength || 0) / 100;
+  const alpha = 0.12 + strength * 0.25;
+  ctx.save();
+  ctx.strokeStyle = `rgba(120, 200, 255, ${alpha})`;
+  ctx.lineWidth = 3 * dpr;
+  ctx.beginPath();
+  ctx.arc(w / 2, h * 1.25, h * 0.42, Math.PI * 1.22, Math.PI * 1.78);
+  ctx.stroke();
+  // Soft glow just above the arc line.
+  ctx.strokeStyle = `rgba(120, 200, 255, ${alpha * 0.35})`;
+  ctx.lineWidth = 9 * dpr;
+  ctx.beginPath();
+  ctx.arc(w / 2, h * 1.25, h * 0.42, Math.PI * 1.22, Math.PI * 1.78);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Low hull: a steady, subtle red edge vignette — ambient dread, not a strobe.
+function drawHullVignette(w, h) {
+  const hull = latest.hull ?? 100;
+  if (hull >= 30) return;
+  const a = ((30 - hull) / 30) * 0.22;
+  const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.42, w / 2, h / 2, Math.max(w, h) * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(255, 60, 60, ${a})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+// Slipstream open: long additive streak lines radiating from the vanishing
+// point — the gate reward made visible to the whole room.
+function drawSlipstream(w, h, cx, cy, dpr) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * Math.PI * 2 + (performance.now() / 900) % (Math.PI * 2);
+    const r0 = Math.min(w, h) * 0.12;
+    const r1 = Math.min(w, h) * (0.5 + (i % 3) * 0.14);
+    ctx.strokeStyle = `rgba(143, 214, 255, ${0.05 + (i % 3) * 0.03})`;
+    ctx.lineWidth = (1 + (i % 2)) * dpr;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.82);
+    ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.82);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Inside a debris field: brown motes rushing past, faster when the throttle is
+// hot — the picture tells the helm why the hull is complaining.
+function drawDebris(w, h, cx, cy, projScale, dt, dpr) {
+  if (!debrisInit) {
+    for (const s of debrisSpecks) {
+      s.x = (Math.random() - 0.5) * 2.4;
+      s.y = (Math.random() - 0.5) * 2.4;
+      s.z = STAR_NEAR_Z + Math.random() * (STAR_FAR_Z - STAR_NEAR_Z);
+    }
+    debrisInit = true;
+  }
+  const hot = 0.4 + ((latest.throttle || 0) / 100) * 1.6;
+  for (const s of debrisSpecks) {
+    s.z -= 0.22 * hot * dt;
+    if (s.z <= STAR_NEAR_Z) {
+      s.x = (Math.random() - 0.5) * 2.4;
+      s.y = (Math.random() - 0.5) * 2.4;
+      s.z = STAR_FAR_Z;
+    }
+    const px = cx + (s.x / s.z) * projScale;
+    const py = cy + (s.y / s.z) * projScale;
+    if (px < 0 || px > w || py < 0 || py > h) continue;
+    const closeness = 1 - (s.z - STAR_NEAR_Z) / (STAR_FAR_Z - STAR_NEAR_Z);
+    const size = (0.8 + closeness * 3) * dpr;
+    ctx.fillStyle = `rgba(150, 132, 108, ${0.25 + closeness * 0.5})`;
+    ctx.fillRect(px, py, size, size * 0.7);
+  }
+}
+
+// Ion storm: a faint charged wash plus flickering horizontal interference
+// bands — reads as instruments struggling, not screen damage.
+function drawIonStorm(w, h) {
+  ctx.fillStyle = 'rgba(120, 130, 235, 0.045)';
+  ctx.fillRect(-w, -h, w * 3, h * 3);
+  for (let i = 0; i < 3; i++) {
+    if (Math.random() < 0.4) continue; // bands flicker in and out
+    const y = Math.random() * h;
+    const bh = (1 + Math.random() * 2);
+    ctx.fillStyle = `rgba(150, 170, 255, ${0.03 + Math.random() * 0.05})`;
+    ctx.fillRect(0, y, w, bh);
+  }
+}
 
 // The mission destination growing on the horizon as progress climbs.
 function drawDestination(w, h, cx, dpr) {
@@ -586,6 +741,21 @@ function drawFlashes(w, h, dt) {
     ctx.fillStyle = `rgba(143, 214, 255, ${pulseFlash * 0.5})`;
     ctx.fillRect(0, 0, w, h);
     pulseFlash = Math.max(0, pulseFlash - dt * 1.2);
+  }
+  // Shield soak: a cool blue shimmer from the edges (distinct from hull red).
+  if (shieldFlash > 0) {
+    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.7);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, `rgba(120, 200, 255, ${shieldFlash * 0.5})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    shieldFlash = Math.max(0, shieldFlash - dt * 1.4);
+  }
+  // Ion storm front arriving: one brief charged wash.
+  if (stormFlash > 0) {
+    ctx.fillStyle = `rgba(140, 150, 255, ${stormFlash * 0.25})`;
+    ctx.fillRect(0, 0, w, h);
+    stormFlash = Math.max(0, stormFlash - dt * 0.9);
   }
 }
 

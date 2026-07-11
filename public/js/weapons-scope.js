@@ -174,14 +174,17 @@ export class WeaponsScopeScene extends Phaser.Scene {
   }
 
   makeBlip(id) {
+    // Soft halo behind the dot: gives blips a clean radar-glow read without
+    // adding any UI clutter (it inherits the dot's threat color each frame).
+    const halo = this.add.circle(0, 0, BLIP_RADIUS * 2, COLOR_DIM, 0.14);
     const dot = this.add.circle(0, 0, BLIP_RADIUS, COLOR_DIM).setStrokeStyle(2, COLOR_DIM);
     // Label is the contact NAME only — threat/speed data lives on the main
     // screen so the captain (not the gunner) reads and calls out priorities.
     const label = this.add
       .text(0, 15, '', { fontSize: '10px', color: '#7d8db3', fontFamily: 'monospace' })
       .setOrigin(0.5, 0);
-    const container = this.add.container(this.cx, this.cy, [dot, label]);
-    return { container, dot, label };
+    const container = this.add.container(this.cx, this.cy, [halo, dot, label]);
+    return { container, halo, dot, label };
   }
 
   updateBlip(blip, a) {
@@ -196,6 +199,8 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const color = targeted ? COLOR_TARGETED : urgent ? COLOR_BAD : COLOR_DIM;
     blip.dot.setFillStyle(color);
     blip.dot.setStrokeStyle(targeted ? 3 : 2, color);
+    blip.halo.setFillStyle(color, targeted ? 0.22 : 0.12);
+    blip.halo.setRadius(BLIP_RADIUS * (targeted ? 2.4 : 2) * (0.8 + 0.35 * (a.size ?? 1)));
     // Bigger rocks read as bigger blips (the captain's early-spot cue too).
     blip.dot.setRadius((targeted ? BLIP_RADIUS + 2 : BLIP_RADIUS) * (0.8 + 0.35 * (a.size ?? 1)));
     blip.label.setText(a.label);

@@ -44,6 +44,7 @@ main { flex: 1; padding: 1rem; overflow-y: auto; max-width: 720px; width: 100%; 
 
 /* --- Panels --- */
 .panel {
+  position: relative; /* anchors the accent hairline below */
   background: var(--panel);
   border: 1px solid var(--panel-edge);
   border-radius: 10px;
@@ -51,6 +52,14 @@ main { flex: 1; padding: 1rem; overflow-y: auto; max-width: 720px; width: 100%; 
   margin-bottom: 1rem;
 }
 .panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--dim); margin-bottom: 0.75rem; }
+/* A single accent hairline along each panel's top edge: quiet, futuristic
+   trim in the station's own color — detail without greebles. */
+.panel::before {
+  content: '';
+  position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.4;
+}
 
 /* --- Controls --- */
 button {
@@ -133,8 +142,12 @@ select {
 .overlay {
   position: fixed; inset: 0; z-index: 10;
   background: var(--bg);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
   gap: 1rem; padding: 1.5rem; text-align: center;
+  /* Overlays grew (game setup, debrief log): scroll rather than push controls
+     off-screen; safe-center keeps short content vertically centered. */
+  overflow-y: auto;
+  justify-content: safe center;
 }
 .overlay.hidden { display: none; }
 .overlay h2 { color: var(--accent); letter-spacing: 0.1em; text-transform: uppercase; }
@@ -184,14 +197,16 @@ select {
   background: rgba(10, 14, 23, 0.72); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.55rem 1rem;
   font-size: clamp(0.95rem, 1.5vw, 1.45rem); letter-spacing: 0.02em; pointer-events: none; }
 .captain-hud.hidden { display: none; }
-.cap-row { display: flex; gap: 0.6rem; align-items: baseline; flex: 1; min-width: 0; }
+.cap-row { display: flex; gap: 0.6rem; align-items: baseline; flex: 1 1 14rem; min-width: 0; }
 .cap-row .cap-name { color: var(--dim); font-weight: 700; letter-spacing: 0.12em; flex-shrink: 0; }
 .cap-row .cap-val { color: var(--text); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cap-row.alert .cap-val { color: var(--bad); font-weight: 700; }
 .cap-row.warn .cap-val { color: var(--warn); }
-/* Situational rows: the threat list runs longest, give it the most room. */
-#cap-threat { flex: 2.2; }
-#cap-nav { flex: 1.2; }
+/* Situational rows: the threat list runs longest, give it the most room.
+   The flex-basis values make crowded rows WRAP to a second line rather than
+   truncate into ellipses at TV widths. */
+#cap-threat { flex: 2 1 22rem; }
+#cap-nav { flex: 1 1 13rem; }
 /* Narrow screens: fall back to a stacked block so rows stay readable. */
 @media (max-width: 900px) { .captain-hud { flex-direction: column; gap: 0.25rem; right: auto; min-width: 15rem; } }
 .mainscreen-body main { position: relative; } /* anchor for the captain-hud overlay */

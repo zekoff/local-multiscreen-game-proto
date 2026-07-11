@@ -1305,6 +1305,8 @@ export class Game {
       // renders the storm warning, helm the debris warning, main screen both.
       ionStormIn: round1(Math.max(0, this.ionStormUntil - this.missionTime)),
       debrisIn: round1(Math.max(0, this.debrisUntil - this.missionTime)),
+      // Slipstream open (post-gate speed boost) — drives the viewscreen streaks.
+      slipstream: this.gateBoostTimer > 0,
       // Contacts carry size/speed (for main-screen threat read-out) and whether
       // sensors have resolved them yet (targetable on the weapons scope).
       asteroids: this.asteroids.map((a) => ({
