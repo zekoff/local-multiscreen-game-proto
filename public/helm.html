@@ -160,8 +160,11 @@
     });
 
     // Throttle sends on change; track dragging so render() doesn't stomp it.
+    // The servo confirmation sounds once on RELEASE (change), not per input
+    // event — one short diegetic beat per committed setpoint, sparse tone.
     throttle.addEventListener('pointerdown', () => (draggingThrottle = true));
     throttle.addEventListener('pointerup', () => (draggingThrottle = false));
+    throttle.addEventListener('change', () => audio.throttleSet(Number(throttle.value)));
     throttle.addEventListener('input', () => {
       const value = Number(throttle.value);
       net.action({ kind: 'throttle', value });
@@ -214,7 +217,10 @@
         'Call out what you need — the captain sees the whole sky on the main screen.',
       ],
     });
-    warpBtn.addEventListener('click', () => net.action({ kind: 'warp' }));
+    warpBtn.addEventListener('click', () => {
+      net.action({ kind: 'warp' });
+      audio.warpEngage(); // local engage clunk; the ship-wide whoosh follows via fx
+    });
   </script>
 </body>
 </html>

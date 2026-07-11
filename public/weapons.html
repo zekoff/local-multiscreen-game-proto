@@ -90,7 +90,7 @@
       render(state) {
         // The scope scene reads this on its own update loop; tapping a blip
         // calls back here with the id, same action any target-list UI would send.
-        scopeScene.onTarget = (id) => net.action({ kind: 'target', id });
+        scopeScene.onTarget = (id) => { net.action({ kind: 'target', id }); audio.tapTick(); };
         scopeScene.setState(state);
         // Weapons-local SFX: laser (from the fx stream), a lock chime when a new
         // contact is acquired, and a soft chime the moment the bank recharges.
@@ -134,6 +134,7 @@
 
     fireBtn.addEventListener('click', () => {
       net.action({ kind: 'fire' });
+      audio.trigger(); // dry local trigger click; the zap follows via fx
       // Optimistic: drain the meter and disable the button right now — the
       // server's own drained charge arrives next tick and takes over.
       intents.flash('fired', 2);

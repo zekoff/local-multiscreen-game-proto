@@ -66,6 +66,26 @@ export function createAudio() {
         [6, 8, 6, 4.8, 6, 4.8, 4, 4.8],
       ],
     },
+    { // "Halcyon" — mid-tempo, E-minor-ish, patient and open.
+      tempo: 90,
+      roots: [82.41, 65.41, 98.0, 73.42], // E2, C2, G2, D2
+      leadType: 'sine',
+      patterns: [
+        [4, 4.8, 6, 8, 6, 4.8, 4, 3],
+        [3, 4, 4.8, 4, 3.56, 4, 4.8, 6],
+        [6, 4.8, 4, 4.8, 6, 8, 6, 4.8],
+      ],
+    },
+    { // "Meridian" — the slowest and lowest; D-minor deep-haul drift.
+      tempo: 76,
+      roots: [73.42, 58.27, 87.31, 65.41], // D2, Bb1, F2, C2
+      leadType: 'triangle',
+      patterns: [
+        [4, 3, 4, 4.8, 4, 3.56, 3, 4],
+        [4.8, 4, 3.56, 3, 3.56, 4, 4.8, 4],
+        [6, 4.8, 4, 3.56, 4, 4.8, 6, 4.8],
+      ],
+    },
   ];
   let track = TRACKS[0];
   let stepDur = (60 / track.tempo) / 4;   // seconds per 16th note (per-track tempo)
@@ -560,6 +580,19 @@ export function createAudio() {
   function powerClick() { blip(440, 520, 0.1, 0.05, 'square'); }
   // Helm: subtle blip per steering nudge (fires every tick while a button is held).
   function nudgeTick() { blip(300, 360, 0.06, 0.04, 'square'); }
+  // Helm: short servo confirmation when the throttle setpoint is committed —
+  // pitch tracks the commanded % so up and down read differently.
+  function throttleSet(pct) {
+    const f = 180 + (Math.max(0, Math.min(100, pct)) / 100) * 240;
+    blip(f * 0.8, f, 0.14, 0.09, 'triangle');
+  }
+  // Helm: heavy mechanical engage clunk the moment WARP is pressed (the big
+  // ship-wide whoosh follows from the fx stream on the next snapshot).
+  function warpEngage() { blip(140, 70, 0.3, 0.12, 'square'); }
+  // Weapons: dry trigger click on FIRE (the laser zap follows from fx).
+  function trigger() { blip(900, 700, 0.12, 0.03, 'square'); }
+  // Weapons: tiny tick when a blip is tapped (the lock chime confirms later).
+  function tapTick() { blip(660, 720, 0.08, 0.03); }
 
   // Ion storm front: a crackling static wash (engineering + main screen).
   function ionStorm() {
@@ -619,6 +652,10 @@ export function createAudio() {
     breakerTick,
     powerClick,
     nudgeTick,
+    throttleSet,
+    warpEngage,
+    trigger,
+    tapTick,
     ionStorm,
     debris,
     shieldUp: () => shield(true),
