@@ -17,7 +17,8 @@ try {
   );
 
   // A scripted mission on the CF transport also exercises the event system.
-  const debrief = await runBotCrew(BASE, { missionId: 'mined-corridor' });
+  // Seed pinned for determinism — see the note in smoke.mjs.
+  const debrief = await runBotCrew(BASE, { missionId: 'mined-corridor', seed: 1003 });
   console.log(`debrief reached: ${debrief.outcome} — ${debrief.grade} (${debrief.score}/100)`);
   console.log(`mission: ${debrief.missionId} seed=${debrief.seed}`);
   console.log(`stats: ${JSON.stringify(debrief.stats)}`);

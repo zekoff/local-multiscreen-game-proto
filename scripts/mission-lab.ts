@@ -43,6 +43,9 @@ const SCENARIOS: Scenario[] = [
   { name: '1h-helm', seats: { helm: 'skilled', engineering: 'auto', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
   { name: '1h-eng', seats: { helm: 'auto', engineering: 'skilled', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
   { name: '1h-weap', seats: { helm: 'auto', engineering: 'auto', weapons: 'skilled', main: 'auto', supervisor: 'auto' } },
+  // Two humans with a BOT gunner: directly probes the old "weapons is the
+  // survival linchpin" imbalance the CPU rebalance is meant to soften.
+  { name: '2h-helm-eng', seats: { helm: 'skilled', engineering: 'skilled', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
 ];
 
 const missionIds = process.env.LAB_MISSIONS
@@ -131,20 +134,20 @@ for (const missionId of missionIds) {
 }
 
 // Per-console effectiveness table (from telemetry.perConsole). Only 'skilled'
-// and the three single-human scenarios are shown — these are where a console's
+// the single-human scenarios, and the 2-human/bot-gunner mix are shown — where a console's
 // effectiveness read is meaningful. Captain coord is the crew-coordination
 // proxy (defense + gate discipline + fast target hand-offs).
 console.log('\nPer-console effectiveness (arrived runs):\n');
-console.log('| mission | crew | helm gate% | helm on-course | weap hit% | weap acquire(s) | eng power-util | captain coord |');
-console.log('|---|---|---|---|---|---|---|---|');
-const METRIC_SCENARIOS = ['skilled', '1h-helm', '1h-eng', '1h-weap'];
+console.log('| mission | crew | helm gate% | helm on-course | weap hit% | weap acquire(s) | weap chg-idle | eng power-util | captain coord |');
+console.log('|---|---|---|---|---|---|---|---|---|');
+const METRIC_SCENARIOS = ['skilled', '1h-helm', '1h-eng', '1h-weap', '2h-helm-eng'];
 for (const missionId of missionIds) {
   for (const scenarioName of METRIC_SCENARIOS) {
     const done = cellOf(missionId, scenarioName)
       .filter((r) => r.debrief && r.debrief.outcome === 'arrived')
       .map((r) => r.debrief!.telemetry.perConsole);
     if (done.length === 0) {
-      console.log(`| ${missionId} | ${scenarioName} | — | — | — | — | — | — |`);
+      console.log(`| ${missionId} | ${scenarioName} | — | — | — | — | — | — | — |`);
       continue;
     }
     console.log(
@@ -153,6 +156,9 @@ for (const missionId of missionIds) {
       `| ${pct(avg(done.map((c) => c.helm.onCoursePct)))} ` +
       `| ${pct(avg(done.map((c) => c.weapons.hitRate)))} ` +
       `| ${avg(done.map((c) => c.weapons.avgAcquireLatency)).toFixed(1)} ` +
+      // chg-idle: share of the mission the laser sat fully charged (unused
+      // firepower — high values mean the trigger, not the recharge, is slow).
+      `| ${pct(avg(done.map((c) => c.weapons.chargeIdlePct ?? 0)))} ` +
       `| ${pct(avg(done.map((c) => c.engineering.avgPowerUtil)))} ` +
       `| ${avg(done.map((c) => c.captain.coordinationScore)).toFixed(2)} |`,
     );

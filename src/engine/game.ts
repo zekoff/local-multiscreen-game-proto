@@ -223,7 +223,7 @@ export interface Telemetry {
 
 export interface ConsoleMetrics {
   helm: { gatePassRate: number; avgAlignmentError: number; onCoursePct: number };
-  weapons: { hitRate: number; avgAcquireLatency: number; neutralizedPct: number };
+  weapons: { hitRate: number; avgAcquireLatency: number; neutralizedPct: number; chargeIdlePct: number };
   engineering: { avgPowerUtil: number; breakerDowntime: number };
   // Captain proxy: coordinationScore is a 0..1 composite of the crew outcomes a
   // good caller drives — defense, gate discipline, and fast target hand-offs.
@@ -315,6 +315,7 @@ export class Game {
   private alignAbsSum = 0;
   private throttleSum = 0;
   private telSamples = 0;
+  private chargeFullTime = 0; // seconds the laser sat at 100% (unused firepower - a weapons-console pacing metric)
   private log: { t: number; text: string }[] = [];
 
   // --- Narrative log state (see narrate()): rolling windows the ship's log
@@ -432,6 +433,7 @@ export class Game {
     this.alignAbsSum = 0;
     this.throttleSum = 0;
     this.telSamples = 0;
+    this.chargeFullTime = 0;
     this.log = [];
     this.killTimes = [];
     this.damageWindow = [];
@@ -815,6 +817,9 @@ export class Game {
     }
     // Laser recharge meter refills at a rate set by weapon power (100 = ready).
     this.charge = Math.min(100, this.charge + LASER_CHARGE_RATE * this.eff('weapons') * dt);
+    // Track time spent sitting at full charge — unused firepower, surfaced as
+    // the weapons console's chargeIdlePct in the per-console telemetry.
+    if (this.charge >= 100) this.chargeFullTime += dt;
 
     // Telemetry accumulation (station-load measurements).
     if (this.shieldRaised) this.tel.shieldUptime += dt;
@@ -1060,7 +1065,7 @@ export class Game {
     const coordinationScore = round2(0.45 * defense + 0.30 * gatePassRate + 0.25 * latencyScore);
     this.tel.perConsole = {
       helm: { gatePassRate, avgAlignmentError: this.tel.avgAlignment, onCoursePct },
-      weapons: { hitRate, avgAcquireLatency, neutralizedPct },
+      weapons: { hitRate, avgAcquireLatency, neutralizedPct, chargeIdlePct: this.missionTime > 0 ? round2(this.chargeFullTime / this.missionTime) : 0 },
       engineering: { avgPowerUtil, breakerDowntime: this.tel.breakerDowntime },
       captain: { coordinationScore, avgAcquireLatency, gatePassRate, defense },
     };
@@ -1255,7 +1260,7 @@ function freshTelemetry(): Telemetry {
     pulsesUsed: 0,
     perConsole: {
       helm: { gatePassRate: 0, avgAlignmentError: 0, onCoursePct: 0 },
-      weapons: { hitRate: 0, avgAcquireLatency: 0, neutralizedPct: 0 },
+      weapons: { hitRate: 0, avgAcquireLatency: 0, neutralizedPct: 0, chargeIdlePct: 0 },
       engineering: { avgPowerUtil: 0, breakerDowntime: 0 },
       captain: { coordinationScore: 0, avgAcquireLatency: 0, gatePassRate: 0, defense: 0 },
     },

@@ -15,7 +15,10 @@ try {
   );
 
   // Explicit missionId exercises the mission-selection path over the wire.
-  const debrief = await runBotCrew(BASE, { missionId: 'supply-run' });
+  // Seed pinned: smoke is a deterministic TRANSPORT regression test, not a
+  // balance probe (that's npm run lab). The 10x wire bots act only every
+  // ~2.5 sim-seconds, so a random hard seed can legitimately sink them.
+  const debrief = await runBotCrew(BASE, { missionId: 'supply-run', seed: 1003 });
   console.log(`debrief reached: ${debrief.outcome} — ${debrief.grade} (${debrief.score}/100)`);
   console.log(`mission: ${debrief.missionId} seed=${debrief.seed}`);
   console.log(`stats: ${JSON.stringify(debrief.stats)}`);

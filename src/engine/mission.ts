@@ -48,7 +48,9 @@ export interface MissionDef {
 // clean run still takes (gate detours, turns) folded into SPEED_CALIB — tuned
 // against `npm run lab` so a `skilled` crew arrives near targetSeconds.
 // parTime sits above the well-executed time so the debrief time score has slack.
-export const SPEED_CALIB = 325;
+// Recalibrated 325 -> 260 after the 7-point power pool (default engines 3):
+// the faster baseline ship was landing skilled runs ~20% under targetSeconds.
+export const SPEED_CALIB = 260;
 export function pacingFor(targetSeconds: number): { targetSeconds: number; speedScale: number; parTime: number } {
   return {
     targetSeconds,

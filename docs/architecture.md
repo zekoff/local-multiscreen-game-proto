@@ -77,10 +77,14 @@ pattern that does **not** touch the simulation:
 > rejected). The authoritative state always wins; the overlay only front-runs
 > the render by one round-trip.
 
-The weapons scope uses exactly this for target taps
-(`public/js/weapons-scope.js`: `optimisticTargetId`, reconciled in
-`setState`) — the blip paints as acquired on `pointerdown`, before the server
-echoes the lock.
+This is now a shared client module: `public/js/optimistic.js`
+(`createIntents()` — set/get/flash/reconcile), reconciled by `station.js`
+before every render. Applied to the weapons scope target tap (the original
+implementation, `optimisticTargetId` in `weapons-scope.js`), the shields
+toggle, the FIRE meter drain, engineering's power pips and breaker restore,
+and helm's throttle **setpoint echo** (the commanded %, never predicted
+derived state) and warp button. Server rejections revert silently after 3
+snapshots.
 
 **Difficulty of extending this** depends entirely on the *kind* of action:
 
@@ -116,17 +120,22 @@ logic without a browser.
     rejoining resumes it. A different player may claim a seat only while it is
     unoccupied or its holder is disconnected.
   - *Auto-assist:* any seat without a connected human is played by simple
-    engine-internal logic each tick (helm holds 80% throttle and re-centers;
-    engineering resets breakers after 6s; weapons raises shields and engages
-    contacts inside its reaction range with a chance to miss — deliberately
-    mediocre, not optimal, so a crewed seat is always meaningfully better).
-    This makes any subset of stations playable.
+    engine-internal logic each tick (helm holds 70% throttle, re-centers, and
+    makes a weak attempt at nav rings; engineering resets breakers after ~4s;
+    weapons never misses but fires only after a deliberate 1-2s pause once
+    charged and in range, and raises shields only for a 2+ rock volley). The
+    CPU is SLOW rather than incompetent: a full bot crew barely survives the
+    baseline mission, and a human at any console is meaningfully better —
+    including a human engineer, whose weapon-power pumping shortens the bot
+    gunner's recharge wait. This makes any subset of stations playable.
 - **Actions** — validated per seat in `action(seat, a)`; a helm client cannot
   send engineering actions. Auto-assist uses the same internal code paths as
   human actions (e.g. `fire()`), so behavior is identical.
-- **Interdependence** (the coordination engine): engineering allocates **6
+- **Interdependence** (the coordination engine): engineering allocates **7
   power units across four systems** (engines, shields, weapons, **sensors**;
-  max 4 each), and tripped breakers halve a system until reset. Each system is
+  max 4 each), and tripped breakers halve a system until reset. Breakers trip
+  mainly when a rock hits the hull (fully-shielded hits don't trip anything);
+  the ambient random-trip timer is a rarer background pressure. Each system is
   a live tradeoff:
   - *engines* → ship speed **and** turn authority (a nudge turns harder with
     more engine power and with lower throttle), but a faster ship makes

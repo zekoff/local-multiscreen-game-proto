@@ -1,16 +1,44 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-11 (gameplay-overhaul pass — implemented, verified,
-committed to branch `gameplay-overhaul`, and deployed to Cloudflare). This file
+Last updated: 2026-07-11 (post-playtest revision pass — branch
+`worktree-revision-pass`, draft PR open, deployed to Cloudflare). This file
 is the "resume here" note — read it with `CLAUDE.md` at the start of a session.
 
-## Latest pass: gameplay overhaul (2026-07-11)
+## Latest pass: post-playtest revision (2026-07-11, after the first human playtests)
+
+Full report: `docs/design/10-revision-playtest-report.md`; design-direction
+audit: `docs/design/09-design-direction-audit.md`. Highlights:
+
+- **Bug verdicts**: laser "slow recharge" was the full-offline breaker rule
+  (reverted to ×0.5; `npm run checks` pins the recharge contract); scope taps
+  fixed (scene-level 36px hit test); every station control is now optimistic
+  via `public/js/optimistic.js` (instant paint, 3-snapshot revert);
+  destruction shows **SHIP LOST** (debrief.outcome finally read by clients).
+- **Breakers**: impacts trip breakers (shielded hits don't); ambient trips
+  ~50% rarer; equal-height breaker UI; hollow pips for tripped-but-allocated.
+- **Power**: pool 7 (was 6), default `{e3 s1 w2 sen1}`; `SPEED_CALIB` 325→260.
+- **CPU crew**: no miss chance — deliberate 1-2s fire delay (human engineer
+  visibly helps a bot gunner); volley-only shields; 4s breaker resets; weak
+  gate chasing. Balance: all-bot crew barely arrives on supply-run (60-70%,
+  hull ~16); hard missions still defeat it; 2 humans + bot gunner beat any
+  1-human crew (weapons-linchpin softened).
+- **New intro mission** `first-flight` (rock t=20, ring t=40, cap ramp 1→2→3
+  via new `spawnGate`/`setMaxAsteroids` event actions); ambient spawns ≥18s
+  (beyond max sensor range), star-sized until sensors could see them.
+- **Thematic**: optional ship naming at launch (log/header/debrief + debrief
+  record); mission story beats; TV-scale captain HUD bar; smaller toasts.
+- **Toolchain**: `npm run checks`; fixed skilled-eng lab policy (was losing
+  to the bot crew); `2h-helm-eng` scenario; `chargeIdlePct` metric.
+- **Owner attention**: watch items + assumptions + ranked proposals are in
+  the report (§audit watch items, §assumptions, §proposals).
+
+## Previous pass: gameplay overhaul (2026-07-11)
 
 A large tuning + UX pass on top of the pre-playtest work. All of it typechecks,
 passes `npm run smoke`/`smoke:cf`, sweeps clean in `npm run lab`, and renders
 error-free under the `/run` headless driver. Committed on branch
-`gameplay-overhaul` and deployed; **not yet merged to `main`** (open the PR /
-merge when the playtest confirms it).
+`gameplay-overhaul`, deployed, and since merged to `main` (PR #5).
+
 
 - **Mission length is now a parameter.** `MissionDef.targetSeconds` (via
   `pacingFor()` in `mission.ts`, `SPEED_CALIB=325`) derives `speedScale` +
@@ -43,8 +71,8 @@ merge when the playtest confirms it).
   `architecture.md` (answer to "can stations feel instant?": yes for
   selection/toggle controls, no general prediction engine).
 - **Open:** audio is code+render verified but **not heard** (headless is
-  silent — needs a real-device listen); branch not yet merged to `main`, pending
-  the human playtest.
+  silent — needs a real-device listen). Branch merged to `main` in PR #5
+  after the first human playtests.
 
 ## Where things stand
 
@@ -94,9 +122,9 @@ merge when the playtest confirms it).
 
 ## The decision queue (things deliberately left open)
 
-1. **Human playtest — the actual near-term goal, still not done.** The whole
-   pre-playtest pass exists to make the game communicate its vision and hold up
-   with real people. Nothing here has been played by humans yet. This is next.
+1. **Human playtesting — first rounds DONE (solo + two-human, 2026-07-11).** The
+   feedback drove the post-playtest revision pass above; next: playtest the
+   revision (esp. first-flight with a fresh crew, CPU feel, optimistic UI).
 2. **Audio is code-verified, not heard.** Headless has no sound output; the
    mix/feel needs a listen on a real device — check levels and taste.
 3. **Balance of the new mechanics is first-pass.** Tunable constants are all at

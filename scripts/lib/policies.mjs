@@ -45,22 +45,24 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
       const sys = ['engines', 'shields', 'weapons', 'sensors'];
       const actions = [];
-      // Clear tripped breakers first — a tripped system is now fully offline.
+      // Clear tripped breakers first — a tripped system runs at half power.
       for (const s of sys) {
         if (state.breakers[s]) actions.push({ kind: 'resetBreaker', system: s });
       }
-      // Threat-aware power triage: when rocks are inbound, pump weapons + sensors
-      // (fast refire + early detection); when the sky is clear, feed the engines
-      // to travel. Novice's default split is flatter (it barely re-triages).
+      // Threat-aware power triage over the 7-point pool: shift weight toward
+      // weapons when a rock is genuinely close, keep the engines fed the rest
+      // of the time (starving engines stretches the mission and multiplies
+      // total spawns — the old always-in-combat split lost to the bot crew).
+      // Novice barely re-triages (sticks near the default split).
       const nearest = state.asteroids.length
         ? Math.min(...state.asteroids.map((a) => a.impactIn))
         : Infinity;
-      const combat = nearest <= 20;
+      const combat = nearest <= 14;
       const target = profile === 'novice'
-        ? { engines: 2, weapons: 2, shields: 1, sensors: 1 }
+        ? { engines: 3, weapons: 2, shields: 1, sensors: 1 }
         : combat
-          ? { engines: 1, weapons: 3, shields: 0, sensors: 2 }
-          : { engines: 3, weapons: 1, shields: 1, sensors: 1 };
+          ? { engines: 2, weapons: 3, shields: 1, sensors: 1 }
+          : { engines: 3, weapons: 2, shields: 1, sensors: 1 };
       // Nudge one point toward the target split: free an over-allocated system,
       // then raise an under-allocated one (net-neutral on the power budget, or a
       // pure fill after an Emergency Warp zeroes everything).
