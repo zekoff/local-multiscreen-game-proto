@@ -17,7 +17,7 @@ export const keplerRescue: MissionDef = {
   impactIn: { min: 12, max: 18 },
   asteroidDmg: { min: 8, max: 16 },
   maxAsteroids: 5,
-  breakerEvery: { min: 14, max: 24 },
+  breakerEvery: { min: 21, max: 36 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
   driftScale: 1.2,                         // debris wake keeps shoving you off course
   events: [
     {

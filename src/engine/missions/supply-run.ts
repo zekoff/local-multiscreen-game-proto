@@ -19,7 +19,7 @@ export const supplyRun: MissionDef = {
   impactIn: { min: 14, max: 22 },
   asteroidDmg: { min: 10, max: 20 },
   maxAsteroids: 4,
-  breakerEvery: { min: 18, max: 30 },
+  breakerEvery: { min: 27, max: 45 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
   driftScale: 1,
   events: [
     {

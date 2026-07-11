@@ -49,7 +49,7 @@ export function generateMission(params: GenParams): MissionDef {
   const spawnMid = lerp(16, 8, t);
   const dmgLo = Math.round(lerp(8, 12, t));
   const dmgHi = Math.round(lerp(14, 22, t));
-  const breakerMid = lerp(30, 16, t);
+  const breakerMid = lerp(45, 24, t); // widened +50%: impacts now trip breakers, ambient trips are the exception
 
   // 2-4 set pieces at spaced-out progress marks, drawn from a small pool.
   const events: ScriptedEvent[] = [];

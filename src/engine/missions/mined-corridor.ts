@@ -18,7 +18,7 @@ export const minedCorridor: MissionDef = {
   impactIn: { min: 14, max: 22 },
   asteroidDmg: { min: 8, max: 14 },       // mines are numerous but small
   maxAsteroids: 6,                        // waves need headroom over ambient
-  breakerEvery: { min: 20, max: 32 },
+  breakerEvery: { min: 30, max: 48 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
   driftScale: 1,
   events: [
     {

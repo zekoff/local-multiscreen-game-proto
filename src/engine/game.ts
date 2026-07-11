@@ -26,7 +26,10 @@ const DIFF_MULT: Record<Difficulty, number> = { chill: 0.6, normal: 1, intense: 
 const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors'];
 
 // Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
-const POWER_TOTAL = 6;      // total power units engineering can allocate
+// Pool raised 6 -> 7 post-playtest ("one more engine allocation point"): the
+// extra unit lands on engines in the default split. Per-system cap stays 4, so
+// speed/turn normalization (eff/POWER_MAX) is untouched.
+const POWER_TOTAL = 7;      // total power units engineering can allocate
 const POWER_MAX = 4;        // max units a single system can hold
 
 // Laser: no battery bank and no fixed cooldown. `charge` (0-100) is simply the
@@ -376,7 +379,7 @@ export class Game {
     this.hull = 100;
     this.shieldRaised = false;
     this.shieldStrength = SHIELD_MAX;
-    this.power = { engines: 2, shields: 1, weapons: 2, sensors: 1 };
+    this.power = { engines: 3, shields: 1, weapons: 2, sensors: 1 }; // default split spends the full pool (7)
     this.breakers = { engines: null, shields: null, weapons: null, sensors: null };
     this.throttle = 0;
     this.alignment = 0;
@@ -570,11 +573,13 @@ export class Game {
     if (this.fx.length > 0) this.fx = [];
   }
 
-  // Effective power for a system: allocated units, but ZERO while its breaker is
-  // tripped — a tripped system is fully offline (no thrust / no charge / no
-  // shield regen / sensors fall back to their base range) until it's restored.
+  // Effective power for a system: allocated units, HALVED while its breaker is
+  // tripped — a tripped system limps at half effectiveness (reverted from the
+  // full-offline experiment: playtest showed hard-zero felt like a dead console
+  // rather than an urgent repair). Fractional eff is fine: every consumer is
+  // continuous math (charge rate, turn authority, regen, ranges).
   private eff(system: SystemId): number {
-    return this.breakers[system] !== null ? 0 : this.power[system];
+    return this.power[system] * (this.breakers[system] !== null ? 0.5 : 1);
   }
 
   // Turn authority per nudge: rises with engine power, falls with throttle — so
@@ -784,7 +789,7 @@ export class Game {
     // Emergency Warp zeroes it) toward a sensible default, so an unmanned
     // engineer can't leave the ship dead in the water.
     if (this.auto('engineering')) {
-      const target: Record<SystemId, number> = { engines: 2, weapons: 2, shields: 1, sensors: 1 };
+      const target: Record<SystemId, number> = { engines: 3, weapons: 2, shields: 1, sensors: 1 }; // mirrors the default split
       let spare = POWER_TOTAL - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
       for (const s of SYSTEMS) {
         while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
@@ -909,6 +914,11 @@ export class Game {
     this.tel.hullDamageTaken += remaining;
     // Feed the captain's-log damage-burst detector (only real hull damage).
     if (remaining > 0) this.damageWindow.push({ t: this.missionTime, dmg: Math.round(remaining) });
+    // A hull-damaging strike jolts a random breaker loose — impacts, not the
+    // ambient timer, are now the main source of engineering emergencies. Hits
+    // fully absorbed by shields do NOT trip anything: good shield play spares
+    // the engineer, which is the cooperation loop the design wants.
+    if (remaining > 0) this.tripBreaker();
     this.targetableSince.delete(a.id);
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
     // Screen shake + sound scale off this on the main screen; absorbed hits get
