@@ -186,6 +186,7 @@ export class RoomObject {
     this.interval = setInterval(() => {
       this.game.tick((this.tickMs / 1000) * this.speed);
       this.broadcast({ type: 'state', state: this.game.serialize() });
+      this.game.clearFx(); // one-shot effects delivered; reset for the next tick
       if (!this.needsTick()) this.stopTicking();
     }, this.tickMs);
   }

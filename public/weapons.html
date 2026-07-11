@@ -55,9 +55,15 @@
   </div>
 
   <script type="module">
-    import { initStation } from '/js/station.js';
+    import { initStation, setHealthBar, setChargeBar } from '/js/station.js';
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
+    import { createAudio } from '/js/audio.js';
+
+    // Console-local audio: weapons hears its own shields raise/lower.
+    const audio = createAudio();
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    let prevShieldsRaised = false;
 
     const scopeEmptyEl = document.getElementById('scope-empty');
     const scopeTargetEl = document.getElementById('scope-target');
@@ -79,14 +85,21 @@
         const targeted = state.asteroids.find((a) => a.id === state.targetId);
         scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label} (${targeted.dmg} dmg)` : '';
 
-        // Charge bar and fire availability.
-        document.getElementById('charge-bar').style.width = `${state.charge}%`;
-        fireBtn.disabled = state.charge < state.fireCost || state.targetId === null;
-        fireBtn.textContent = state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
-        // Shield toggle reflects server state.
+        // Charge bar (cool while charging, green when there's enough to fire).
+        setChargeBar(document.getElementById('charge-bar'), state.charge, state.charge >= state.fireCost);
+        // Fire availability: needs charge, a target, and the phaser off cooldown.
+        const onCooldown = state.fireReadyIn > 0;
+        fireBtn.disabled = state.charge < state.fireCost || state.targetId === null || onCooldown;
+        fireBtn.textContent = onCooldown
+          ? `RECHARGING (${Math.ceil(state.fireReadyIn)}s)`
+          : state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
+        // Shield toggle reflects server state; sound the raise/lower edge.
         shieldsRaised = state.shields.raised;
+        if (shieldsRaised && !prevShieldsRaised) audio.shieldUp();
+        else if (!shieldsRaised && prevShieldsRaised) audio.shieldDown();
+        prevShieldsRaised = shieldsRaised;
         shieldsBtn.textContent = shieldsRaised ? 'Lower Shields' : 'Raise Shields';
-        document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
+        setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
       },
     });
 

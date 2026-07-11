@@ -52,7 +52,13 @@
   </div>
 
   <script type="module">
-    import { initStation } from '/js/station.js';
+    import { initStation, setHealthBar } from '/js/station.js';
+    import { createAudio } from '/js/audio.js';
+
+    // Console-local audio: engineering hears its own breakers trip and reset.
+    const audio = createAudio();
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    const prevBreakers = { engines: false, shields: false, weapons: false };
 
     const SYSTEMS = ['engines', 'shields', 'weapons'];
     const POWER_MAX = 4;
@@ -74,8 +80,7 @@
       systemsEl.appendChild(row);
 
       const brk = document.createElement('button');
-      brk.className = 'danger';
-      brk.style.cssText = 'width:100%; margin-bottom:0.5rem;';
+      brk.className = 'breaker';
       brk.id = `brk-${sys}`;
       brk.textContent = `${sys}: OK`;
       breakersEl.appendChild(brk);
@@ -90,14 +95,20 @@
           // Light up pips to match the current allocation.
           const pips = document.querySelectorAll(`#pips-${sys} .pip`);
           pips.forEach((p, i) => p.classList.toggle('on', i < state.power[sys]));
-          // Breaker button flashes red text while tripped.
+          // Breaker button turns red only while tripped; neutral (and disabled)
+          // when OK so healthy systems don't read as danger buttons.
           const brk = document.getElementById(`brk-${sys}`);
           const tripped = state.breakers[sys];
+          // Sound the transition (trip vs reset) once, off the state edge.
+          if (tripped && !prevBreakers[sys]) audio.breakerTrip();
+          else if (!tripped && prevBreakers[sys]) audio.breakerReset();
+          prevBreakers[sys] = !!tripped;
+          brk.classList.toggle('tripped', !!tripped);
           brk.textContent = tripped ? `${sys}: TRIPPED — TAP TO RESET` : `${sys}: OK`;
           brk.disabled = !tripped;
         }
-        document.getElementById('hull-bar').style.width = `${state.hull}%`;
-        document.getElementById('shield-bar').style.width = `${state.shields.strength}%`;
+        setHealthBar(document.getElementById('hull-bar'), state.hull);
+        setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
       },
     });
 

@@ -19,6 +19,14 @@
     <!-- Simulated view outside the ship -->
     <canvas id="viewscreen"></canvas>
 
+    <!-- Captain's tactical readout: per-station + ship-system status overlaid on
+         the viewscreen so a screen-less commander can see who needs help. -->
+    <div id="captain-hud" class="captain-hud hidden">
+      <div class="cap-row" id="cap-helm"><span class="cap-name">HELM</span><span class="cap-val"></span></div>
+      <div class="cap-row" id="cap-eng"><span class="cap-name">ENG</span><span class="cap-val"></span></div>
+      <div class="cap-row" id="cap-wep"><span class="cap-name">WEP</span><span class="cap-val"></span></div>
+    </div>
+
     <!-- Ship status HUD along the bottom, visible to the whole room -->
     <div class="hud">
       <div class="cell">

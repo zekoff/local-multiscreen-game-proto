@@ -16,9 +16,6 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
     ? { react: 0.35, alignTolerance: 30, fireAtCharge: 90, throttle: 85 }
     : { react: 1.0, alignTolerance: 10, fireAtCharge: 0, throttle: 100 };
 
-  // Sticky per-crew state (mirrors what a human remembers between glances).
-  let shieldsRequested = false;
-
   return {
     helm(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
@@ -42,17 +39,24 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
     weapons(state) {
       if (state.phase !== 'active') return [];
       const actions = [];
-      // Raising shields is a one-time decision even a novice makes eventually.
-      if (!state.shields.raised && !shieldsRequested && rng() <= knobs.react) {
-        shieldsRequested = true;
-        actions.push({ kind: 'shields', raised: true });
+      const nearest = state.asteroids.length > 0
+        ? Math.min(...state.asteroids.map((a) => a.impactIn))
+        : Infinity;
+      // Shields are now a managed resource: raise as a rock closes, lower once
+      // clear so they recharge (and the ship speeds up). Hysteresis on the
+      // threshold avoids flip-flopping; only act when intent changes.
+      const wantShields = state.shields.raised ? nearest <= 14 : nearest <= 10;
+      if (wantShields !== state.shields.raised && rng() <= knobs.react) {
+        actions.push({ kind: 'shields', raised: wantShields });
       }
       if (rng() > knobs.react) return actions;
       if (state.asteroids.length > 0) {
         const urgent = [...state.asteroids].sort((a, b) => a.impactIn - b.impactIn)[0];
         if (state.targetId !== urgent.id) actions.push({ kind: 'target', id: urgent.id });
         const chargeGate = Math.max(state.fireCost, knobs.fireAtCharge);
-        if (state.charge >= chargeGate && state.targetId !== null) actions.push({ kind: 'fire' });
+        // Don't bother firing while the phaser is on cooldown.
+        const ready = (state.fireReadyIn ?? 0) <= 0;
+        if (ready && state.charge >= chargeGate && state.targetId !== null) actions.push({ kind: 'fire' });
       }
       return actions;
     },
