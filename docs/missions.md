@@ -9,14 +9,19 @@ authoring and testing guide.
 
 A `MissionDef` has three layers:
 
-1. **Identity & narrative** — `id`, `name`, `briefing`, `arrivalName`.
-   These are what players see in the lobby, the ship's log, HUD labels, and
-   the debrief.
+1. **Identity & narrative** — `id`, `name`, `briefing`, `arrivalName`, and an
+   optional `destination` (`{ kind: 'station' | 'planet', color }`) that the
+   main screen grows on the horizon as progress climbs. These are what players
+   see in the lobby, the ship's log, HUD labels, the viewscreen, and the
+   debrief.
 2. **Ambient pacing** — ranges (`spawnEvery`, `impactIn`, `asteroidDmg`,
-   `breakerEvery`), caps (`maxAsteroids`), and scales (`driftScale`,
-   `speedScale`, `parTime`). This is the mission's baseline pressure; per-seat
-   difficulty multipliers stack on top of it, preserving the design pillar
-   that player difficulty is a parameter, not a code path.
+   `breakerEvery`, optional `gateEvery`), caps (`maxAsteroids`), and scales
+   (`driftScale`, `speedScale`, `parTime`). This is the mission's baseline
+   pressure; per-seat difficulty multipliers stack on top of it, preserving the
+   design pillar that player difficulty is a parameter, not a code path.
+   `asteroidDmg` is a *base* magnitude — each rock rolls a size (0.6-1.6) and
+   speed (0.75-1.35) that scale its actual damage and closing rate, and ~1/3 of
+   ambient spawns arrive as a 2-3 rock cluster.
 3. **Scripted events** — an authored timeline of one-shot set pieces that fire
    at a mission-time or progress mark:
    - `log` — narrative beat in the ship's log + station toasts
@@ -70,9 +75,17 @@ in the debrief and consumed raw by the mission lab:
   hit landed — the mission's damage rhythm)
 - **Station load**: `avgAlignment` (helm pressure), `powerChanges` and
   `breakerDowntime` (engineering pressure), `shotsFired` /
-  `asteroidsSpawned` (weapons pressure), `shieldUptime`, `evasivesUsed`
+  `asteroidsSpawned` (weapons pressure), `shieldUptime`, `gatesPassed` /
+  `gatesMissed` (nav gates), `warpsUsed`, `pulsesUsed`
 - **Crew context**: which seats were human and their difficulty settings —
   without this, aggregate numbers are uninterpretable.
+
+Note: **sensors** (a fourth engineering-powered system) gate when a contact
+becomes *targetable* on the weapons scope — low sensor power means contacts
+resolve late and the shoot window shrinks. Nav **gates** sit off the direct
+course (a bearing the helm must swing onto). **Emergency Warp** (helm) clears
+all threats but scatters the ship's systems. See the wave-2 section of
+`docs/pre-playtest-improvements-recap.md` for the full mechanics.
 
 ## The mission lab (`npm run lab`)
 
@@ -88,10 +101,11 @@ Crew baselines:
 - **auto** — no humans at all; the engine's auto-assist plays
 
 Reading the output: a well-tuned mission should be comfortably winnable for
-`skilled`, survivable-but-scarred for `novice`, and rough for `auto`. If
-`auto` cruises through undamaged, the mission poses no real threat and human
-players are decorative — see `docs/design/08-mission-balance-baseline.md` for
-the current state of exactly that problem.
+`skilled`, survivable-but-scarred for `novice`, and rough for `auto`. As of the
+pre-playtest pass this is the actual shape (auto now fails 30-50% on hard
+missions) — `docs/design/08-mission-balance-baseline.md` records the earlier
+"everything's too easy" problem and how it was closed;
+`docs/console-complexity-analysis.md` has the current numbers.
 
 Raw per-run records (debrief + full telemetry) land in `reports/`
 (gitignored); the printed table is the summary view.

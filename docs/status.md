@@ -1,90 +1,95 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-10 (after weapons-scope deploy). This file is the
-"resume here" note — read it with `CLAUDE.md` at the start of a session.
+Last updated: 2026-07-11 (after the two-wave pre-playtest pass — deployed and
+merged to `main`). This file is the "resume here" note — read it with
+`CLAUDE.md` at the start of a session.
 
 ## Where things stand
 
 - **Live deployment**: https://bridge-crew.zekoff.workers.dev (Cloudflare
-  Workers + one Durable Object per room; includes the mission framework,
-  the balance-tuning pass, and the Phaser weapons radar scope). LAN mode
-  (`npm start`) works from the same codebase.
-- **What's playable**: 3-station bridge crew (helm/engineering/weapons) +
-  main screen with QR join + screen-less commander; 3 authored missions +
-  3 procedural presets selectable from the main-screen lobby; per-seat
-  difficulty; reconnection; non-binary scored debriefs with telemetry.
-  Weapons now has a **Phaser-rendered radar scope** (contacts converge on
-  the ship, tap a blip to target) in place of the old button list — the
-  first Phaser station widget, hybrid pattern per `docs/design/06`.
-- **All green**: `npm run typecheck`, `npm run smoke` (Node transport),
-  `npm run smoke:cf` (Workers transport), `npm run lab` (balance sweep).
-- **Cloud acceptance criteria verified live** (not just `wrangler dev`):
-  TLS, Host-derived join URL, two concurrent rooms with no cross-talk —
-  see `scripts/verify-cloud.mjs` (re-runnable anytime against prod).
-- **A room is live right now for the owner to test from**: code `Z3W3` at
-  https://bridge-crew.zekoff.workers.dev/?room=Z3W3 (may have expired by
-  the next session — rooms are deleted after 10 minutes idle).
+  Workers + one Durable Object per room). LAN mode (`npm start`) runs the same
+  codebase. Both waves below are deployed and merged to `main`.
+- **What's playable**: a 3-station bridge crew (helm / engineering / weapons) +
+  main screen with QR join + a screen-less commander; 3 authored missions + 3
+  procedural presets from the main-screen lobby; per-seat difficulty;
+  reconnection; non-binary scored debriefs with telemetry. On top of that, a
+  large **pre-playtest pass** (2026-07-10/11) added, across two waves:
+  - **Usability**: corner/capped/overlay-suppressed toasts, semantic
+    hull/shield/charge colors shared across stations, score-colored debrief
+    grade, non-clipping HUD log, neutral healthy-breaker styling.
+  - **Main-screen viewscreen**: forward starfield that banks with the helm's
+    course, an approaching themed destination (station for Supply Run), a
+    captain's per-station + system tactical HUD, screen shake, and
+    laser/explosion/warp/pulse effects.
+  - **Flight model**: engine power buys speed **and** maneuverability; high
+    throttle makes turns sluggish; nav gates sit off-course (a bearing the helm
+    must swing onto).
+  - **Weapons**: laser is a recharge meter (no fixed cooldown/battery — refire
+    speed set by weapon power); shields are a managed resource (recharge only
+    while lowered, bleed while raised).
+  - **Engineering**: a fourth powered system — **sensors** — that gates when a
+    contact becomes targetable on the weapons scope; plus a long-cooldown
+    **sensor pulse** that reveals every contact at once.
+  - **Helm**: **Emergency Warp** (replaces Evasive) — jumps clear of all
+    threats but scatters the ship (all power unallocated, every breaker tripped,
+    shields/laser dropped, thrown off course, throttle cut, minor hull damage).
+  - **Asteroids**: occasional 2-3 rock clusters; per-rock size & speed drive
+    damage and closing rate; main screen shows small/dim/unlabeled contacts
+    until sensors resolve them, then name + speed + color-coded threat (the
+    scope shows only the name, so the captain calls priorities).
+  - **Audio**: procedural Web-Audio music bed (builds with progress) + ship-wide
+    and console-local SFX. No asset files. Fails silently if unsupported.
+- **All green**: `npm run typecheck`, `npm run smoke` (Node), `npm run smoke:cf`
+  (Workers), `npm run lab` (balance sweep). Every page loads error-free
+  (verified by headless-browser driving via the `/run` skill).
 
 ## The decision queue (things deliberately left open)
 
-1. **Human playtest — the actual near-term goal.** Owner wants the game
-   playtest-ready with other humans within 1-2 more sessions. Never
-   playtested with real people since the mission framework landed. The
-   owner is testing the new weapons scope live right now (as of this
-   snapshot) via the room above — **check with the owner for their
-   findings before doing more UI/UX work.**
-2. **Balance tuning — paused, not finished.** First pass applied (weaker
-   auto-weapons, denser scripted bursts, shield cap/regen cut 100->35 +
-   half regen rate) — hull damage lands for the first time, but arrival is
-   still 100% everywhere, short of the doc's target (auto: 30-60%
-   arrival). Explicitly paused by the owner ("enough with balance for
-   now") to prioritize the Phaser scope. Ranked next steps still in
-   `docs/design/08-mission-balance-baseline.md`.
-3. **More Phaser station work — wanted, but explicitly scoped small for
-   now.** Owner said: "i don't plan to go far down this road before
-   playtesting. this is part of the vertical slice, though." Read as: the
-   weapons scope was the point (communicates vision to a playtester,
-   validates the technical approach), not a mandate to do helm/engineering
-   next. Wait for playtest feedback before deciding whether/where to keep
-   going with Phaser — `docs/design/06` has the assessment (helm's
-   attitude/drift display is the next-best candidate if pursued).
+1. **Human playtest — the actual near-term goal, still not done.** The whole
+   pre-playtest pass exists to make the game communicate its vision and hold up
+   with real people. Nothing here has been played by humans yet. This is next.
+2. **Audio is code-verified, not heard.** Headless has no sound output; the
+   mix/feel needs a listen on a real device — check levels and taste.
+3. **Balance of the new mechanics is first-pass.** Tunable constants are all at
+   the top of `src/engine/game.ts` (laser recharge, warp cost, turn authority,
+   sensor range/pulse, gate window/bearing, speed-risk, burst chance) and the
+   default power split (2/1/2/1) in `start()`. The old 100%-auto-arrival gap
+   (`docs/design/08`) is now **closed** as a side effect (auto 50-70% on hard
+   missions). Per-console load, interplay, and ranked balance proposals live in
+   `docs/console-complexity-analysis.md`.
 4. **Later-stage items, still parked**: persistence for users/crews/ships
-   (`docs/design/07`, invariants already held in code), mission-in-progress
-   DO storage survival across deploys (`docs/cloud-migration.md` Phase 3,
-   accepted gap — a deploy currently resets any in-progress game to a
-   fresh lobby).
+   (`docs/design/07`, invariants already held in code), mission-in-progress DO
+   storage survival across deploys (`docs/cloud-migration.md` Phase 3 — a deploy
+   still resets an in-progress game to a fresh lobby).
 
 ## Operational notes
 
-- Cloudflare credentials: exported in `~/.bashrc` on this machine
-  (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN, "Edit Cloudflare Workers"
-  template token). Deploy = `npm run deploy`. The token was pasted into a
-  Claude session transcript once — rotate it in the dashboard if that
-  transcript is ever shared.
-- Right after a deploy, the very first room created can hit a not-yet-swapped
-  DO instance and behave stale — transient, self-resolving; create a new room.
-- The owner's dev machines: System76 Lemur Pro (primary) and a Chromebook
-  with Crostini (use `localhost`, not the 100.115.x.x container IP; the
-  Host-derived join URLs fixed the QR code there).
-- Workflow so far: Claude implements + verifies (smokes must pass, and for
-  UI changes this session also drove a real headless browser against a
-  real running mission — see `weapons-scope` commit), owner explicitly
-  says "commit and push" / "deploy" at milestones.
-- **`chromium-cli` is not installed in this environment.** For UI
-  verification this session fell back to a small ad-hoc Playwright driver
-  (installed via `npx playwright install chromium --with-deps`, then
-  imported straight from the npx cache path since the package isn't a
-  project dependency). Worth a `/run-skill-generator` pass if browser-driven
-  verification becomes routine.
+- Cloudflare credentials: exported in `~/.bashrc` on this machine. Deploy =
+  `npm run deploy` (only when the owner says so). Right after a deploy, the very
+  first room created can hit a not-yet-swapped DO and behave stale — transient,
+  self-resolving; create a new room.
+- Browser-driven UI verification is a skill: `.claude/skills/run/` (invoke
+  `/run`). Playwright is a devDependency; the Chromium binary is a one-time
+  `npx playwright install chromium` per machine. There's no `chromium-cli`
+  wrapper — the skill writes a one-off `.mjs` driver run from the repo root.
+- The owner's dev machines: System76 Lemur Pro (primary) and a Chromebook with
+  Crostini (use `localhost`, not the container IP).
+- Workflow: Claude implements + verifies (smokes/lab must pass, and UI changes
+  are driven against a real headless browser); the owner explicitly says
+  "commit and push" / "deploy" / "merge" at milestones.
 
 ## Doc map
 
 - `CLAUDE.md` — commands, architecture short version, extension rules
-- `docs/architecture.md` — implemented architecture, rewritten 2026-07-10
-  for the actual dual-transport / mission-as-data layout
-- `docs/cloud-migration.md` — dual-transport design, phases (0-2 done, 3
-  parked)
+- `docs/architecture.md` — implemented dual-transport / mission-as-data layout
+- `docs/cloud-migration.md` — dual-transport design, phases (0-2 done, 3 parked)
 - `docs/missions.md` — mission authoring/testing guide
 - `docs/design/00-overview.md` — index of all design docs (01-08)
-- `docs/design/06-phaser-stations.md` — Phaser station UI plan (weapons
-  scope now built; helm next-best candidate if pursued further)
+- `docs/design/06-phaser-stations.md` — Phaser station plan (weapons scope built)
+- `docs/design/08-mission-balance-baseline.md` — the *original* baseline; now
+  superseded — see below
+- `docs/pre-playtest-improvements-recap.md` — full changelog of the two-wave
+  pre-playtest pass (wave 1 + wave 2)
+- `docs/console-complexity-analysis.md` — current per-console load, interplay
+  map, and balance proposals
+- `docs/playtest-visual-notes.md` — the visual audit that kicked off the pass

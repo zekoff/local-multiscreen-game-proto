@@ -61,9 +61,13 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   sockets, and tick. **Same wire protocol as the Node transport** — protocol
   changes must land in both, or clients break on one of them.
 - `public/` — zero-build static clients served by both transports.
-  `js/net.js` (reconnecting WS client), `js/station.js` (shared shell), one
-  HTML page per station, `mainscreen.html`/`js/mainscreen.js` (canvas
-  viewscreen + client-side QR from `js/vendor/qrcode-generator.mjs`).
+  `js/net.js` (reconnecting WS client), `js/station.js` (shared shell +
+  meter/grade helpers), one HTML page per station, `mainscreen.html`/
+  `js/mainscreen.js` (canvas viewscreen: starfield, destination, gates,
+  asteroids, laser/explosion/warp effects, captain HUD + client-side QR from
+  `js/vendor/qrcode-generator.mjs`). `js/audio.js` is a procedural Web-Audio
+  music+SFX module (no asset files); `js/weapons-scope.js` is the Phaser radar
+  scope mounted via `js/phaser-station.js`.
 - Rooms are fully independent by design — no cross-room state, ever. That
   invariant is what lets Durable Objects scale rooms horizontally.
 
@@ -71,7 +75,11 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
 
 - Adding a mechanic means touching all three of: `action()` (input),
   `tick()` (simulation), and `serialize()` (client visibility) in
-  `src/game.ts` — clients can only render what `serialize()` exposes.
+  `src/engine/game.ts` — clients can only render what `serialize()` exposes.
+- One-shot events (laser fire, explosions, impacts, gate/warp/pulse) go
+  through the transient `fx` stream: push an `Effect` during a tick; both
+  transports include it in the broadcast and call `clearFx()` after. It drives
+  the main-screen effects and the procedural audio (`public/js/audio.js`).
 - Actions are validated per seat; never let one station's client mutate
   another station's controls.
 - Per-role difficulty must stay a *parameter* (multiplier), not a separate

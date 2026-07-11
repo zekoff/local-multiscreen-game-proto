@@ -137,7 +137,6 @@ interface SeatState {
 export interface Telemetry {
   asteroidsSpawned: number;
   shotsFired: number;
-  evasivesUsed: number;
   powerChanges: number;
   breakerDowntime: number; // system-seconds spent tripped
   shieldUptime: number;    // seconds with shields raised
@@ -896,7 +895,6 @@ function freshTelemetry(): Telemetry {
   return {
     asteroidsSpawned: 0,
     shotsFired: 0,
-    evasivesUsed: 0,
     powerChanges: 0,
     breakerDowntime: 0,
     shieldUptime: 0,
