@@ -25,6 +25,10 @@
       <div class="cap-row" id="cap-helm"><span class="cap-name">HELM</span><span class="cap-val"></span></div>
       <div class="cap-row" id="cap-eng"><span class="cap-name">ENG</span><span class="cap-val"></span></div>
       <div class="cap-row" id="cap-wep"><span class="cap-name">WEP</span><span class="cap-val"></span></div>
+      <!-- Captain's situational rows: what's inbound and where the next ring
+           is — the information a caller needs to actually call plays. -->
+      <div class="cap-row" id="cap-threat"><span class="cap-name">THR</span><span class="cap-val"></span></div>
+      <div class="cap-row" id="cap-nav"><span class="cap-name">NAV</span><span class="cap-val"></span></div>
     </div>
 
     <!-- Sim-debug overlay (shown only when the run was launched with debug on) -->
@@ -103,6 +107,13 @@
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:30rem"></p>
     <div class="stats-grid" id="debrief-stats"></div>
+    <!-- Crew performance: the per-console telemetry, so the debrief talk can
+         be about what each station actually did (orders vs outcomes). -->
+    <div class="label" style="margin-top:0.8rem;">Crew Performance</div>
+    <div class="stats-grid" id="debrief-crew"></div>
+    <!-- The full captain's log, written out for review. -->
+    <div class="label" style="margin-top:0.8rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 18vh; width: min(34rem, 90vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 

@@ -247,6 +247,7 @@ export interface Debrief {
   missionId: string;
   missionName: string;
   shipName: string;       // crew-chosen ship name ('' if unnamed) — career-history fiction
+  log: { t: number; text: string }[]; // the full captain's log, for debrief review
   seed: number;           // (missionId, seed) reproduces the run's randomness
   stats: {
     time: number;
@@ -320,6 +321,7 @@ export class Game {
   private ionStormUntil = 0;   // while active, sensor range is halved (engineering pressure)
   private debrisUntil = 0;     // while active, running hot scrapes the hull (helm pressure)
   private debrisTickTimer = 0; // paces the scrape feedback (fx/log) while in debris
+  private fullLog: { t: number; text: string }[] = []; // complete captain's log (debrief review)
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -466,6 +468,7 @@ export class Game {
     this.telSamples = 0;
     this.chargeFullTime = 0;
     this.log = [];
+    this.fullLog = [];
     this.killTimes = [];
     this.damageWindow = [];
     this.narratedHalfway = false;
@@ -1154,6 +1157,7 @@ export class Game {
       missionId: m.id,
       missionName: m.name,
       shipName: this.shipName,
+      log: [...this.fullLog],
       seed: this.runSeed,
       stats: {
         time: Math.round(this.missionTime),
@@ -1188,6 +1192,10 @@ export class Game {
   private event(text: string, toast = true) {
     this.log.push({ t: Math.round(this.missionTime), text });
     if (this.log.length > 10) this.log.shift();
+    // Full captain's log for the debrief review (the live `log` is a rolling
+    // 10-line window; this keeps the whole story, sanely capped).
+    this.fullLog.push({ t: Math.round(this.missionTime), text });
+    if (this.fullLog.length > 250) this.fullLog.shift();
     if (toast) this.onEvent(text);
   }
 

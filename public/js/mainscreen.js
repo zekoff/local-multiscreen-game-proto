@@ -130,6 +130,20 @@ const net = initStation({
         <div class="label">Impacts taken</div><div>${s.impacts}</div>
         <div class="label">Nav gates cleared</div><div>${s.gatesPassed}/${s.gatesPassed + s.gatesMissed}</div>
         <div class="label">Breakers tripped</div><div>${s.breakersTripped}</div>`;
+      // Crew performance: per-console telemetry so the table talk can be
+      // about what each station did, not just the ship total.
+      const pc = state.debrief.telemetry?.perConsole;
+      if (pc) {
+        const pctf = (x) => `${Math.round((x || 0) * 100)}%`;
+        document.getElementById('debrief-crew').innerHTML = `
+          <div class="label">Helm — rings / on course</div><div>${pctf(pc.helm.gatePassRate)} · ${pctf(pc.helm.onCoursePct)}</div>
+          <div class="label">Weapons — hits / acquire</div><div>${pctf(pc.weapons.hitRate)} · ${(pc.weapons.avgAcquireLatency || 0).toFixed(1)}s</div>
+          <div class="label">Engineering — power used / downtime</div><div>${pctf(pc.engineering.avgPowerUtil)} · ${Math.round(pc.engineering.breakerDowntime || 0)}s</div>
+          <div class="label">Crew coordination</div><div>${pctf(pc.captain.coordinationScore)}</div>`;
+      }
+      // The full captain's log, written out for review.
+      const dl = document.getElementById('debrief-log');
+      dl.innerHTML = (state.debrief.log || []).map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
     }
   },
 });
@@ -156,6 +170,25 @@ function updateCaptainHud(state) {
   const laser = state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
   setCapRow('cap-wep', `${sh} · ${laser}`,
     (state.shields.raised && state.shields.strength < 25) ? 'warn' : '');
+  // THREAT row: the closest inbound rocks by time-to-impact, a converge
+  // warning when several arrive together, and any active environmental
+  // hazard — the "what do I call next" line.
+  const inbound = [...state.asteroids].sort((a, b) => a.impactIn - b.impactIn);
+  const soon = inbound.filter((a) => a.impactIn <= 15).length;
+  const parts = inbound.slice(0, 3).map((a) => `${a.targetable ? a.label : '??'} ${Math.ceil(a.impactIn)}s`);
+  let thr = parts.length ? parts.join(' · ') : 'clear';
+  if (soon >= 2) thr = `${soon} CONVERGE ≤15s · ${thr}`;
+  if (state.ionStormIn > 0) thr += ` · ION STORM ${Math.ceil(state.ionStormIn)}s`;
+  if (state.debrisIn > 0) thr += ` · DEBRIS ${Math.ceil(state.debrisIn)}s`;
+  setCapRow('cap-threat', thr,
+    (inbound[0] && inbound[0].impactIn <= 6) || soon >= 2 ? 'alert'
+      : inbound.length > 0 || state.debrisIn > 0 || state.ionStormIn > 0 ? 'warn' : '');
+  // NAV row: the next slipstream ring with its bearing and countdown.
+  const gates = state.gates || [];
+  const ring = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
+  setCapRow('cap-nav',
+    ring ? `${ring.label} · ${ring.bearing > 0 ? 'STBD' : 'PORT'} ${Math.abs(ring.bearing)}° · ${Math.ceil(ring.reachIn)}s` : 'no ring',
+    ring && ring.reachIn <= 5 ? 'warn' : '');
 }
 function setCapRow(id, text, cls) {
   const row = document.getElementById(id);
