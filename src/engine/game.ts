@@ -1307,8 +1307,14 @@ export class Game {
     // fast rock hits hardest (but big = easy to spot early; fast = short window).
     const size = kind === 'pod'
       ? range(this.rng, { min: 0.7, max: 1.0 })   // pods read as small, tidy blips
-      : range(this.rng, { min: 0.6, max: 1.6 });
-    const speed = range(this.rng, { min: 0.75, max: 1.35 });
+      // Rocks skew small (snapshot-able ≤1.3) with an occasional genuinely LARGE
+      // one (~15%) that shrugs off a snapshot — the captain's "big one, full
+      // shot" call. Judicious snapshotting is smart; pumped weapons + full shots
+      // still clear everything.
+      : range(this.rng, { min: 0.55, max: 1.5 });
+    // Wider speed tiers: SLOW rocks crawl in (a strategic amount of time to call
+    // and respond — less frantic power juggling), FAST ones bear down hard.
+    const speed = range(this.rng, { min: 0.6, max: 1.5 });
     const baseDmg = range(this.rng, dmg);
     const dealt = kind === 'rock'
       ? Math.max(3, Math.round(baseDmg * (0.65 + 0.35 * size) * (0.7 + 0.3 * speed)))
