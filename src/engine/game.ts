@@ -356,6 +356,7 @@ interface SeatState {
   name: string;
   connected: boolean;
   difficulty: Difficulty;
+  ready: boolean;          // GO-poll: this seat has signalled ready to launch (lobby only)
 }
 
 // Per-run measurements for mission balancing (see docs/missions.md). Summed
@@ -573,7 +574,7 @@ export class Game {
     this.seats = Object.fromEntries(
       ([...CREW_SEATS, 'main'] as SeatId[]).map((s) => [
         s,
-        { playerId: null, name: '', connected: false, difficulty: 'officer' as Difficulty },
+        { playerId: null, name: '', connected: false, difficulty: 'officer' as Difficulty, ready: false },
       ]),
     ) as Record<SeatId, SeatState>;
   }
@@ -601,8 +602,39 @@ export class Game {
     // Keep the seat reserved for this playerId so they can rejoin mid-mission.
     if (s.playerId === playerId) {
       s.connected = false;
+      s.ready = false;
       this.event(`${s.name} lost contact (${seat} on auto)`);
     }
+  }
+
+  // --- GO-poll / ready-room (lobby only) ---
+
+  // Toggle a crew seat's ready flag (its own player only, in the lobby).
+  setReady(seat: SeatId, playerId: string, on: boolean) {
+    if (this.phase !== 'lobby') return;
+    const s = this.seats[seat];
+    if (s.playerId !== playerId || !s.connected) return;
+    s.ready = on;
+    this.event(on ? `${s.name} reports ${seat} GO for launch.` : `${s.name} stands ${seat} down.`);
+  }
+
+  // Release a seat back to the room (its own player backing out to role-select).
+  // Only in the lobby; the seat is freed for anyone (name/ready cleared).
+  leaveSeat(seat: SeatId, playerId: string) {
+    if (this.phase !== 'lobby') return;
+    const s = this.seats[seat];
+    if (s.playerId !== playerId) return;
+    this.event(`${s.name || seat} released the ${seat} station.`);
+    s.playerId = null;
+    s.name = '';
+    s.connected = false;
+    s.ready = false;
+  }
+
+  // GO-poll result: every MANNED crew seat is ready (and there's at least one).
+  allReady(): boolean {
+    const manned = CREW_SEATS.filter((s) => this.seats[s].connected);
+    return manned.length > 0 && manned.every((s) => this.seats[s].ready);
   }
 
   // A crew seat runs on auto-assist whenever no human is connected to it.
@@ -745,6 +777,9 @@ export class Game {
   restartToLobby() {
     if (this.phase !== 'debrief') return;
     this.phase = 'lobby';
+    // Fresh GO-poll for the next run; seats + ship name persist so the crew can
+    // re-pick consoles from the ready room without re-entering everything.
+    for (const s of CREW_SEATS) this.seats[s].ready = false;
     this.event('Crew returned to ready room.');
   }
 
@@ -2171,6 +2206,7 @@ export class Game {
   serialize() {
     return {
       phase: this.phase,
+      allReady: this.allReady(), // GO-poll: every manned crew seat is ready
       mission: this.mission
         ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null }
         : null,
@@ -2274,6 +2310,7 @@ export class Game {
             connected: this.seats[s].connected,
             claimed: this.seats[s].playerId !== null,
             difficulty: this.seats[s].difficulty,
+            ready: this.seats[s].ready,
           },
         ]),
       ),

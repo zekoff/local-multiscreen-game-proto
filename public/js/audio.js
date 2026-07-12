@@ -593,6 +593,11 @@ export function createAudio() {
   function trigger() { blip(900, 700, 0.12, 0.03, 'square'); }
   // Weapons: tiny tick when a blip is tapped (the lock chime confirms later).
   function tapTick() { blip(660, 720, 0.08, 0.03); }
+  // Ready room: soft random console beep/boop — idle-bridge atmosphere.
+  function readyBeep() {
+    const f = 300 + Math.random() * 900;
+    blip(f, f * (0.8 + Math.random() * 0.5), 0.05, 0.05 + Math.random() * 0.06, Math.random() < 0.5 ? 'sine' : 'triangle');
+  }
 
   // Ion storm front: a crackling static wash (engineering + main screen).
   function ionStorm() {
@@ -774,6 +779,7 @@ export function createAudio() {
     warpEngage,
     trigger,
     tapTick,
+    readyBeep,
     ionStorm,
     debris,
     tractorBeam,

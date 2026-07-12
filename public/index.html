@@ -62,6 +62,37 @@
     const codeInput = document.getElementById('code-input');
     if (params.get('room')) codeInput.value = params.get('room').toUpperCase();
 
+    // Grey out crew consoles already taken in the room (main/supervisor are
+    // non-exclusive, never disabled). Polls the room-info endpoint so the list
+    // stays fresh as crew join. Labels a taken console with its occupant.
+    const CREW_LABELS = { helm: 'Helm', engineering: 'Engineering', weapons: 'Weapons', crewchief: 'Crew Chief' };
+    async function refreshSeats() {
+      const code = codeInput.value.trim().toUpperCase();
+      const setAll = (disabled) => {
+        for (const s of Object.keys(CREW_LABELS)) {
+          const btn = document.querySelector(`button[data-seat="${s}"]`);
+          if (btn) { btn.disabled = false; btn.textContent = CREW_LABELS[s]; }
+        }
+      };
+      if (code.length !== 4) { setAll(false); return; }
+      try {
+        const res = await fetch(`/api/room-info?code=${code}`);
+        if (!res.ok) { setAll(false); return; }
+        const info = await res.json();
+        for (const s of Object.keys(CREW_LABELS)) {
+          const btn = document.querySelector(`button[data-seat="${s}"]`);
+          if (!btn) continue;
+          const taken = info.claimed && info.claimed[s];
+          btn.disabled = !!taken;
+          const who = info.names && info.names[s];
+          btn.textContent = taken ? `${CREW_LABELS[s]} — taken${who ? ` (${who})` : ''}` : CREW_LABELS[s];
+        }
+      } catch { /* landing page works offline of a room; ignore */ }
+    }
+    codeInput.addEventListener('input', refreshSeats);
+    refreshSeats();
+    setInterval(refreshSeats, 3000);
+
     // Host: create a room, then open the main screen for it.
     document.getElementById('create-btn').addEventListener('click', async () => {
       const res = await fetch('/api/rooms', { method: 'POST' });

@@ -69,7 +69,16 @@ export class RoomObject {
     // Existence/status probe (used by /api/room-info).
     if (url.pathname === '/status') {
       if (this.code === null) return new Response('no such room', { status: 404 });
-      return Response.json({ code: this.code, phase: this.game.phase, clients: this.clients.size });
+      // Include claimed crew seats + names so the landing page can grey out
+      // taken consoles (mirrors the Node transport's /api/room-info).
+      const seats = this.game.serialize().seats as Record<string, { claimed: boolean; name: string }>;
+      const claimed: Record<string, boolean> = {};
+      const names: Record<string, string> = {};
+      for (const s of ['helm', 'engineering', 'weapons', 'crewchief']) {
+        claimed[s] = !!seats[s]?.claimed;
+        names[s] = seats[s]?.name || '';
+      }
+      return Response.json({ code: this.code, phase: this.game.phase, clients: this.clients.size, claimed, names });
     }
 
     // WebSocket upgrade, forwarded here by the Worker with ?room= routing.
@@ -172,6 +181,10 @@ export class RoomObject {
       }
     } else if (msg.type === 'restart') {
       this.game.restartToLobby();
+    } else if (msg.type === 'setReady' && typeof msg.on === 'boolean') {
+      if (!VIEW_SEATS.includes(m.seat)) this.game.setReady(m.seat, m.playerId, msg.on);
+    } else if (msg.type === 'leaveSeat') {
+      if (!VIEW_SEATS.includes(m.seat)) this.game.leaveSeat(m.seat, m.playerId);
     } else if (msg.type === 'action' && msg.action && typeof msg.action.kind === 'string') {
       this.game.action(m.seat, msg.action);
     }

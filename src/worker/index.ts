@@ -46,8 +46,9 @@ export default {
       if (!CODE_RE.test(code)) return Response.json({ error: 'no such room' }, { status: 404 });
       const res = await roomStub(env, code).fetch('https://room/status');
       if (!res.ok) return Response.json({ error: 'no such room' }, { status: 404 });
+      const status = await res.json() as { phase?: string; claimed?: Record<string, boolean>; names?: Record<string, string> };
       const origin = env.PUBLIC_URL?.replace(/\/+$/, '') || url.origin;
-      return Response.json({ code, joinUrl: `${origin}/?room=${code}` });
+      return Response.json({ code, joinUrl: `${origin}/?room=${code}`, phase: status.phase, claimed: status.claimed, names: status.names });
     }
 
     // WebSocket upgrade: the room code rides in the URL so routing happens

@@ -9,8 +9,12 @@
 // their render so the bridge has atmosphere while the crew waits to launch.
 export function readyRoomAmbient(audio, phase) {
   if (!audio) return;
-  if (phase === 'lobby') audio.startAmbient?.();
-  else audio.stopAmbient?.();
+  if (phase === 'lobby') {
+    audio.startAmbient?.();
+    // Soft, occasional beeps/boops so the bridge feels alive while the crew
+    // stands by (called every ~250ms snapshot, so keep the chance low).
+    if (Math.random() < 0.02) audio.readyBeep?.();
+  } else audio.stopAmbient?.();
 }
 
 export function playFxAudio(fx, audio, kinds) {

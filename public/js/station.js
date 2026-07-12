@@ -33,6 +33,25 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const debriefOverlay = document.getElementById('debrief-overlay');
   const toasts = document.getElementById('toasts');
 
+  const CREW = ['helm', 'engineering', 'weapons', 'crewchief'];
+  const isCrew = CREW.includes(seat);
+  let latest = null; // most recent snapshot (for the GO-poll launch-button logic)
+
+  // Crew consoles get a "Leave Console" button (back out to role-select, freeing
+  // the seat) added to the lobby overlay — the main screen keeps its own lobby.
+  let leaveBtn = null;
+  if (isCrew && lobbyOverlay) {
+    leaveBtn = document.createElement('button');
+    leaveBtn.id = 'leave-btn';
+    leaveBtn.textContent = '← Leave Console';
+    leaveBtn.style.marginTop = '0.6rem';
+    lobbyOverlay.appendChild(leaveBtn);
+    leaveBtn.addEventListener('click', () => {
+      net.send({ type: 'leaveSeat' });
+      location.href = `/?room=${room}`; // back to the landing page, code prefilled
+    });
+  }
+
   let lastDebriefSeed = null; // populate the debrief log once per run (keeps scroll position)
   const MAX_TOASTS = 3; // keep the corner stack short; drop the oldest beyond this
   function toast(text) {
@@ -47,18 +66,36 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   }
 
   function renderPhase(state) {
+    latest = state;
     // Lobby: show a waiting overlay with a launch button.
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
-      const crewed = ['helm', 'engineering', 'weapons', 'crewchief']
+      // Roster with GO-poll ticks: ✅ ready, ⏳ standing by, 🤖 auto (unmanned).
+      const crewed = CREW
         .map((s) => {
-          const seat = state.seats[s];
-          // Show non-default engagement setting so the party can see who's on Cruise.
-          const diff = seat.difficulty && seat.difficulty !== 'officer' ? ` (${seat.difficulty})` : '';
-          return `${s}: ${seat.connected ? seat.name : 'auto'}${diff}`;
+          const seatS = state.seats[s];
+          const diff = seatS.difficulty && seatS.difficulty !== 'officer' ? ` (${seatS.difficulty})` : '';
+          const tick = seatS.connected ? (seatS.ready ? '✅' : '⏳') : '🤖';
+          return `${tick} ${s}: ${seatS.connected ? seatS.name : 'auto'}${diff}`;
         })
         .join(' · ');
-      document.getElementById('lobby-crew').textContent = crewed;
+      document.getElementById('lobby-crew').innerHTML = crewed;
+      // Crew consoles run the GO-poll; the button reports GO until everyone is
+      // ready, then becomes the launch. The main screen keeps its own launch.
+      const launchBtn = document.getElementById('launch-btn');
+      const title = lobbyOverlay.querySelector('h2');
+      if (isCrew && launchBtn) {
+        lobbyOverlay.classList.add('checkout');
+        if (title) title.textContent = 'Systems Checkout';
+        const myReady = state.seats[seat]?.ready;
+        if (state.allReady) {
+          launchBtn.textContent = '🚀 LAUNCH MISSION';
+          launchBtn.classList.add('primary');
+        } else {
+          launchBtn.textContent = myReady ? '✓ GO — stand down' : 'Report GO';
+          launchBtn.classList.toggle('primary', !myReady);
+        }
+      }
     }
     // Debrief: show outcome summary.
     debriefOverlay.classList.toggle('hidden', state.phase !== 'debrief');
@@ -113,9 +150,16 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     },
   });
 
-  // Anyone can launch from the lobby; the debrief return button too.
-  document.getElementById('launch-btn').addEventListener('click', () =>
-    net.send(startPayload ? startPayload() : { type: 'start' }));
+  // Launch button. For a crew console it runs the GO-poll: toggle this seat's
+  // ready until everyone is GO, then it launches. The main screen (no crew seat)
+  // always launches directly with its mission-select payload.
+  document.getElementById('launch-btn').addEventListener('click', () => {
+    if (isCrew && latest && latest.phase === 'lobby' && !latest.allReady) {
+      net.send({ type: 'setReady', on: !latest.seats[seat]?.ready });
+    } else {
+      net.send(startPayload ? startPayload() : { type: 'start' });
+    }
+  });
   document.getElementById('return-btn').addEventListener('click', () => net.send({ type: 'restart' }));
 
   net.connect();

@@ -223,6 +223,15 @@ select {
   justify-content: safe center;
 }
 .overlay.hidden { display: none; }
+/* Systems-checkout ready room: semi-transparent + top-pinned so the crew can
+   SEE their console previewing behind the GO-poll before launch. */
+.overlay.checkout {
+  background: rgba(10, 14, 23, 0.82);
+  justify-content: flex-start;
+  gap: 0.7rem;
+  padding-top: 2.2rem;
+}
+.overlay.checkout #lobby-crew { font-size: 0.95rem; line-height: 1.7; }
 /* Console tutorial: sits ABOVE lobby/debrief so it's readable while waiting. */
 .help-overlay { z-index: 30; }
 .help-diagram { color: var(--accent); }
