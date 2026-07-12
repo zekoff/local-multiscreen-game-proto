@@ -14,6 +14,45 @@ own lifecycle).
 
 ---
 
+## Implementation status (Crew Chief expansion pass, 2026-07-12)
+
+Built on branch `expansion-crew-chief` (see
+`docs/design/12-expansion-session-debrief.md` for full detail). This branch is
+exploratory — committed/pushed/deployed but **not merged**.
+
+**DONE this pass:**
+- **P#1 Tractor beam** → built into the new **Crew Chief** console; pulls into a
+  cargo hold (not tow-behind), with cargo mass → maneuverability (P#23's idea).
+- **P#3 Contact types** → generic `kind` (rock/pod/mineral/ghost) + a
+  detection-vs-identification sensor split; mission-scriptable via `spawnContact`.
+- **P#4 Competing objectives** → `spawnDivert` + a `cinematic` soft-pause state.
+- **P#5 Solar flare / EMP** → `solarFlare` event + the blackout (`viewImpaired`).
+- **P#6 Hull fires / damage control** → the Crew Chief **crew-assignment board**
+  (crew tokens → emergencies); the lite-RTS was assessed and rejected for
+  pillar-3 fit in favor of the allocation board.
+- **P#10 Charge governor** → STANDARD/SNAPSHOT at a **40%** threshold.
+- **P#11 Power presets** → single save/load preset on Engineering.
+- **P#12 Helm course-hold**.
+- **P#18 Blackout Approach** — mission built.
+- **P#21 Deadline at Kepler** — mission built (real failure clock, `expired`
+  outcome); replaces the old `kepler-rescue`.
+- **P#23 Salvage Claim** — mission built (timed `salvaged` outcome + cargo mass).
+- **P#24 The Lifeboat Run** — the new flagship mission.
+- **P#27 First Contact** — thematics-amplified mission.
+- New procedural objectives added (rescue-tow, salvage, obstacle, emergency).
+
+**Owner's flagged NEXT batch (NOT done this pass, deliberately):**
+- **P#2 Enemy raider** — the biggest single swing; its own pass.
+- **P#7 Gravity well / current lanes** — topology risk/reward.
+- **P#16 Scope contact tagging** — the silent-coordination partner of P#3.
+
+**Not yet picked up:** P#8 (mine chains), P#9 (hull leech), P#13 (captain order
+chips), P#14 (firing-solution quality), P#15 (coolant overdrive), P#17 (The Long
+Dark), P#19 (Gauntlet Regatta), P#20 (Running on Fumes), P#22 (Shakedown Pt 2),
+P#25 (Toll of the Reef, needs P#2), P#26 (Silent Running).
+
+---
+
 ## A. New challenges and their counters
 
 **1. Tractor beam — salvage & rescue** (owner seed) [WEAPONS×ENG×HELM] Medium

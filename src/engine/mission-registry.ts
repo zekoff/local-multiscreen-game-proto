@@ -9,10 +9,21 @@ import { randomSeed } from './rng.js';
 import { firstFlight } from './missions/first-flight.js';
 import { supplyRun } from './missions/supply-run.js';
 import { minedCorridor } from './missions/mined-corridor.js';
-import { keplerRescue } from './missions/kepler-rescue.js';
+import { lifeboatRun } from './missions/lifeboat-run.js';
+import { deadlineKepler } from './missions/deadline-kepler.js';
+import { salvageClaim } from './missions/salvage-claim.js';
+import { blackoutApproach } from './missions/blackout-approach.js';
+import { firstContact } from './missions/first-contact.js';
 
+// Mission audit (Crew Chief expansion pass): kepler-rescue was REMOVED —
+// deadline-kepler (P#21) is the same station/premise with a real failure clock
+// and rescue mechanics, so the old version was no longer unique. mined-corridor
+// was KEPT — it's still the only pure-combat debris gauntlet (the new missions
+// are salvage/rescue/first-contact, a different shape).
 // first-flight leads the list: it's the intro mission a new crew should see first.
-const AUTHORED: MissionDef[] = [firstFlight, supplyRun, minedCorridor, keplerRescue];
+const AUTHORED: MissionDef[] = [
+  firstFlight, supplyRun, lifeboatRun, deadlineKepler, salvageClaim, blackoutApproach, firstContact, minedCorridor,
+];
 
 // Generator presets exposed in the lobby. Intensity is fixed per preset for
 // now; a fuller mission-setup UI can expose GenParams directly later.

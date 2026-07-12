@@ -34,6 +34,15 @@
     <!-- Sim-debug overlay (shown only when the run was launched with debug on) -->
     <div id="debug-panel" class="hidden"></div>
 
+    <!-- Cinematic overlay: a dialogue beat (P#4). The sim is frozen server-side
+         while this shows; the crew reads it and the captain narrates. -->
+    <div id="cinematic-overlay" class="cinematic hidden">
+      <div class="cinematic-box">
+        <h2 id="cinematic-title"></h2>
+        <div id="cinematic-lines"></div>
+      </div>
+    </div>
+
     <!-- Ship status HUD along the bottom, visible to the whole room -->
     <div class="hud">
       <div class="cell">
@@ -90,6 +99,9 @@
         </label>
         <label style="flex:1; color:var(--dim); font-size:0.8rem;">Weapons
           <select id="diff-weapons" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Crew Chief
+          <select id="diff-crewchief" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
         </label>
       </div>
       <!-- Mission speed: a real-time multiplier on the whole simulation.

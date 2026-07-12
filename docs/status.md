@@ -1,15 +1,35 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-11 (three passes on branch `worktree-revision-pass` —
-post-playtest revision, follow-up implementation, polish + expansion menu —
-**merged to `main` via PR #6** and deployed to Cloudflare). This file is the
-"resume here" note — read it with `CLAUDE.md` at the start of a session.
+Last updated: 2026-07-12 — the **Crew Chief expansion pass** on branch
+`expansion-crew-chief` (a large batch from `docs/design/11`, driven by Playtest
+2). Committed / pushed / **deployed but NOT merged** — an exploratory swing the
+owner may keep or discard. Full detail:
+`docs/design/12-expansion-session-debrief.md`. This file is the "resume here"
+note — read it with `CLAUDE.md` at the start of a session.
 
-**Next up (owner decisions):** (1) pick proposals from
-`docs/design/11-gameplay-expansion-menu.md` to define the next feature arc;
-(2) playtest the revision with a real crew (first-flight with newcomers, CPU
-feel, optimistic UI, new obstacles); (3) FINALLY listen to the audio on a
-real device — five tracks + all SFX are still only code-verified.
+**Next up (owner decisions):** (1) **playtest the expansion branch** with a real
+crew — especially the new Crew Chief console (tractor/cargo, damage control),
+the don't-shoot / rescue loop, and whether Engineering feels overloaded by the
+5th power channel; (2) decide whether to **merge** the branch; (3) pick a
+**framing** from `docs/design/13-thematic-enhancements.md` (scrappy vs elite vs
+frontier vs campaign-arc); (4) the owner's flagged **next** proposals are P#2
+(raider), P#7 (gravity well), P#16 (contact tagging).
+
+## Latest: Crew Chief expansion pass (2026-07-12, branch `expansion-crew-chief`)
+
+New **4th crew console (Crew Chief)** with tractor beam + cargo hold and a
+damage-control crew board; **typed contacts** (rock/pod/mineral/ghost) with a
+detection-vs-identification sensor split (the don't-shoot ritual); a **cinematic
+soft-pause** state for competing objectives; **five new missions** (flagship
+`lifeboat-run`, plus `first-contact`, `salvage-claim`, `deadline-kepler`,
+`blackout-approach`); topology (steer-around obstacles + off-screen chevron);
+solar flare + blackout; weapons **governor** (snapshot@40%), power **presets**,
+helm **course-hold**; deflector-screen rename; acquired-only threat HUD. New
+**portable-widget architecture** (`public/js/widget.js`) — Crew Chief is built on
+it. Power pool 7→8 (tractor is the 5th system). Two new non-binary outcomes
+(`salvaged`, `expired`). All green: typecheck, 27 checks, smoke, smoke:cf, lab
+(no stalls, floor holds), headless page-boot. `kepler-rescue` removed
+(superseded by `deadline-kepler`). Watch items + assumptions in doc 12.
 
 ## Latest: polish + expansion-menu pass (2026-07-11, same branch/PR #6)
 

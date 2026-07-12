@@ -37,10 +37,15 @@
   <div id="toasts"></div>
 
   <main>
-    <!-- Power budget: 6 units across three systems, max 4 each -->
+    <!-- Power budget: 8 units across five systems, max 4 each -->
     <div class="panel">
       <h2>Power Distribution <span id="power-free" style="color:var(--accent)"></span></h2>
       <div id="power-systems"></div>
+      <!-- Power presets (P#11): stash the current split and re-apply in one tap. -->
+      <div class="row" style="margin-top:0.6rem;">
+        <button id="preset-save">Save Preset</button>
+        <button id="preset-load">Load Preset</button>
+      </div>
     </div>
 
     <!-- Sensors: detection range + one-shot active pulse -->
@@ -87,7 +92,7 @@
   <script type="module">
     import { initStation, setHealthBar, mountHelp } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
-    import { playFxAudio } from '/js/fx-audio.js';
+    import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
 
     // Console-local audio: engineering hears its own breakers (trip / arm / tap
@@ -96,14 +101,16 @@
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
     const ENGINEERING_FX = new Set(['sensorContact', 'sensorPulse', 'ionStorm']);
-    const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false };
+    const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false, tractor: false };
     // Per-system restore-gesture progress (armed via the slider, then 3 taps).
     const RESTORE_TAPS = 3;
-    const restore = { engines: null, shields: null, weapons: null, sensors: null };
+    const restore = { engines: null, shields: null, weapons: null, sensors: null, tractor: null };
 
-    const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors'];
+    // Five powered systems now — tractor is engineering-powered but operated by
+    // the Crew Chief (like sensors are operated at the weapons scope).
+    const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors', 'tractor'];
     const POWER_MAX = 4;
-    const POWER_TOTAL = 7; // keep in sync with POWER_TOTAL in src/engine/game.ts
+    const POWER_TOTAL = 8; // keep in sync with POWER_TOTAL in src/engine/game.ts
 
     // Build the power rows and breaker widgets once; render() updates state.
     const systemsEl = document.getElementById('power-systems');
@@ -146,8 +153,8 @@
     for (const sys of SYSTEMS) resetGesture(sys);
 
     const intents = createIntents();
-    let lastPower = { engines: 0, shields: 0, weapons: 0, sensors: 0 }; // latest authoritative allocation
-    let lastBreakers = { engines: false, shields: false, weapons: false, sensors: false };
+    let lastPower = { engines: 0, shields: 0, weapons: 0, sensors: 0, tractor: 0 }; // latest authoritative allocation
+    let lastBreakers = { engines: false, shields: false, weapons: false, sensors: false, tractor: false };
 
     // The commanded allocation: optimistic intent if pending, else the snapshot.
     const shownPower = (sys) => intents.get(`power-${sys}`) ?? lastPower[sys];
@@ -172,6 +179,7 @@
       render(state) {
         // Engineering-local SFX from the fx stream (sensor contacts + pulse).
         playFxAudio(state.fx, audio, ENGINEERING_FX);
+        readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
         lastPower = state.power;
         for (const sys of SYSTEMS) {
           lastBreakers[sys] = !!state.breakers[sys];
@@ -212,33 +220,39 @@
     // Sensor pulse button.
     document.getElementById('pulse-btn').addEventListener('click', () => net.action({ kind: 'sensorPulse' }));
 
+    // Power presets (P#11): one saved split, save + load. Load applies on the
+    // next snapshot (the server re-allocates), so no optimistic paint needed.
+    document.getElementById('preset-save').addEventListener('click', () => { net.action({ kind: 'savePreset' }); audio.powerClick(); });
+    document.getElementById('preset-load').addEventListener('click', () => { net.action({ kind: 'loadPreset' }); audio.powerClick(); });
+
     // Console tutorial (the "?" in the header): a schematic of the controls
     // plus plain-language notes, readable from the lobby before launch.
     mountHelp({
       title: 'Engineering — you run the power grid',
       diagram: `
-        <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="9">
-          <!-- power pips: four systems, moveable points -->
-          ${['ENGINES', 'SHIELDS', 'WEAPONS', 'SENSORS'].map((n, row) => `
-            <text x="14" y="${22 + row * 26}" fill="#7d8db3">${n}</text>
-            ${[0, 1, 2, 3].map((i) => `<rect x="${68 + i * 20}" y="${12 + row * 26}" width="15" height="15" rx="3"
-                fill="${i < [3, 1, 2, 1][row] ? 'currentColor' : 'none'}" stroke="${i < [3, 1, 2, 1][row] ? 'currentColor' : '#39456b'}"/>`).join('')}
-            <text x="158" y="${24 + row * 26}" fill="#7d8db3">−  +</text>`).join('')}
-          <text x="100" y="124" fill="#7d8db3" text-anchor="middle">7 POINTS — MOVE THEM WHERE NEEDED</text>
+        <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="8.5">
+          <!-- power pips: five systems, moveable points -->
+          ${['ENGINES', 'SHIELDS', 'WEAPONS', 'SENSORS', 'TRACTOR'].map((n, row) => `
+            <text x="14" y="${18 + row * 20}" fill="#7d8db3">${n}</text>
+            ${[0, 1, 2, 3].map((i) => `<rect x="${70 + i * 18}" y="${9 + row * 20}" width="13" height="13" rx="3"
+                fill="${i < [3, 1, 2, 1, 1][row] ? 'currentColor' : 'none'}" stroke="${i < [3, 1, 2, 1, 1][row] ? 'currentColor' : '#39456b'}"/>`).join('')}
+            <text x="150" y="${19 + row * 20}" fill="#7d8db3">−  +</text>`).join('')}
+          <text x="96" y="126" fill="#7d8db3" text-anchor="middle">8 POINTS — MOVE THEM WHERE NEEDED</text>
           <!-- breaker restore: slide then tap -->
-          <rect x="204" y="16" width="122" height="84" rx="8" fill="none" stroke="#39456b"/>
-          <text x="265" y="32" fill="#ff6f6f" text-anchor="middle">BREAKER TRIPPED</text>
-          <rect x="216" y="42" width="98" height="10" rx="5" fill="none" stroke="#39456b"/>
-          <circle cx="300" cy="47" r="9" fill="currentColor"/>
-          <text x="265" y="68" fill="#7d8db3" text-anchor="middle">1. SLIDE →</text>
-          <text x="265" y="84" fill="#7d8db3" text-anchor="middle">2. TAP ×3 = FIXED</text>
+          <rect x="200" y="12" width="128" height="80" rx="8" fill="none" stroke="#39456b"/>
+          <text x="264" y="28" fill="#ff6f6f" text-anchor="middle">BREAKER TRIPPED</text>
+          <rect x="212" y="38" width="104" height="10" rx="5" fill="none" stroke="#39456b"/>
+          <circle cx="302" cy="43" r="9" fill="currentColor"/>
+          <text x="264" y="64" fill="#7d8db3" text-anchor="middle">1. SLIDE →</text>
+          <text x="264" y="80" fill="#7d8db3" text-anchor="middle">2. TAP ×3 = FIXED</text>
         </svg>`,
       lines: [
-        'You have <b>7 power points</b> across four systems (max 4 each). Moving them is your main job.',
-        '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate. <b>Sensors</b> = how early rocks can be targeted. <b>Shields</b> = shield recharge rate (only while lowered).',
+        'You have <b>8 power points</b> across five systems (max 4 each). Moving them is your main job.',
+        '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate. <b>Sensors</b> = how early contacts are detected AND identified. <b>Shields</b> = shield recharge (only while lowered). <b>Tractor</b> = the Crew Chief\'s beam — feed it when they\'re towing.',
         '<b>Breakers</b> trip when rocks hit the hull. A tripped system runs at half power until you slide to arm and tap 3 times.',
-        'The <b>Sensor Pulse</b> reveals every contact at once and cuts through ion storms (long cooldown).',
-        'Give power to whoever needs it right now — listen to helm and weapons.',
+        'The <b>Sensor Pulse</b> reveals AND identifies every contact at once and cuts through ion storms (long cooldown).',
+        '<b>Save/Load Preset</b> stashes a power split (e.g. a combat setup) so you can snap back to it in one tap.',
+        'Give power to whoever needs it right now — listen to helm, weapons, and the chief.',
       ],
     });
 

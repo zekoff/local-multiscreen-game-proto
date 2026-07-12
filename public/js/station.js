@@ -50,7 +50,7 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     // Lobby: show a waiting overlay with a launch button.
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
-      const crewed = ['helm', 'engineering', 'weapons']
+      const crewed = ['helm', 'engineering', 'weapons', 'crewchief']
         .map((s) => {
           const seat = state.seats[s];
           // Show non-default difficulty so the party can see who's on chill/intense.

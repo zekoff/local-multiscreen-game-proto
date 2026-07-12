@@ -8,7 +8,7 @@ import { Game, type SeatId, type Difficulty } from '../engine/game';
 import { missionCatalog, resolveMissionStart } from '../engine/mission-registry';
 import type { Env } from './env';
 
-const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main', 'supervisor'];
+const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief', 'main', 'supervisor'];
 // View-only seats: non-exclusive, don't reserve a game seat (main screen, sim supervisor).
 const VIEW_SEATS: SeatId[] = ['main', 'supervisor'];
 

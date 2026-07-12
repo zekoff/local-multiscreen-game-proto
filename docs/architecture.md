@@ -340,3 +340,62 @@ than only `wrangler dev`.
   and register it in `mission-registry.ts` (see `docs/missions.md`), or add a
   new generator preset. Re-run `npm run lab` and compare against the
   baseline before calling it tuned.
+
+## Portable widgets (Crew Chief expansion pass)
+
+A standing architecture principle established in the Crew Chief pass: **console
+functions are self-contained, portable widgets** so a station's controls can be
+re-arranged between consoles later without re-architecting.
+
+- A widget is defined with `defineWidget({ id, label?, hint?, mount(ctx) })`
+  (`public/js/widget.js`); `mount(ctx)` builds its own DOM into `ctx.root` and
+  returns `{ render(state), destroy?() }`. It owns its DOM (no shared element
+  ids), its render slice, its event wiring, its edge-state, and its own
+  travelling `label`. `mountWidgets(container, [...], ctx)` lays a list of
+  widgets into a page and returns a host with `render(state)`.
+- `ctx = { net, intents, audio, root, card, seat }`. A widget sends actions via
+  `net.action(...)` and opts into optimistic paint via the shared `intents`
+  store — exactly the same primitives the hand-written consoles use.
+- **Why this is portable:** the server broadcasts the *complete* serialized
+  state to every seat, so a display widget runs on any console with zero server
+  change. An *action* widget additionally needs its host seat authorized for
+  its action kind in `game.ts` `action()` — that server-side seat gate is the
+  one coupling a widget carries with it. Relax it (allow two seats to send the
+  same kind) for true free rearrangement of an action widget.
+- **Reference:** `public/crewchief.html` is built entirely as a layout list of
+  widgets (`public/js/widgets/crewchief.js` for tractor/cargo/damage-control,
+  `public/js/widgets/common.js` for the portable ship-vitals / power-grid
+  display widgets it shares). The existing helm/engineering/weapons pages were
+  intentionally left hand-wired this pass (migrate-lightly): the abstraction is
+  proven by the new console + the shared display widgets, and older widgets can
+  be ported incrementally.
+
+## Graphics approach (expanded for the Crew Chief pass)
+
+The viewscreen stays stylized and low-clutter (design pillar), rendered on one
+2D canvas from the interpolated `latest` snapshot (`public/js/mainscreen.js`).
+New complexity is layered onto the existing draw pipeline rather than replacing
+it:
+
+- **Typed contacts.** Contacts carry two visibility fields. `kind` is the
+  SENSOR-resolved classification (`UNKNOWN` until identified) — the weapons
+  scope uses it. `visualKind` reveals the true kind once a contact is within
+  `VISUAL_RANGE` seconds (proximity, not sensors) — the MAIN SCREEN uses it, so
+  the captain can spot a rescue pod's blinking beacon out the window before the
+  scope classifies it. That split is the visual half of the don't-shoot
+  cooperation. Rocks render as tumbling grey polygons (unchanged); pods as green
+  beacons with a DO-NOT-FIRE call; minerals as amber angular chunks.
+- **Tractor beam** draws a shimmering line from the ship's bow to the latched
+  contact with a reel-progress ring (`drawTractorBeam`).
+- **Topology.** Large obstacles (`drawObstacles`) loom at a bearing like an
+  inverted gate — red and pulsing while the ship is still aligned *into* one.
+  When the destination or an open divert slides off the edge (hard turn / warp),
+  an edge chevron points back to it (`drawOffscreenChevron`) — the crew's
+  fallback to get back on track.
+- **Blackout.** `viewImpaired` washes the world to near-black with faint static
+  ("fly on sensors"); the reticle + HUD stay legible on top.
+- **Cinematic.** A DOM overlay (`#cinematic-overlay`) composites dialogue over
+  the frozen scene while the sim is soft-paused server-side (`state.cinematic`).
+- **Colour discipline:** kinds have fixed semantic colours reused across the
+  scope and the viewscreen (pod green, mineral amber, ghost faint purple, rock
+  grey/threat-red). Threat is still communicated by rings, not body colour.

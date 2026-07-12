@@ -117,3 +117,13 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   so phones that drop Wi-Fi can resume their seat mid-mission.
 - Clients are intentionally build-free ES modules; don't introduce a bundler
   for the prototype without a deliberate decision.
+- **Console functions are portable widgets.** New console controls should be
+  authored as self-contained widgets via `public/js/widget.js`
+  (`defineWidget`/`mountWidgets`): each owns its DOM, render slice, event wiring,
+  edge-state, and its own travelling label. A console page is a *layout list* of
+  widgets. This is what lets console functions be re-arranged between stations
+  later without re-architecting — a display widget moves for free (the server
+  broadcasts full state to every seat), an action widget moves once its target
+  seat is authorized for that action kind in `game.ts` `action()`. See
+  `docs/architecture.md` (widget portability). Crew Chief (`crewchief.html`) is
+  built entirely this way as the reference.

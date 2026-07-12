@@ -22,6 +22,11 @@ const COLOR_DIM = 0x7d8db3;
 const COLOR_BAD = 0xff5c5c;
 const COLOR_TARGETED = 0xffffff;
 const COLOR_RING = 0x263353;
+// Identified-contact colors: a rescue pod reads green (do NOT shoot), salvage
+// amber, a sensor ghost faint purple. UNKNOWN contacts stay dim until resolved.
+const COLOR_POD = 0x4cd97b;
+const COLOR_MINERAL = 0xffb347;
+const COLOR_GHOST = 0x8a7ad0;
 
 export class WeaponsScopeScene extends Phaser.Scene {
   constructor() {
@@ -196,14 +201,25 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const urgent = a.impactIn <= URGENT_S;
     // Targeted if the server says so OR we optimistically locked it on tap.
     const targeted = a.id === this.latestState.targetId || a.id === this.optimisticTargetId;
-    const color = targeted ? COLOR_TARGETED : urgent ? COLOR_BAD : COLOR_DIM;
+    // Identified kind drives color so the gunner can tell a rescue pod (green,
+    // DON'T shoot) from a rock (red when urgent) at a glance — the sensor
+    // gameplay routed to the scope. UNKNOWN contacts stay dim until resolved.
+    const kind = a.identified ? a.kind : 'unknown';
+    const kindColor = kind === 'pod' ? COLOR_POD
+      : kind === 'mineral' ? COLOR_MINERAL
+      : kind === 'ghost' ? COLOR_GHOST
+      : kind === 'rock' ? (urgent ? COLOR_BAD : COLOR_ACCENT)
+      : (urgent ? COLOR_BAD : COLOR_DIM); // unknown
+    const color = targeted ? COLOR_TARGETED : kindColor;
     blip.dot.setFillStyle(color);
     blip.dot.setStrokeStyle(targeted ? 3 : 2, color);
     blip.halo.setFillStyle(color, targeted ? 0.22 : 0.12);
     blip.halo.setRadius(BLIP_RADIUS * (targeted ? 2.4 : 2) * (0.8 + 0.35 * (a.size ?? 1)));
     // Bigger rocks read as bigger blips (the captain's early-spot cue too).
     blip.dot.setRadius((targeted ? BLIP_RADIUS + 2 : BLIP_RADIUS) * (0.8 + 0.35 * (a.size ?? 1)));
-    blip.label.setText(a.label);
-    blip.label.setColor(urgent ? '#ff5c5c' : '#7d8db3');
+    // Label shows the name, plus a "POD"/"?" tag once the kind matters.
+    const tag = kind === 'pod' ? ' ⛑' : kind === 'mineral' ? ' ⛏' : kind === 'unknown' ? ' ?' : '';
+    blip.label.setText(a.label + tag);
+    blip.label.setColor(kind === 'pod' ? '#4cd97b' : urgent ? '#ff5c5c' : '#7d8db3');
   }
 }

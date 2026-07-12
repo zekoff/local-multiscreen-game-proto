@@ -64,13 +64,14 @@ function measureRecharge(game: Game, secs: number): number {
   return game.serialize().charge as number;
 }
 
-// --- 1. The 7-point pool is fully spent by the default split, engines lead ---
+// --- 1. The 8-point pool is fully spent by the default split, engines lead ---
 {
   const game = freshGame();
   const power = game.serialize().power as Record<SystemId, number>;
-  const total = power.engines + power.shields + power.weapons + power.sensors;
-  check('default power split spends the full 7-point pool', total === 7, `total=${total}`);
+  const total = power.engines + power.shields + power.weapons + power.sensors + power.tractor;
+  check('default power split spends the full 8-point pool', total === 8, `total=${total}`);
   check('default split leads with engines=3', power.engines === 3, `engines=${power.engines}`);
+  check('default split funds a resting tractor point', power.tractor === 1, `tractor=${power.tractor}`);
 }
 
 // --- 2. Recharge slope = LASER_CHARGE_RATE × weapons power (default 2 ⇒ 14/s) ---
@@ -189,19 +190,123 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
 // point: range shrinks under the contact and the lock must clear.
 {
   const game = freshGame() as any;
-  // Default sensors=1 -> range 10s. Hand-place a rock at 9.5s (targetable).
+  // Default sensors=1 -> detection range 10+2 = 12s. Hand-place a rock at 11.5s
+  // (targetable now, but only just — dropping a sensor point pulls range under it).
   game.asteroids.push({
-    id: 501, label: 'CHK-EDGE', impactIn: 9.5, dmg: 5, size: 1, speed: 1,
-    revealed: false, announced: true, bearing: 0,
+    id: 501, label: 'CHK-EDGE', kind: 'rock', impactIn: 11.5, dmg: 5, size: 1, speed: 1, mass: 0,
+    revealed: false, identified: true, announced: true, bearing: 0,
   });
   game.action('weapons', { kind: 'target', id: 501 });
-  check('edge contact locks at sensors=1 (range 10s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
-  // Drop sensors 1 -> 0: range 8s < 9.5s, the contact fades, lock must drop.
+  check('edge contact locks at sensors=1 (range 12s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
+  // Drop sensors 1 -> 0: range 10s < 11.5s, the contact fades, lock must drop.
   game.action('engineering', { kind: 'power', system: 'sensors', delta: -1 });
   game.tick(0.25);
   const after = game.serialize();
   check('lock clears when sensor range shrinks under the contact', after.targetId === null, `targetId=${after.targetId}`);
   check('faded contact is no longer targetable', after.asteroids.find((a: any) => a.id === 501)?.targetable === false, '');
+}
+
+// --- 9. Weapons governor (P#10): SNAPSHOT fires at 40% but only cracks small
+// contacts; a big rock shrugs it off (charge spent, contact survives). ---
+{
+  const game = freshGame() as any;
+  game.action('weapons', { kind: 'governor', mode: 'snapshot' });
+  game.charge = 45;
+  game.asteroids.push({ id: 610, label: 'SMALL', kind: 'rock', impactIn: 5, dmg: 5, size: 0.8, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 610 });
+  game.action('weapons', { kind: 'fire' });
+  check('snapshot at 40% destroys a small rock', !game.asteroids.some((a: any) => a.id === 610), 'small rock survived');
+
+  const g2 = freshGame() as any;
+  g2.action('weapons', { kind: 'governor', mode: 'snapshot' });
+  g2.charge = 45;
+  g2.asteroids.push({ id: 611, label: 'BIG', kind: 'rock', impactIn: 5, dmg: 5, size: 1.5, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  g2.action('weapons', { kind: 'target', id: 611 });
+  g2.action('weapons', { kind: 'fire' });
+  check('snapshot glances off a big rock (survives, charge spent)', g2.asteroids.some((a: any) => a.id === 611) && g2.charge === 0, `present=${g2.asteroids.some((a: any) => a.id === 611)} charge=${g2.charge}`);
+}
+
+// --- 10. Firing is blocked while the tractor beam is latched (shared emitter) ---
+{
+  const game = freshGame() as any;
+  game.charge = 100;
+  game.tractorLatched = true;
+  game.asteroids.push({ id: 620, label: 'ROCK', kind: 'rock', impactIn: 5, dmg: 5, size: 1, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 620 });
+  game.action('weapons', { kind: 'fire' });
+  check('cannot fire while tractor latched', game.asteroids.some((a: any) => a.id === 620) && game.charge === 100, `present=${game.asteroids.some((a: any) => a.id === 620)} charge=${game.charge}`);
+}
+
+// --- 11. Detection vs identification split: a pod detected at low sensor power
+// reads UNKNOWN; a pulse resolves it. ---
+{
+  const game = freshGame() as any;
+  // sensors=1: detection range 12s, ID range 5+3 = 8s. Place a pod at 10s:
+  // detected (blip) but NOT identified.
+  game.spawnContact('pod', { min: 10, max: 10 }, { min: 0, max: 0 });
+  game.tick(0.25);
+  const s1 = game.serialize();
+  const blip = s1.asteroids.find((a: any) => a.impactIn >= 9);
+  check('pod detected but UNKNOWN at low sensor power', !!blip && blip.targetable === true && blip.kind === 'unknown', `blip=${JSON.stringify(blip)}`);
+  game.action('engineering', { kind: 'sensorPulse' });
+  game.tick(0.25);
+  const s2 = game.serialize();
+  const idd = s2.asteroids.find((a: any) => a.id === blip.id);
+  check('sensor pulse identifies the pod', !!idd && idd.kind === 'pod' && idd.identified === true, `idd=${JSON.stringify(idd)}`);
+}
+
+// --- 12. Cargo mass drags maneuverability (P#23): a full hold turns less per nudge ---
+{
+  const light = freshGame() as any;
+  light.throttle = 0;
+  const a0 = light.serialize().alignment;
+  light.action('helm', { kind: 'nudge', dir: 1 });
+  const lightTurn = Math.abs((light.serialize().alignment as number) - a0);
+
+  const heavy = freshGame() as any;
+  heavy.throttle = 0;
+  for (let i = 0; i < heavy.serialize().holdCapacity; i++) heavy.cargo.push({ id: i + 1, label: 'ORE', kind: 'mineral', mass: 2, value: 2 });
+  const b0 = heavy.serialize().alignment;
+  heavy.action('helm', { kind: 'nudge', dir: 1 });
+  const heavyTurn = Math.abs((heavy.serialize().alignment as number) - b0);
+  check('a laden hold reduces turn authority', heavyTurn < lightTurn * 0.8, `light=${lightTurn.toFixed(2)} heavy=${heavyTurn.toFixed(2)}`);
+}
+
+// --- 13. Course-hold (P#12) eases a crewed helm back on course; manual steering releases it ---
+{
+  const game = freshGame() as any;
+  game.alignment = 40;
+  game.action('helm', { kind: 'hold', on: true });
+  tickFor(game, 4);
+  const held = Math.abs(game.serialize().alignment as number);
+  check('course-hold eases the ship back toward course', held < 40, `|align|=${held.toFixed(1)}`);
+  game.action('helm', { kind: 'nudge', dir: 1 });
+  check('manual steering disengages course-hold', game.serialize().courseHold === false, 'still held');
+}
+
+// --- 14. Shooting a rescue pod is penalized (the don't-shoot invariant) ---
+{
+  const game = freshGame() as any;
+  game.charge = 100;
+  game.asteroids.push({ id: 630, label: 'POD-42', kind: 'pod', impactIn: 5, dmg: 0, size: 0.8, speed: 1, mass: 1, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 630 });
+  game.action('weapons', { kind: 'fire' });
+  check('firing on a pod removes it and records the shame stat', !game.asteroids.some((a: any) => a.id === 630) && game.podsDestroyed === 1, `podsDestroyed=${game.podsDestroyed}`);
+}
+
+// --- 15. Tractor needs power: with tractor breaker-forced to 0 eff, no latch ---
+{
+  const game = freshGame() as any;
+  // Drop tractor to 0 power so eff('tractor') = 0 < TRACTOR_MIN_POWER.
+  game.action('engineering', { kind: 'power', system: 'tractor', delta: -1 });
+  game.spawnContact('mineral', { min: 6, max: 6 }, { min: 0, max: 0 });
+  game.action('engineering', { kind: 'sensorPulse' }); // identify it
+  game.tick(0.25);
+  const ore = game.serialize().asteroids.find((a: any) => a.kind === 'mineral');
+  game.alignment = ore ? ore.bearing : 0;
+  game.action('crewchief', { kind: 'tractorTarget', id: ore?.id });
+  game.action('crewchief', { kind: 'tractorLatch', on: true });
+  check('tractor will not latch without power', game.serialize().tractor.latched === false, 'latched with no power');
 }
 
 if (failures > 0) {

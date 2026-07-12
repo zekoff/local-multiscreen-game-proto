@@ -180,7 +180,7 @@ interface ClientMeta {
 }
 const meta = new Map<WebSocket, ClientMeta>();
 
-const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main', 'supervisor'];
+const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief', 'main', 'supervisor'];
 // View-only seats: not exclusive crew, don't reserve a game seat, multiple ok.
 const VIEW_SEATS: SeatId[] = ['main', 'supervisor'];
 

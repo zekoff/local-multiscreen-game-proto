@@ -30,14 +30,24 @@
       <div class="label">Charge</div>
       <div class="meter" style="margin-bottom:0.75rem"><div id="charge-bar"></div></div>
       <button class="primary" id="fire-btn" style="width:100%">FIRE</button>
+      <!-- Charge governor (P#10): STANDARD full-power shots vs SNAPSHOT quick
+           weak shots (fire at 40%, small contacts only) — your call on pacing. -->
+      <div class="label" style="margin:0.7rem 0 0.3rem;">Fire Mode</div>
+      <div class="row">
+        <button id="gov-standard" class="gov-btn">STANDARD</button>
+        <button id="gov-snapshot" class="gov-btn">SNAPSHOT</button>
+      </div>
+      <p class="label" id="gov-hint" style="margin-top:0.4rem;"></p>
     </div>
 
-    <!-- Shield control (regen rate depends on engineering's power allocation) -->
+    <!-- Deflector screen (renamed from "shields" so it stops colliding with
+         Engineering's "shield power" callout — playtest note). Regen rate
+         depends on engineering's shield power allocation. -->
     <div class="panel">
-      <h2>Shields</h2>
+      <h2>Deflector Screen</h2>
       <div class="label">Strength</div>
       <div class="meter" style="margin-bottom:0.75rem"><div id="shield-bar"></div></div>
-      <button id="shields-btn" style="width:100%">Raise Shields</button>
+      <button id="shields-btn" style="width:100%">Screen Up</button>
     </div>
   </main>
 
@@ -61,7 +71,7 @@
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
     import { createAudio } from '/js/audio.js';
-    import { playFxAudio } from '/js/fx-audio.js';
+    import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
 
     // Console-local audio: weapons hears its own laser, target lock, fire-ready
@@ -95,6 +105,7 @@
         // Weapons-local SFX: laser (from the fx stream), a lock chime when a new
         // contact is acquired, and a soft chime the moment the bank recharges.
         playFxAudio(state.fx, audio, WEAPONS_FX);
+        readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
         if (state.targetId !== null && state.targetId !== prevTargetId) audio.targetLock();
         prevTargetId = state.targetId;
         const chargeReady = state.charge >= 100;
@@ -107,29 +118,59 @@
         const acquirable = state.asteroids.filter((a) => a.targetable);
         scopeEmptyEl.style.display = acquirable.length === 0 ? '' : 'none';
         const targeted = state.asteroids.find((a) => a.id === state.targetId);
-        // Scope shows only the contact name — threat/speed data lives on the
-        // main screen so the captain can call priorities.
-        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label}` : '';
+        // Scope shows the contact name + its resolved kind (UNKNOWN until sensors
+        // identify it). Threat/speed data lives on the main screen so the captain
+        // can call priorities. A locked-on rescue POD reads as a HOLD-FIRE warning.
+        const kindLabel = targeted ? (targeted.identified ? targeted.kind.toUpperCase() : 'UNKNOWN') : '';
+        const isPod = targeted && targeted.identified && targeted.kind === 'pod';
+        scopeTargetEl.innerHTML = targeted
+          ? (isPod
+              ? `<b style="color:var(--bad)">${targeted.label}: RESCUE POD — HOLD FIRE</b>`
+              : `Targeting ${targeted.label} <span class="label">${kindLabel}</span>`)
+          : '';
 
-        // Charge is the laser recharge meter — green and firable only at full.
+        // Governor: SNAPSHOT fires at 40% (small contacts only), STANDARD at 100%.
+        const gov = intents.get('governor') ?? state.governor ?? 'standard';
+        const needed = gov === 'snapshot' ? 40 : 100;
+        document.getElementById('gov-standard').classList.toggle('on', gov === 'standard');
+        document.getElementById('gov-snapshot').classList.toggle('on', gov === 'snapshot');
+        document.getElementById('gov-hint').textContent = gov === 'snapshot'
+          ? 'Snapshot: fire at 40% — only cracks small rocks.'
+          : 'Standard: wait for full charge, full damage.';
+
+        // Charge is the laser recharge meter — firable at the governor threshold.
         // A just-tapped FIRE renders as drained immediately (optimistic flash)
         // even though the server won't echo the empty meter for a tick.
         const charge = intents.has('fired') ? 0 : state.charge;
-        const ready = charge >= 100;
+        const ready = charge >= needed;
         setChargeBar(document.getElementById('charge-bar'), charge, ready);
-        fireBtn.disabled = !ready || state.targetId === null;
-        fireBtn.textContent = !ready
-          ? 'CHARGING…'
-          : state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
-        // Shield toggle: prefer the just-commanded value (optimistic) over the
-        // snapshot; the audio edge detector stays on authoritative state.
+        // Never let the gunner fire on a confirmed pod (the don't-shoot invariant
+        // is enforced server-side too, but the UI refuses it and says why).
+        fireBtn.disabled = !ready || state.targetId === null || isPod;
+        fireBtn.textContent = isPod
+          ? 'HOLD FIRE — RESCUE POD'
+          : !ready
+            ? (gov === 'snapshot' ? 'CHARGING (40%)…' : 'CHARGING…')
+            : state.targetId === null ? 'FIRE (select a target)' : (gov === 'snapshot' ? 'SNAPSHOT' : 'FIRE');
+        // Deflector-screen toggle: prefer the just-commanded value (optimistic)
+        // over the snapshot; the audio edge detector stays on authoritative state.
         if (state.shields.raised && !prevShieldsRaised) audio.shieldUp();
         else if (!state.shields.raised && prevShieldsRaised) audio.shieldDown();
         prevShieldsRaised = state.shields.raised;
         shieldsRaised = intents.get('shields') ?? state.shields.raised;
-        shieldsBtn.textContent = shieldsRaised ? 'Lower Shields' : 'Raise Shields';
+        shieldsBtn.textContent = shieldsRaised ? 'Screen Down' : 'Screen Up';
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
       },
+    });
+
+    // Governor mode buttons.
+    document.getElementById('gov-standard').addEventListener('click', () => {
+      net.action({ kind: 'governor', mode: 'standard' });
+      intents.set('governor', 'standard', (s) => s.governor === 'standard');
+    });
+    document.getElementById('gov-snapshot').addEventListener('click', () => {
+      net.action({ kind: 'governor', mode: 'snapshot' });
+      intents.set('governor', 'snapshot', (s) => s.governor === 'snapshot');
     });
 
     fireBtn.addEventListener('click', () => {
@@ -178,9 +219,10 @@
         </svg>`,
       lines: [
         '<b>Tap a blip</b> on the scope to target it. Press <b>FIRE</b> when the charge bar is full. Shots always hit.',
-        'The laser <b>recharges faster with more weapon power</b> — ask Engineering when rocks are thick.',
-        'Rocks appear on the scope only when <b>sensors detect them</b> — more sensor power or a pulse means earlier targeting.',
-        '<b>Shields</b> block damage but drain while raised, and only recharge while lowered.',
+        '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% for a quick weak shot that only cracks small rocks — trade firepower for less waiting.',
+        'Contacts read <b>UNKNOWN</b> until sensors identify them. A <b>RESCUE POD</b> looks like a rock at range — <b>never fire on a pod</b> (the console will refuse it). Confirm before you shoot.',
+        'The laser <b>recharges faster with more weapon power</b>, and <b>can\'t fire while the Crew Chief has the tractor beam latched</b> (shared emitter).',
+        'The <b>deflector screen</b> blocks damage but drains while up, and only recharges while down.',
         'The <b>captain</b> reads speed and threat on the main screen and calls priorities.',
       ],
     });

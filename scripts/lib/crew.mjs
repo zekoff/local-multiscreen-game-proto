@@ -59,11 +59,12 @@ export async function runBotCrew(base, { timeoutMs = 90_000, missionId, seed } =
     connectSeat(base, code, 'helm', policyHandler('helm')),
     connectSeat(base, code, 'engineering', policyHandler('engineering')),
     connectSeat(base, code, 'weapons', policyHandler('weapons')),
+    connectSeat(base, code, 'crewchief', policyHandler('crewchief')),
     connectSeat(base, code, 'main', mainState),
   ]);
 
-  // Launch the mission from the main screen seat.
-  sockets[3].send(JSON.stringify({ type: 'start', missionId, seed }));
+  // Launch the mission from the main screen seat (now the 5th socket).
+  sockets[4].send(JSON.stringify({ type: 'start', missionId, seed }));
   console.log(`mission launched (${missionId ?? 'default'}), bots playing...`);
 
   try {

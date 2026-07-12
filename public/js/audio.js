@@ -615,6 +615,124 @@ export function createAudio() {
     setTimeout(() => blip(2200, 1100, 0.1, 0.05, 'square'), 180);
   }
 
+  // --- Crew Chief SFX ---
+  // Tractor latch: a rising electromagnetic hum that settles (the beam grabs).
+  function tractorBeam() {
+    if (!ctx) return;
+    const t = now();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(230, t + 0.5);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 900;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.16, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    o.connect(lp); lp.connect(g); g.connect(sfxGain);
+    o.start(t); o.stop(t + 0.72);
+  }
+  // Cargo stowed: a solid mechanical clunk into the hold.
+  function stow() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 380;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+    src.connect(lp); lp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 0.15);
+    blip(120, 70, 0.28, 0.12, 'square');
+  }
+  // Cargo jettisoned: an airy whoosh out the bay.
+  function jettison() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(500, t);
+    bp.frequency.exponentialRampToValueAtTime(1800, t + 0.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.22, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    src.connect(bp); bp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 0.48);
+  }
+  // Shipboard fire alarm: an urgent two-tone klaxon.
+  function fireAlarm() { blip(720, 520, 0.2, 0.18, 'square'); setTimeout(() => blip(720, 520, 0.2, 0.18, 'square'), 220); }
+  // Boarders alarm: a lower, harsher pulse.
+  function boardersAlarm() { blip(300, 300, 0.22, 0.22, 'sawtooth'); setTimeout(() => blip(240, 240, 0.2, 0.2, 'sawtooth'), 260); }
+  // Solar flare strike: a bright surge sweep (ship-wide, main screen).
+  function flare() {
+    if (!ctx) return;
+    const t = now();
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.setValueAtTime(400, t);
+    hp.frequency.exponentialRampToValueAtTime(3000, t + 0.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.3, t + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    src.connect(hp); hp.connect(g); g.connect(sfxGain);
+    src.start(t); src.stop(t + 0.95);
+    blip(300, 1400, 0.16, 0.5, 'sine');
+  }
+
+  // --- Ready-room ambient bed (lobby only) ---
+  // A soft looping drone with slow noise breath — the "waiting on the bridge"
+  // atmosphere before launch. Distinct from the mission music (main screen).
+  // Idempotent start/stop so a console can call it every snapshot by phase.
+  let ambientNodes = null;
+  function startAmbient() {
+    ensure();
+    if (!ctx || ambientNodes) return;
+    const t = now();
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.12, t + 1.5); // gentle fade-in
+    g.connect(sfxGain);
+    // A low two-voice drone.
+    const oscs = [];
+    for (const [f, type, lvl] of [[70, 'sine', 0.5], [105, 'triangle', 0.22]]) {
+      const o = ctx.createOscillator();
+      o.type = type; o.frequency.value = f;
+      const og = ctx.createGain(); og.gain.value = lvl;
+      o.connect(og); og.connect(g); o.start(t);
+      oscs.push(o);
+    }
+    // A slow band-swept noise "breath" under the drone.
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 0.5; bp.frequency.value = 500;
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.05;
+    const lfoG = ctx.createGain(); lfoG.gain.value = 300;
+    lfo.connect(lfoG); lfoG.connect(bp.frequency); lfo.start(t);
+    const ng = ctx.createGain(); ng.gain.value = 0.05;
+    src.connect(bp); bp.connect(ng); ng.connect(g); src.start(t);
+    ambientNodes = { g, oscs, src, lfo };
+  }
+  function stopAmbient() {
+    if (!ambientNodes) return;
+    const { g, oscs, src, lfo } = ambientNodes;
+    const t = now();
+    try {
+      g.gain.cancelScheduledValues(t);
+      g.gain.setTargetAtTime(0, t, 0.4);
+      for (const o of oscs) o.stop(t + 1.2);
+      src.stop(t + 1.2); lfo.stop(t + 1.2);
+    } catch { /* nodes already stopped */ }
+    ambientNodes = null;
+  }
+
   // Debris field entered: a low gravel rumble (helm + main screen).
   function debris() {
     if (!ctx) return;
@@ -658,6 +776,14 @@ export function createAudio() {
     tapTick,
     ionStorm,
     debris,
+    tractorBeam,
+    stow,
+    jettison,
+    fireAlarm,
+    boardersAlarm,
+    flare,
+    startAmbient,
+    stopAmbient,
     shieldUp: () => shield(true),
     shieldDown: () => shield(false),
   };

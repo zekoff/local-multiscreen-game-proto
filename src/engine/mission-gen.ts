@@ -109,6 +109,41 @@ export function generateMission(params: GenParams): MissionDef {
         { type: 'debrisField', seconds: int(rng, 15, 25) },
       ],
     }),
+    // --- New objective set pieces (Crew Chief pass): tow, salvage, obstacle,
+    // and a shipboard emergency. They fold the new mechanics into procedural
+    // runs so a generated mission can call for the tractor and damage control. ---
+    (mark, i) => ({
+      id: `gen-rescue-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Adrift escape pod on the scope — survivors aboard. Confirm and tow it in.' },
+        { type: 'spawnContact', kind: 'pod', impactIn: { min: 16, max: 22 } },
+        { type: 'spawnContact', kind: 'ghost' },
+      ],
+    }),
+    (mark, i) => ({
+      id: `gen-salvage-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Mineral chunks drifting in the lane — free salvage if the Crew Chief can grab it.' },
+        { type: 'spawnContact', kind: 'mineral', count: int(rng, 1, 2) },
+      ],
+    }),
+    (mark, i) => ({
+      id: `gen-obstacle-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Large derelict tumbling across the lane — steer clear of it.' },
+        { type: 'spawnObstacle', reachIn: { min: 10, max: 14 }, dmg: 24 },
+      ],
+    }),
+    (mark, i) => ({
+      id: `gen-emergency-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'startEmergency', kind: pick(rng, ['fire', 'boarders'] as const), severity: 1 },
+      ],
+    }),
   ];
   for (let i = 0; i < setPieces; i++) {
     events.push(pick(rng, pool)(marks[i], i));

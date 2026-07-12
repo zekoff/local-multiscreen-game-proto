@@ -8,7 +8,7 @@
 import { initStation, fmtTime, setHealthBar } from '/js/station.js';
 import { qrcode } from '/js/vendor/qrcode-generator.mjs';
 import { createAudio } from '/js/audio.js';
-import { playFxAudio } from '/js/fx-audio.js';
+import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
 import { mountDebugPanel } from '/js/debug-panel.js';
 
 // The music builds over this many seconds, then holds — so a 3-minute run
@@ -67,7 +67,7 @@ const net = initStation({
     // Per-seat difficulty overrides: only send seats the party explicitly
     // set — "crew default" leaves each player's own join-time choice alone.
     const difficulties = {};
-    for (const seat of ['helm', 'engineering', 'weapons']) {
+    for (const seat of ['helm', 'engineering', 'weapons', 'crewchief']) {
       const v = document.getElementById(`diff-${seat}`).value;
       if (v) difficulties[seat] = v;
     }
@@ -106,6 +106,8 @@ const net = initStation({
       audio.stopMusic();
       musicRunning = false;
     }
+    // Soft ready-room ambient bed while the crew is in the lobby (stops on launch).
+    readyRoomAmbient(audio, state.phase);
     // HUD bars (hull/shields colored by value; progress keeps the accent).
     setHealthBar(document.getElementById('hull-bar'), state.hull);
     setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
@@ -127,6 +129,13 @@ const net = initStation({
     logEl.innerHTML = state.log.map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`).join('');
     logEl.scrollTop = logEl.scrollHeight;
     updateCaptainHud(state);
+    updateCinematic(state);
+    // Dock-approach emphasis (playtest: the ending felt abrupt) — when the
+    // destination is close, highlight the distance/clock readout so the room
+    // feels the arrival building instead of it just ending.
+    const nearDock = state.phase === 'active' && state.progress >= 85;
+    document.getElementById('readout-val').classList.toggle('docking', nearDock);
+    document.getElementById('clock').classList.toggle('docking', nearDock);
     // Sim-debug overlay: only when this run was launched with debug enabled.
     // Pinned bottom-LEFT, riding just above the HUD strip so it never covers
     // the hull/shield cells.
@@ -197,41 +206,77 @@ function updateCaptainHud(state) {
   setCapRow('cap-helm',
     off < 12 ? `on course · thr ${state.throttle}%` : `${off.toFixed(0)}° ${dir} · thr ${state.throttle}%`,
     off > 45 ? 'alert' : off > 20 ? 'warn' : '');
-  const tripped = ['engines', 'shields', 'weapons', 'sensors'].filter((s) => state.breakers[s]);
+  const tripped = ['engines', 'shields', 'weapons', 'sensors', 'tractor'].filter((s) => state.breakers[s]);
   const p = state.power;
+  const towing = state.tractor && state.tractor.latched;
   setCapRow('cap-eng',
-    `pwr e${p.engines} s${p.shields} w${p.weapons} sen${p.sensors} · det ${Math.round(state.sensorRange)}s`
+    `pwr e${p.engines} s${p.shields} w${p.weapons} sen${p.sensors} t${p.tractor} · det ${Math.round(state.sensorRange)}s`
+      + (towing ? ' · TOWING' : '')
       + (tripped.length ? ` · ${tripped.join(',')} TRIPPED ×½` : ''), // tripped = running at half power
     tripped.length ? 'alert' : '');
-  const sh = state.shields.raised ? `shields ${state.shields.strength}%` : 'shields DOWN';
-  const laser = state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
+  const sh = state.shields.raised ? `screen ${state.shields.strength}%` : 'screen DOWN';
+  const laser = towing ? 'laser LOCKED (tow)' : state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
   setCapRow('cap-wep', `${sh} · ${laser}`,
     (state.shields.raised && state.shields.strength < 25) ? 'warn' : '');
-  // THREAT row: the closest inbound rocks by time-to-impact, a converge
-  // warning when several arrive together, and any active environmental
-  // hazard — the "what do I call next" line.
-  const inbound = [...state.asteroids].sort((a, b) => a.impactIn - b.impactIn);
+  // THREAT row: only contacts the crew has actually IDENTIFIED as rocks (the
+  // playtest ask — an all-seeing HUD undercuts the captain's job of spotting
+  // unresolved contacts out the window). Unknown/pod contacts are deliberately
+  // NOT listed here. Environmental hazards + shipboard emergencies + an open
+  // divert are the other "what to call next" items.
+  const inbound = state.asteroids
+    .filter((a) => a.identified && a.kind === 'rock')
+    .sort((a, b) => a.impactIn - b.impactIn);
   const soon = inbound.filter((a) => a.impactIn <= 15).length;
-  const parts = inbound.slice(0, 3).map((a) => `${a.targetable ? a.label : '??'} ${Math.ceil(a.impactIn)}s`);
+  const parts = inbound.slice(0, 3).map((a) => `${a.label} ${Math.ceil(a.impactIn)}s`);
   if (soon >= 2) parts.unshift(`${soon} CONVERGE ≤15s`);
+  const emg = state.emergencies || [];
+  const unmanned = emg.filter((e) => e.assigned === 0);
+  for (const e of emg.slice(0, 2)) parts.unshift(e.label.toUpperCase().replace(' — ', ' '));
+  if (state.flareIn !== null && state.flareIn !== undefined) parts.unshift(`FLARE ${Math.ceil(state.flareIn)}s — SAFE POSTURE`);
   if (state.ionStormIn > 0) parts.push(`ION STORM ${Math.ceil(state.ionStormIn)}s`);
   if (state.debrisIn > 0) parts.push(`DEBRIS ${Math.ceil(state.debrisIn)}s`);
+  if (state.viewImpaired) parts.push('VIEW DARK — SENSORS ONLY');
   const thr = parts.length ? parts.join(' · ') : 'clear';
   setCapRow('cap-threat', thr,
-    (inbound[0] && inbound[0].impactIn <= 6) || soon >= 2 ? 'alert'
-      : inbound.length > 0 || state.debrisIn > 0 || state.ionStormIn > 0 ? 'warn' : '');
-  // NAV row: the next slipstream ring with its bearing and countdown.
+    unmanned.length > 0 || state.flareIn > 0 || (inbound[0] && inbound[0].impactIn <= 6) || soon >= 2 ? 'alert'
+      : inbound.length > 0 || emg.length > 0 || state.debrisIn > 0 || state.ionStormIn > 0 || state.viewImpaired ? 'warn' : '');
+  // NAV row: an open divert or a looming obstacle takes precedence (both are
+  // steering decisions), else the next slipstream ring.
+  const obstacles = state.obstacles || [];
+  const ob = obstacles.length ? obstacles.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
+  const divert = state.divert && !state.divert.takenBy ? state.divert : null;
   const gates = state.gates || [];
   const ring = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
-  setCapRow('cap-nav',
-    ring ? `${ring.label} · ${ring.bearing > 0 ? 'STBD' : 'PORT'} ${Math.abs(ring.bearing)}° · ${Math.ceil(ring.reachIn)}s` : 'no ring',
-    ring && ring.reachIn <= 5 ? 'warn' : '');
+  if (ob) {
+    setCapRow('cap-nav', `OBSTACLE ${ob.label} · steer OFF ${ob.bearing > 0 ? 'STBD' : 'PORT'} · ${Math.ceil(ob.reachIn)}s`, 'alert');
+  } else if (divert) {
+    setCapRow('cap-nav', `DIVERT ${divert.name} · ${divert.bearing > 0 ? 'STBD' : 'PORT'} · ${Math.ceil(divert.endsIn)}s`, 'warn');
+  } else {
+    setCapRow('cap-nav',
+      ring ? `${ring.label} · ${ring.bearing > 0 ? 'STBD' : 'PORT'} ${Math.abs(ring.bearing)}° · ${Math.ceil(ring.reachIn)}s` : 'no ring',
+      ring && ring.reachIn <= 5 ? 'warn' : '');
+  }
 }
 function setCapRow(id, text, cls) {
   const row = document.getElementById(id);
   row.querySelector('.cap-val').textContent = text;
   row.classList.remove('warn', 'alert');
   if (cls) row.classList.add(cls);
+}
+
+// Cinematic dialogue overlay (P#4): the server freezes the sim while
+// state.cinematic is set; we show the title + lines over the frozen scene.
+let cinematicSig = null;
+function updateCinematic(state) {
+  const overlay = document.getElementById('cinematic-overlay');
+  const c = state.cinematic;
+  overlay.classList.toggle('hidden', !c);
+  if (!c) { cinematicSig = null; return; }
+  const sig = c.title + '|' + c.lines.join('|');
+  if (sig === cinematicSig) return; // avoid rebuilding every frame
+  cinematicSig = sig;
+  document.getElementById('cinematic-title').textContent = c.title;
+  document.getElementById('cinematic-lines').innerHTML = c.lines.map((l) => `<p>${l}</p>`).join('');
 }
 
 // --- One-shot effects (fx) from the server, plus screen shake / flashes ---
@@ -466,6 +511,7 @@ function frame(ts) {
   if (latest && latest.phase === 'active') {
     drawDestination(w, h, cx, dpr);
     drawGates(w, h, cy, dpr);
+    drawObstacles(w, h, cy, dpr);
     drawAsteroids(w, h, yawPx, dpr);
     drawLasers(w, h, yawPx, dt, dpr);
     drawExplosions(w, h, yawPx, dt, dpr);
@@ -474,6 +520,10 @@ function frame(ts) {
   }
 
   ctx.restore();
+
+  // Blackout wash (flare / permanent ion storm): drawn over the world, but the
+  // reticle + HUD stay legible on top so the crew can still fly on sensors.
+  if (latest && latest.phase === 'active' && latest.viewImpaired) drawBlackout(w, h, dpr);
 
   // Slipstream streaks are drawn in FIXED screen space, centered on where the
   // ship is pointed (the reticle), not on the destination's vanishing point.
@@ -485,6 +535,9 @@ function frame(ts) {
     drawReticle(w, h, dpr);
     drawShieldArc(w, h, dpr);
     drawHullVignette(w, h);
+    // Off-screen objective arrow (helm turned hard / diverted): the fallback to
+    // get back on track. Skip while fully blacked out (nothing to point at).
+    if (!latest.viewImpaired) drawOffscreenChevron(w, h, dpr);
   }
   drawGateFlash(w, h, dt);
   drawFlashes(w, h, dt);
@@ -709,6 +762,12 @@ function drawAsteroids(w, h, yawPx, dpr) {
     // threat is communicated by the ring, not the body.
     const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
     const r = (0.7 + Math.pow(growth, 1.25) * 26) * (0.7 + 0.5 * size) * dpr;
+    // visualKind reveals a pod/mineral up close (captain's naked eye) even while
+    // the weapons scope still reads UNKNOWN — the don't-shoot cooperation hook.
+    const vk = a.visualKind || 'unknown';
+    if (vk === 'pod') { drawPodContact(px, py, r, a, dpr); continue; }
+    if (vk === 'mineral') { drawMineralContact(px, py, r, a, dpr); continue; }
+    if ((a.kind === 'ghost')) { /* identified ghost is culled server-side; nothing to draw */ }
     const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.7);
     glow.addColorStop(0, `rgba(150, 140, 120, ${0.05 + growth * 0.15})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
@@ -731,8 +790,8 @@ function drawAsteroids(w, h, yawPx, dpr) {
     // Unresolved contacts stay an unlabeled grey rock — the captain must spot
     // them and call for more sensor power. Once targetable (target-acquired by
     // sensors), ring it in its threat colour; the currently-locked target gets a
-    // brighter, thicker ring.
-    if (!a.targetable) continue;
+    // brighter, thicker ring. Only rocks get a threat ring.
+    if (!a.targetable || (a.kind !== 'rock' && a.kind !== 'unknown')) continue;
     const spd = a.speed ?? 1;
     const speedTag = spd >= 1.15 ? 'FAST' : spd >= 0.95 ? 'MED' : 'SLOW';
     // Threat: fast or imminent = red, moderate = amber, else yellow-green.
@@ -749,6 +808,157 @@ function drawAsteroids(w, h, yawPx, dpr) {
     ctx.textAlign = 'center';
     ctx.fillText(`${a.label} ${speedTag} ${Math.ceil(a.impactIn)}s`, px, py - r - 8 * dpr);
   }
+  // A tractor beam from the ship to the latched contact (Crew Chief towing).
+  drawTractorBeam(w, h, dpr);
+}
+
+// A rescue pod, up close: a distinct green hull with a blinking beacon and a
+// clear DO-NOT-FIRE call — the captain's cue to stop Weapons before Sensors ID.
+function drawPodContact(px, py, r, a, dpr) {
+  const rr = Math.max(6 * dpr, r);
+  const blink = (Math.sin(performance.now() / 220) + 1) / 2;
+  const glow = ctx.createRadialGradient(px, py, rr * 0.2, px, py, rr * 2.1);
+  glow.addColorStop(0, `rgba(76, 217, 123, ${0.18 + blink * 0.22})`);
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(px, py, rr * 2.1, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#0e2016';
+  ctx.strokeStyle = '#4cd97b';
+  ctx.lineWidth = 2 * dpr;
+  ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // Beacon light.
+  ctx.fillStyle = `rgba(150, 255, 190, ${0.4 + blink * 0.6})`;
+  ctx.beginPath(); ctx.arc(px, py - rr * 0.5, Math.max(1.5, rr * 0.25), 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#4cd97b';
+  ctx.font = `${12 * dpr}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`${a.label} — RESCUE POD`, px, py - rr - 8 * dpr);
+  ctx.fillStyle = blink > 0.5 ? '#7dffb0' : '#4cd97b';
+  ctx.fillText('DO NOT FIRE', px, py + rr + 16 * dpr);
+}
+
+// Salvage mineral chunk, up close: an amber angular body — tractor bait.
+function drawMineralContact(px, py, r, a, dpr) {
+  const rr = Math.max(5 * dpr, r);
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate((performance.now() / 2600) % (Math.PI * 2));
+  ctx.fillStyle = 'rgba(255, 179, 71, 0.85)';
+  ctx.strokeStyle = '#ffcf87';
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    const m = 0.7 + ((a.id * (i + 3)) % 5) / 10;
+    const vx = Math.cos(ang) * rr * m, vy = Math.sin(ang) * rr * m;
+    i === 0 ? ctx.moveTo(vx, vy) : ctx.lineTo(vx, vy);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = '#ffb347';
+  ctx.font = `${11 * dpr}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`${a.label} — SALVAGE`, px, py - rr - 8 * dpr);
+}
+
+// The tractor beam: a shimmering line from the ship's bow to the held contact.
+function drawTractorBeam(w, h, dpr) {
+  const t = latest.tractor;
+  if (!t || !t.latched || t.targetId == null) return;
+  const held = (latest.asteroids || []).find((a) => a.id === t.targetId);
+  const p = held ? astPos.get(held.id) : null;
+  if (!p) return;
+  const ox = w / 2, oy = h * 0.98;
+  const pulse = (Math.sin(performance.now() / 120) + 1) / 2;
+  ctx.save();
+  ctx.strokeStyle = `rgba(120, 235, 220, ${0.25 + pulse * 0.35})`;
+  ctx.lineWidth = (5 + pulse * 5) * dpr;
+  ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(p.x, p.y); ctx.stroke();
+  ctx.strokeStyle = `rgba(200, 255, 250, ${0.4 + pulse * 0.4})`;
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(p.x, p.y); ctx.stroke();
+  // Reel progress ring around the contact.
+  ctx.strokeStyle = 'rgba(120, 235, 220, 0.9)';
+  ctx.lineWidth = 3 * dpr;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 16 * dpr, -Math.PI / 2, -Math.PI / 2 + (t.reel || 0) * Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
+// Large steer-around obstacles: a looming dark mass at its bearing offset. Red
+// and pulsing when the ship is still aligned INTO it (collision course).
+function drawObstacles(w, h, cy, dpr) {
+  const align = displayAlignment();
+  for (const ob of latest.obstacles || []) {
+    const t = Math.max(0, Math.min(1, 1 - ob.reachIn / 20));
+    const r = (24 + t * t * Math.min(w, h) * 0.9);
+    const cx = w / 2 + ((ob.bearing - align) / 100) * (w * 0.5);
+    const onCourseInto = Math.abs(align - ob.bearing) < (ob.clearWindow || 22);
+    const pulse = (Math.sin(performance.now() / 160) + 1) / 2;
+    const col = onCourseInto ? [255, 80, 80] : [150, 140, 130];
+    const a = onCourseInto ? 0.5 + pulse * 0.4 : 0.4 + t * 0.3;
+    const g = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
+    g.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${a})`);
+    g.addColorStop(0.7, `rgba(30,26,24,${0.85})`);
+    g.addColorStop(1, 'rgba(10,8,8,0.2)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = onCourseInto ? `rgba(255,90,90,${0.7 + pulse * 0.3})` : 'rgba(120,110,100,0.6)';
+    ctx.lineWidth = (2 + t * 2) * dpr;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = onCourseInto ? '#ff5c5c' : '#b7a99a';
+    ctx.font = `${12 * dpr}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(onCourseInto ? `${ob.label} — STEER CLEAR` : ob.label, cx, cy - r - 8 * dpr);
+  }
+}
+
+// Off-screen objective chevron: when the destination (or an open divert) slides
+// off the edge because the helm turned hard, an arrow on the screen edge points
+// back to it — the crew's fallback to get back on track.
+function drawOffscreenChevron(w, h, dpr) {
+  const align = displayAlignment();
+  const targets = [];
+  // Destination sits at bearing 0 (straight ahead); its screen x follows yaw.
+  targets.push({ x: w / 2 + (-align / 100) * (w * 0.5), label: (latest.mission?.arrivalName || 'DEST').toUpperCase(), color: latest.mission?.destination?.color || '#7ddb9a' });
+  if (latest.divert && !latest.divert.takenBy) {
+    targets.push({ x: w / 2 + ((latest.divert.bearing - align) / 100) * (w * 0.5), label: latest.divert.name.toUpperCase(), color: '#ffb347' });
+  }
+  for (const tg of targets) {
+    if (tg.x >= 0 && tg.x <= w) continue; // on-screen; no chevron needed
+    const right = tg.x > w;
+    const ex = right ? w - 22 * dpr : 22 * dpr;
+    const ey = h * 0.4;
+    const dir = right ? 1 : -1;
+    ctx.save();
+    ctx.fillStyle = tg.color;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(ex + dir * 14 * dpr, ey);
+    ctx.lineTo(ex - dir * 10 * dpr, ey - 12 * dpr);
+    ctx.lineTo(ex - dir * 10 * dpr, ey + 12 * dpr);
+    ctx.closePath(); ctx.fill();
+    ctx.font = `${11 * dpr}px monospace`;
+    ctx.textAlign = right ? 'right' : 'left';
+    ctx.fillText(`${tg.label} ▸`, right ? ex - 16 * dpr : ex + 16 * dpr, ey - 18 * dpr);
+    ctx.restore();
+  }
+}
+
+// Blackout: the forward view is lost (solar flare / heavy ion storm). Wash the
+// world to near-black with faint static so the room must fly on sensors.
+function drawBlackout(w, h, dpr) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(2, 3, 6, 0.93)';
+  ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = `rgba(120,140,180,${Math.random() * 0.06})`;
+    ctx.fillRect(Math.random() * w, Math.random() * h, 2 * dpr, 2 * dpr);
+  }
+  ctx.fillStyle = 'rgba(180, 200, 255, 0.5)';
+  ctx.font = `${16 * dpr}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('— FORWARD VIEW LOST — FLY ON SENSORS —', w / 2, h * 0.5);
+  ctx.restore();
 }
 
 // Laser beams fired from the ship's cannons to the (former) contact position.
