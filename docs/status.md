@@ -1,8 +1,15 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-11 (post-playtest revision pass — branch
-`worktree-revision-pass`, draft PR open, deployed to Cloudflare). This file
-is the "resume here" note — read it with `CLAUDE.md` at the start of a session.
+Last updated: 2026-07-11 (three passes on branch `worktree-revision-pass` —
+post-playtest revision, follow-up implementation, polish + expansion menu —
+**merged to `main` via PR #6** and deployed to Cloudflare). This file is the
+"resume here" note — read it with `CLAUDE.md` at the start of a session.
+
+**Next up (owner decisions):** (1) pick proposals from
+`docs/design/11-gameplay-expansion-menu.md` to define the next feature arc;
+(2) playtest the revision with a real crew (first-flight with newcomers, CPU
+feel, optimistic UI, new obstacles); (3) FINALLY listen to the audio on a
+real device — five tracks + all SFX are still only code-verified.
 
 ## Latest: polish + expansion-menu pass (2026-07-11, same branch/PR #6)
 
