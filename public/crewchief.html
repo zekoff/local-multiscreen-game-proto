@@ -40,13 +40,13 @@
     import { createIntents } from '/js/optimistic.js';
     import { mountWidgets } from '/js/widget.js';
     import { shipVitals, powerStatus } from '/js/widgets/common.js';
-    import { tractorBeam, cargoHold, damageControl } from '/js/widgets/crewchief.js';
+    import { cargoHold, damageControl } from '/js/widgets/crewchief.js';
 
-    // Console-local audio: the Crew Chief owns the deck sounds — tractor hum /
-    // latch, cargo stow / jettison, fire + boarders alarms.
+    // Console-local audio: the Crew Chief owns the deck sounds — cargo stow /
+    // jettison, fire + boarders alarms. (Tractor hum moved to Weapons.)
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
-    const CREWCHIEF_FX = new Set(['tractorBeam', 'stow', 'jettison', 'fire', 'boarders']);
+    const CREWCHIEF_FX = new Set(['stow', 'jettison', 'fire', 'boarders']);
 
     const intents = createIntents();
     let host = null;
@@ -61,12 +61,12 @@
       },
     });
 
-    // Lay out the console. Tractor + cargo + damage control are the Crew Chief's
-    // own; ship vitals + power grid are portable read-only widgets for
-    // situational awareness (proof the abstraction moves display widgets freely).
+    // Lay out the console. Cargo + damage control are the Crew Chief's own;
+    // ship vitals + power grid are portable read-only widgets for situational
+    // awareness (proof the abstraction moves display widgets freely).
     host = mountWidgets(
       document.getElementById('cc-widgets'),
-      [tractorBeam, cargoHold, damageControl, shipVitals, powerStatus],
+      [cargoHold, damageControl, shipVitals, powerStatus],
       { net, intents, audio, seat: 'crewchief' },
     );
 

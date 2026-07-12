@@ -49,6 +49,10 @@
       <div class="meter" style="margin-bottom:0.75rem"><div id="shield-bar"></div></div>
       <button id="shields-btn" style="width:100%">Screen Up</button>
     </div>
+
+    <!-- Tractor / tow (shares the phaser emitter): aim + latch a pod/salvage.
+         The laser is offline while latched — your call. -->
+    <div id="tow-widgets"></div>
   </main>
 
   <!-- Phase overlays (shared shell fills these in) -->
@@ -73,13 +77,16 @@
     import { createAudio } from '/js/audio.js';
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
+    import { mountWidgets } from '/js/widget.js';
+    import { towBeam } from '/js/widgets/tow.js';
 
     // Console-local audio: weapons hears its own laser, target lock, fire-ready
     // chime, and shields raise/lower. The laser is deliberately NOT on the main
     // screen — it fires from here.
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
-    const WEAPONS_FX = new Set(['laser']);
+    const WEAPONS_FX = new Set(['laser', 'tractorBeam']);
+    let towHost = null;
     let prevShieldsRaised = false;
     let prevTargetId = null;
     let prevReady = false;
@@ -160,8 +167,16 @@
         shieldsRaised = intents.get('shields') ?? state.shields.raised;
         shieldsBtn.textContent = shieldsRaised ? 'Screen Down' : 'Screen Up';
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
+        if (towHost) towHost.render(state);
       },
     });
+
+    // Tractor/tow widget (shares the emitter — the gunner's own tow control).
+    towHost = mountWidgets(
+      document.getElementById('tow-widgets'),
+      [towBeam],
+      { net, intents, audio, seat: 'weapons' },
+    );
 
     // Governor mode buttons.
     document.getElementById('gov-standard').addEventListener('click', () => {
@@ -221,7 +236,7 @@
         '<b>Tap a blip</b> on the scope to target it. Press <b>FIRE</b> when the charge bar is full. Shots always hit.',
         '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% for a quick weak shot that only cracks small rocks — trade firepower for less waiting.',
         'Contacts read <b>UNKNOWN</b> until sensors identify them. A <b>RESCUE POD</b> looks like a rock at range — <b>never fire on a pod</b> (the console will refuse it). Confirm before you shoot.',
-        'The laser <b>recharges faster with more weapon power</b>, and <b>can\'t fire while the Crew Chief has the tractor beam latched</b> (shared emitter).',
+        'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> shares your emitter: latch a pod/salvage in the arc to reel it in — but the <b>laser is offline while latched</b>, so it\'s a "tow or shoot?" call. Weapons power drives both.',
         'The <b>deflector screen</b> blocks damage but drains while up, and only recharges while down.',
         'The <b>captain</b> reads speed and threat on the main screen and calls priorities.',
       ],

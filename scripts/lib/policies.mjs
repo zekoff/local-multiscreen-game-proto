@@ -46,8 +46,8 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
 
     engineering(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
-      // Five systems now — tractor is engineering-powered (operated by the chief).
-      const sys = ['engines', 'shields', 'weapons', 'sensors', 'tractor'];
+      // Four systems now — tractor folded back into WEAPONS power (shared emitter).
+      const sys = ['engines', 'shields', 'weapons', 'sensors'];
       const actions = [];
       // Clear tripped breakers first — a tripped system runs at half power.
       for (const s of sys) {
@@ -58,21 +58,19 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       if ((state.ionStormIn || 0) > 0 && state.sensorPulseReadyIn <= 0) {
         actions.push({ kind: 'sensorPulse' });
       }
-      // Threat-aware power triage over the 8-point pool: shift toward weapons in
-      // combat, feed the tractor when the chief is towing, else keep engines fed.
-      // Novice barely re-triages (sticks near the default split).
+      // Threat-aware power triage over the 7-point pool: shift toward weapons in
+      // combat OR while towing (the tractor draws weapons power now), else keep
+      // engines fed. Novice barely re-triages (sticks near the default split).
       const nearest = state.asteroids.length
         ? Math.min(...state.asteroids.map((a) => a.impactIn))
         : Infinity;
       const combat = nearest <= 14;
       const towing = !!(state.tractor && state.tractor.latched);
       const target = profile === 'novice'
-        ? { engines: 3, weapons: 2, shields: 1, sensors: 1, tractor: 1 }
-        : towing
-          ? { engines: 2, weapons: 2, shields: 1, sensors: 1, tractor: 2 }
-          : combat
-            ? { engines: 2, weapons: 3, shields: 1, sensors: 1, tractor: 1 }
-            : { engines: 3, weapons: 2, shields: 1, sensors: 1, tractor: 1 };
+        ? { engines: 3, weapons: 2, shields: 1, sensors: 1 }
+        : (combat || towing)
+          ? { engines: 2, weapons: 3, shields: 1, sensors: 1 }
+          : { engines: 3, weapons: 2, shields: 1, sensors: 1 };
       // Nudge one point toward the target split: free an over-allocated system,
       // then raise an under-allocated one (net-neutral on the power budget, or a
       // pure fill after an Emergency Warp zeroes everything).
@@ -94,17 +92,35 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
         actions.push({ kind: 'shields', raised: wantShields });
       }
       if (rng() > knobs.react) return actions;
-      // Don't-shoot discipline: NEVER target a pod/mineral. Lock the urgent
-      // detected contact, but only FIRE once it's a CONFIRMED rock (holds fire
-      // on UNKNOWN blips — a skilled gunner confirms before shooting).
+
+      const t = state.tractor || {};
+      // Don't-shoot discipline: NEVER target a pod/mineral/ghost. The urgent
+      // detected non-pod contact is the shoot candidate.
       const acquirable = state.asteroids.filter((a) => a.targetable && a.kind !== 'pod' && a.kind !== 'mineral' && a.kind !== 'ghost');
-      if (acquirable.length > 0) {
-        const urgent = [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0];
-        if (state.targetId !== urgent.id) actions.push({ kind: 'target', id: urgent.id });
+      const urgentRock = acquirable.length ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0] : null;
+      const rockThreat = !!urgentRock && urgentRock.impactIn <= 12;
+
+      // Tow: the tractor shares this emitter now. When nothing urgent needs the
+      // laser, latch an identified pod/mineral inside the arc; drop the latch the
+      // moment a rock closes (the emitter can't do both).
+      const holdFree = (state.cargo ? state.cargo.length : 0) < (state.holdCapacity || 4);
+      if (t.latched) {
+        if (rockThreat) actions.push({ kind: 'tractorLatch', on: false });
+      } else if (!rockThreat && holdFree && (t.power || 0) >= 1) {
+        const cand = (state.asteroids || []).find((a) => a.tractorable && Math.abs(state.alignment - a.bearing) <= 55);
+        if (cand) {
+          if (t.targetId !== cand.id) actions.push({ kind: 'tractorTarget', id: cand.id });
+          else actions.push({ kind: 'tractorLatch', on: true });
+        }
+      }
+
+      // Fire only when the emitter is free (not latched) and there's a CONFIRMED
+      // rock locked — holds fire on UNKNOWN blips (confirm before shooting).
+      if (!t.latched && urgentRock) {
+        if (state.targetId !== urgentRock.id) actions.push({ kind: 'target', id: urgentRock.id });
         const tgt = state.asteroids.find((a) => a.id === state.targetId);
         const confirmedRock = tgt && tgt.kind === 'rock';
-        // Governor (skilled only): snapshot a small, close rock to clear it fast
-        // instead of waiting for a full charge.
+        // Governor (skilled only): snapshot a small, close rock to clear it fast.
         if (profile !== 'novice' && tgt && confirmedRock && tgt.size <= 1.0 && tgt.impactIn < 7) {
           if (state.governor !== 'snapshot') actions.push({ kind: 'governor', mode: 'snapshot' });
         } else if (state.governor === 'snapshot') {
@@ -116,8 +132,8 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       return actions;
     },
 
-    // Crew Chief: damage control + tow. Skilled works every tick (react 1.0);
-    // novice is slow (react 0.35), so it tows and firefights sluggishly.
+    // Crew Chief: damage control only now (the tow moved to the weapons emitter).
+    // Skilled works every tick (react 1.0); novice is slow (react 0.35).
     crewchief(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
       const actions = [];
@@ -127,16 +143,6 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       const unmanned = emg.find((e) => e.assigned === 0);
       if (unmanned && free > 0) actions.push({ kind: 'assignCrew', id: unmanned.id, delta: 1 });
       else if (free > 0 && emg.length > 0) actions.push({ kind: 'assignCrew', id: emg[0].id, delta: 1 });
-      // Tractor: tow an identified pod/mineral in range when the helm is lined up.
-      const t = state.tractor;
-      const holdFree = (state.cargo ? state.cargo.length : 0) < (state.holdCapacity || 4);
-      if (t && !t.latched && holdFree && t.power >= 1) {
-        const cand = (state.asteroids || []).find((a) => a.tractorable && Math.abs(state.alignment - a.bearing) <= 40);
-        if (cand) {
-          if (t.targetId !== cand.id) actions.push({ kind: 'tractorTarget', id: cand.id });
-          else actions.push({ kind: 'tractorLatch', on: true });
-        }
-      }
       return actions;
     },
   };

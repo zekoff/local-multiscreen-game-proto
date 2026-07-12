@@ -6,7 +6,7 @@
 
 import type { Range } from './rng.js';
 
-export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors' | 'tractor';
+export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors';
 
 // Contact classification. Sensors resolve a contact's true kind only at
 // sufficient power/range (see identification split in game.ts); until then a

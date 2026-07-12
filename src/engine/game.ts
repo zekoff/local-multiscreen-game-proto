@@ -37,17 +37,17 @@ const DIFF_MULT: Record<Difficulty, number> = { cruise: 0.6, officer: 1 };
 // scope; Crew Chief) — power is one console's job, use is another's, which is
 // the cooperation the design leans on. Nearly all system-shaped logic keys off
 // this array, so adding a member propagates through power/breakers/serialize.
-const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors', 'tractor'];
+const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors'];
 
 // Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
 // Pool raised 6 -> 7 post-playtest ("one more engine allocation point"): the
 // extra unit lands on engines in the default split. Per-system cap stays 4, so
 // speed/turn normalization (eff/POWER_MAX) is untouched.
-// Pool raised 7 -> 8 alongside the new fifth system (tractor): the extra unit
-// funds a resting tractor allocation in the default split without starving the
-// original four systems. Per-system cap stays 4. (Balance-risk item — the
-// added channel is the main thing `npm run lab` re-validates this pass.)
-const POWER_TOTAL = 8;      // total power units engineering can allocate
+// Tractor was briefly a fifth powered system (pool 8) but that added an odd,
+// exploitable channel (always dump weapons/pump tractor while towing). It's now
+// folded back into WEAPONS power (shared emitter), so the pool returns to 7 over
+// the original four systems.
+const POWER_TOTAL = 7;      // total power units engineering can allocate
 const POWER_MAX = 4;        // max units a single system can hold
 
 // Laser: no battery bank and no fixed cooldown. `charge` (0-100) is simply the
@@ -131,17 +131,21 @@ const SENSOR_ID_BASE = 5;       // identification range (s) at zero sensor power
 const SENSOR_ID_PER_POWER = 3;  // extra ID range (s) per sensor power — ID scales harder than detection
 const SENSOR_PULSE_COOLDOWN = 80; // long cooldown => ~1-2 pulses per mission
 
-// --- Tractor beam / cargo hold (Crew Chief). The tractor is the fifth powered
-// system: engineering funds it, the Crew Chief operates it. Latch onto a
-// DETECTED non-hostile contact (pod / mineral) within tractor range; while
-// latched the ship reels it into the hold over REEL_SECS (faster with more
-// tractor power and assigned crew). The latch needs the helm roughly on the
-// contact's line — swing away to dodge and the beam breaks. Firing the laser is
-// blocked while latched (shared emitter fiction => the weapons↔crewchief bind).
+// --- Tractor beam / cargo hold. The tractor shares the WEAPONS emitter: the
+// Weapons console aims and latches it (own agency — no other seat gates it),
+// engineering's WEAPONS power drives the reel, and firing the laser is blocked
+// while latched (the gunner's own "tow or shoot?" call). Latch onto a DETECTED
+// non-hostile contact (pod / mineral) within tractor range; the ship reels it
+// into the hold over REEL_SECS. Alignment is forgiving: the latch holds anywhere
+// within a wide ARC of the contact's bearing (helm can swing back and forth),
+// and the reel goes FASTER the more closely the helm is lined up. Reel progress
+// PERSISTS across releases (a partial pull isn't wasted) — it only bleeds away
+// slowly while unlatched, and the contact is lost if it drifts past the ship.
 const TRACTOR_RANGE = 9;            // seconds-to-impact within which a contact can be latched
-const TRACTOR_ALIGN_TOLERANCE = 42; // |alignment - contact bearing| beyond which the latch breaks
-const TRACTOR_REEL_SECS = 6;        // base seconds to reel a latched contact into the hold
-const TRACTOR_MIN_POWER = 1;        // effective tractor power needed to hold a latch at all
+const TRACTOR_ARC = 60;             // |alignment - contact bearing| within which the latch holds (wide/forgiving)
+const TRACTOR_REEL_SECS = 6;        // base seconds to reel a latched contact into the hold (at perfect alignment)
+const TRACTOR_MIN_POWER = 1;        // effective WEAPONS power needed to hold a latch at all
+const TRACTOR_REEL_DECAY = 0.06;    // reel progress bled off per second while unlatched (slow — brief drops are cheap)
 const HOLD_CAPACITY_DEFAULT = 4;    // cargo hold slots when a mission doesn't set holdCapacity
 // Cargo mass drags on maneuverability: a full hold cuts turn authority by up to
 // this fraction (P#23 — heavier = less nimble). Linear in used-slots/capacity.
@@ -417,8 +421,8 @@ export class Game {
   hull = 100;
   shieldRaised = false;
   shieldStrength = SHIELD_MAX; // absolute points, 0..SHIELD_MAX (serialized as a %)
-  power: Record<SystemId, number> = { engines: 2, shields: 1, weapons: 2, sensors: 1, tractor: 0 };
-  breakers: Record<SystemId, number | null> = { engines: null, shields: null, weapons: null, sensors: null, tractor: null }; // trip age in seconds, null = ok
+  power: Record<SystemId, number> = { engines: 2, shields: 1, weapons: 2, sensors: 1 };
+  breakers: Record<SystemId, number | null> = { engines: null, shields: null, weapons: null, sensors: null }; // trip age in seconds, null = ok
   throttle = 0;          // 0..100
   alignment = 0;         // -100..100, 0 = on course
   speed = 0;             // derived, progress units per second
@@ -610,8 +614,8 @@ export class Game {
     this.hull = 100;
     this.shieldRaised = false;
     this.shieldStrength = SHIELD_MAX;
-    this.power = { engines: 3, shields: 1, weapons: 2, sensors: 1, tractor: 1 }; // default split spends the full pool (8)
-    this.breakers = { engines: null, shields: null, weapons: null, sensors: null, tractor: null };
+    this.power = { engines: 3, shields: 1, weapons: 2, sensors: 1 }; // default split spends the full pool (7)
+    this.breakers = { engines: null, shields: null, weapons: null, sensors: null };
     this.throttle = 0;
     this.alignment = 0;
     this.charge = 100;
@@ -750,13 +754,15 @@ export class Game {
       } else if (a.kind === 'governor' && (a.mode === 'standard' || a.mode === 'snapshot')) {
         this.governor = a.mode;
         this.event(a.mode === 'snapshot' ? 'Weapons: SNAPSHOT — quick shots, small contacts only.' : 'Weapons: STANDARD — full-power shots.');
-      }
-    } else if (seat === 'crewchief') {
-      if (a.kind === 'tractorTarget' && (typeof a.id === 'number' || a.id === null)) {
+      } else if (a.kind === 'tractorTarget' && (typeof a.id === 'number' || a.id === null)) {
+        // The tractor shares the weapons emitter — the gunner aims and latches
+        // it (and forfeits firing while it's engaged). Their call, not a gate.
         this.setTractorTarget(a.id as number | null);
       } else if (a.kind === 'tractorLatch' && typeof a.on === 'boolean') {
         this.setTractorLatch(a.on);
-      } else if (a.kind === 'jettison' && typeof a.id === 'number') {
+      }
+    } else if (seat === 'crewchief') {
+      if (a.kind === 'jettison' && typeof a.id === 'number') {
         this.jettison(a.id as number);
       } else if (a.kind === 'assignCrew' && typeof a.id === 'number' && (a.delta === -1 || a.delta === 1)) {
         this.assignCrew(a.id as number, a.delta as number);
@@ -795,7 +801,7 @@ export class Game {
     this.shieldRaised = false;
     this.shieldStrength = 0;
     this.charge = 0;
-    this.power = { engines: 0, shields: 0, weapons: 0, sensors: 0, tractor: 0 };
+    this.power = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
     // A warp jump also drops any tractor latch and scatters the hold's contents
     // stay put — but the beam breaks (the ship is somewhere else now).
     this.tractorLatched = false;
@@ -842,27 +848,29 @@ export class Game {
     if (id === null) { this.tractorTargetId = null; this.tractorLatched = false; this.tractorReel = 0; return; }
     const t = this.asteroids.find((a) => a.id === id);
     if (!t || !this.targetable(t)) return;
+    // Switching to a DIFFERENT contact discards any partial pull; re-aiming the
+    // same contact keeps its progress (the persistent partial-reel ring).
+    if (id !== this.tractorTargetId) this.tractorReel = 0;
     this.tractorTargetId = id;
-    this.tractorReel = 0;
   }
 
-  // Engage/release the latch. Latching needs tractor power, a targeted contact
-  // in range, and hold space. The tick maintains the latch (breaks it if the
-  // helm swings off the contact's line or it drifts out of range).
+  // Engage/release the latch. Latching needs weapons power (shared emitter), a
+  // targeted contact in range within the forgiving arc, and hold space. Releasing
+  // KEEPS the reel progress (it bleeds off slowly while unlatched — a re-latch
+  // resumes the pull). The tick maintains the latch (breaks it only if the helm
+  // swings fully outside the arc or the contact drifts out of range).
   private setTractorLatch(on: boolean) {
     if (!on) {
-      if (this.tractorLatched) this.event('Tractor beam released.');
+      if (this.tractorLatched) this.event('Tractor beam released — hold the pull, we can re-latch.');
       this.tractorLatched = false;
-      this.tractorReel = 0;
       return;
     }
     if (this.cargo.length >= this.holdCapacity) { this.event('Cargo hold full — jettison to make room.'); return; }
-    if (this.eff('tractor') < TRACTOR_MIN_POWER) { this.event('Tractor beam has no power — Engineering must feed it.'); return; }
+    if (this.eff('weapons') < TRACTOR_MIN_POWER) { this.event('Tractor beam has no power — Engineering must feed WEAPONS.'); return; }
     const t = this.tractorTargetId !== null ? this.asteroids.find((a) => a.id === this.tractorTargetId) : null;
     if (!t || !this.targetable(t) || t.impactIn > TRACTOR_RANGE) { this.event('No contact in tractor range.'); return; }
-    if (Math.abs(this.alignment - t.bearing) > TRACTOR_ALIGN_TOLERANCE) { this.event('Helm not lined up on the contact — hold the approach.'); return; }
+    if (Math.abs(this.alignment - t.bearing) > TRACTOR_ARC) { this.event('Contact is outside the tractor arc — bring the bow around.'); return; }
     this.tractorLatched = true;
-    this.tractorReel = 0;
     this.pushFx({ kind: 'tractorBeam', targetId: t.id });
     this.event(`Tractor beam latched onto ${t.label} — reeling it in. Helm, hold this line.`);
   }
@@ -913,7 +921,7 @@ export class Game {
     // The laser and the tractor share an emitter: you can't fire while the beam
     // is latched (the weapons↔crewchief negotiation — "drop the pod or hold?").
     if (this.tractorLatched) {
-      this.event('Cannot fire — tractor beam engaged. Crew Chief must release the latch.', false);
+      this.event('Cannot fire — tractor beam engaged. Release the latch to free the emitter.', false);
       return;
     }
     // Charge gate depends on the governor: STANDARD needs a full meter for a
@@ -1371,7 +1379,7 @@ export class Game {
     // Emergency Warp zeroes it) toward a sensible default, so an unmanned
     // engineer can't leave the ship dead in the water.
     if (this.auto('engineering')) {
-      const target: Record<SystemId, number> = { engines: 3, weapons: 2, shields: 1, sensors: 1, tractor: 1 }; // mirrors the default split (sums to 8)
+      const target: Record<SystemId, number> = { engines: 3, weapons: 2, shields: 1, sensors: 1 }; // mirrors the default split (sums to 7)
       let spare = POWER_TOTAL - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
       for (const s of SYSTEMS) {
         while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
@@ -1423,12 +1431,23 @@ export class Game {
       } else {
         this.autoFireAt = null;
       }
+      // Opportunistic tow (the tractor shares this emitter now): when there's
+      // nothing to shoot, latch a clearly-identified pod/mineral inside the arc —
+      // and drop the latch the instant a rock needs the laser.
+      const rockThreat = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE;
+      if (this.tractorLatched && rockThreat) {
+        this.setTractorLatch(false); // free the emitter to defend
+      } else if (!this.tractorLatched && !rockThreat && this.cargo.length < this.holdCapacity && this.eff('weapons') >= TRACTOR_MIN_POWER) {
+        const cand = this.asteroids.find((a) =>
+          (a.kind === 'pod' || a.kind === 'mineral') && a.identified &&
+          a.impactIn <= TRACTOR_RANGE && Math.abs(this.alignment - a.bearing) <= TRACTOR_ARC);
+        if (cand) { this.tractorTargetId = cand.id; this.setTractorLatch(true); }
+      }
     }
 
-    // Auto Crew Chief: a conservative deckhand. Keeps crew on any emergency and
-    // opportunistically tows clearly-identified salvage/pods when the ship is
-    // lined up and idle — never anything a human chief couldn't do, just slower
-    // and without judgment about competing priorities.
+    // Auto Crew Chief: a conservative deckhand — keeps crew on any emergency.
+    // (Tow moved to the weapons emitter; Phase 2 replaces this with the
+    // automated-systems path when the seat is unmanned.)
     if (this.auto('crewchief')) {
       // Damage control: put at least one hand on each emergency, then pile the
       // rest onto the least-resolved one.
@@ -1439,14 +1458,6 @@ export class Game {
       while (this.freeCrew() > 0 && this.emergencies.length > 0) {
         const e = [...this.emergencies].sort((a, b) => a.progress - b.progress)[0];
         e.assigned++;
-      }
-      // Tractor: reel an identified pod/mineral when there's room, power, and the
-      // helm happens to be lined up on it. It won't fight the helm for the line.
-      if (!this.tractorLatched && this.cargo.length < this.holdCapacity && this.eff('tractor') >= TRACTOR_MIN_POWER) {
-        const cand = this.asteroids.find((a) =>
-          (a.kind === 'pod' || a.kind === 'mineral') && a.identified &&
-          a.impactIn <= TRACTOR_RANGE && Math.abs(this.alignment - a.bearing) <= TRACTOR_ALIGN_TOLERANCE);
-        if (cand) { this.tractorTargetId = cand.id; this.setTractorLatch(true); }
       }
     }
 
@@ -1643,23 +1654,41 @@ export class Game {
     );
   }
 
-  // Maintain an active tractor latch: break it on lost power / broken alignment,
-  // otherwise reel the held contact aboard over time (faster with tractor power).
+  // Maintain the tractor. While latched, reel the held contact aboard (faster
+  // with weapons power AND with closer helm alignment). While UNLATCHED but still
+  // aimed at a contact with partial progress, the reel bleeds off slowly (the
+  // pull isn't lost the instant the beam drops — the helm can swing away and back).
   private updateTractor(dt: number) {
-    if (!this.tractorLatched) return;
-    const t = this.asteroids.find((a) => a.id === this.tractorTargetId);
+    const t = this.tractorTargetId !== null ? this.asteroids.find((a) => a.id === this.tractorTargetId) : null;
     if (!t) { this.tractorLatched = false; this.tractorReel = 0; return; }
-    if (this.eff('tractor') < TRACTOR_MIN_POWER) {
-      this.event('Tractor beam lost power — latch broken.');
-      this.tractorLatched = false; this.tractorReel = 0; return;
+
+    if (!this.tractorLatched) {
+      // Not holding: let a partial pull decay. If it's fully bled off, drop the
+      // aim so the widget stops showing a dead ring.
+      if (this.tractorReel > 0) {
+        this.tractorReel = Math.max(0, this.tractorReel - TRACTOR_REEL_DECAY * dt);
+        if (this.tractorReel === 0) this.tractorTargetId = null;
+      }
+      return;
     }
-    if (Math.abs(this.alignment - t.bearing) > TRACTOR_ALIGN_TOLERANCE) {
-      this.event(`Latch on ${t.label} broke — helm swung off the approach.`);
-      this.tractorLatched = false; this.tractorReel = 0; return;
+
+    // Latched: break only on lost power or the bow swinging fully outside the arc
+    // (progress is preserved for a re-latch — no punitive reset).
+    if (this.eff('weapons') < TRACTOR_MIN_POWER) {
+      this.event('Tractor beam lost power — latch dropped (Engineering, feed WEAPONS).');
+      this.tractorLatched = false; return;
     }
-    // Reel rate scales with effective tractor power (0.4x at 1 power .. 1x at max).
-    const rate = 0.4 + 0.6 * (this.eff('tractor') / POWER_MAX);
-    this.tractorReel += (dt / TRACTOR_REEL_SECS) * rate;
+    const offset = Math.abs(this.alignment - t.bearing);
+    if (offset > TRACTOR_ARC) {
+      this.event(`Latch on ${t.label} slipped — bow swung outside the arc. Progress held.`);
+      this.tractorLatched = false; return;
+    }
+    // Reel rate scales with effective weapons power (0.4x at 1 power .. 1x at max)
+    // AND with alignment closeness within the arc (perfectly lined up = full rate,
+    // edge of arc = 0.4x). Closer aim => faster pull, so the helm still matters.
+    const powerRate = 0.4 + 0.6 * (this.eff('weapons') / POWER_MAX);
+    const alignRate = 0.4 + 0.6 * (1 - offset / TRACTOR_ARC);
+    this.tractorReel += (dt / TRACTOR_REEL_SECS) * powerRate * alignRate;
     if (this.tractorReel >= 1) this.stowContact(t);
   }
 
@@ -2040,7 +2069,7 @@ export class Game {
       courseHold: this.courseHold,
       // Crew Chief: tractor + hold + damage-control board.
       tractor: {
-        power: this.eff('tractor'),
+        power: this.eff('weapons'),
         targetId: this.tractorTargetId,
         latched: this.tractorLatched,
         reel: round2(this.tractorReel),

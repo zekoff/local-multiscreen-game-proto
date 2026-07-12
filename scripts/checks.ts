@@ -64,14 +64,14 @@ function measureRecharge(game: Game, secs: number): number {
   return game.serialize().charge as number;
 }
 
-// --- 1. The 8-point pool is fully spent by the default split, engines lead ---
+// --- 1. The 7-point pool is fully spent by the default split, engines lead ---
 {
   const game = freshGame();
   const power = game.serialize().power as Record<SystemId, number>;
-  const total = power.engines + power.shields + power.weapons + power.sensors + power.tractor;
-  check('default power split spends the full 8-point pool', total === 8, `total=${total}`);
+  const total = power.engines + power.shields + power.weapons + power.sensors;
+  check('default power split spends the full 7-point pool', total === 7, `total=${total}`);
   check('default split leads with engines=3', power.engines === 3, `engines=${power.engines}`);
-  check('default split funds a resting tractor point', power.tractor === 1, `tractor=${power.tractor}`);
+  check('default split funds weapons=2 (laser + tractor share it)', power.weapons === 2, `weapons=${power.weapons}`);
 }
 
 // --- 2. Recharge slope = LASER_CHARGE_RATE × weapons power (default 2 ⇒ 14/s) ---
@@ -295,18 +295,20 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   check('firing on a pod removes it and records the shame stat', !game.asteroids.some((a: any) => a.id === 630) && game.podsDestroyed === 1, `podsDestroyed=${game.podsDestroyed}`);
 }
 
-// --- 15. Tractor needs power: with tractor breaker-forced to 0 eff, no latch ---
+// --- 15. Tractor needs WEAPONS power (shared emitter): at 0 weapons power, no
+// latch. The tow controls are now the weapons seat's. ---
 {
   const game = freshGame() as any;
-  // Drop tractor to 0 power so eff('tractor') = 0 < TRACTOR_MIN_POWER.
-  game.action('engineering', { kind: 'power', system: 'tractor', delta: -1 });
+  // Drop WEAPONS power to 0 so eff('weapons') = 0 < TRACTOR_MIN_POWER.
+  game.action('engineering', { kind: 'power', system: 'weapons', delta: -1 });
+  game.action('engineering', { kind: 'power', system: 'weapons', delta: -1 });
   game.spawnContact('mineral', { min: 6, max: 6 }, { min: 0, max: 0 });
   game.action('engineering', { kind: 'sensorPulse' }); // identify it
   game.tick(0.25);
   const ore = game.serialize().asteroids.find((a: any) => a.kind === 'mineral');
   game.alignment = ore ? ore.bearing : 0;
-  game.action('crewchief', { kind: 'tractorTarget', id: ore?.id });
-  game.action('crewchief', { kind: 'tractorLatch', on: true });
+  game.action('weapons', { kind: 'tractorTarget', id: ore?.id });
+  game.action('weapons', { kind: 'tractorLatch', on: true });
   check('tractor will not latch without power', game.serialize().tractor.latched === false, 'latched with no power');
 }
 

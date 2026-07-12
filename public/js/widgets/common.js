@@ -5,7 +5,7 @@
 import { defineWidget, el } from '../widget.js';
 import { setHealthBar, setChargeBar } from '../station.js';
 
-const SYS_LABEL = { engines: 'ENG', shields: 'SHLD', weapons: 'WPN', sensors: 'SEN', tractor: 'TRC' };
+const SYS_LABEL = { engines: 'ENG', shields: 'SHLD', weapons: 'WPN', sensors: 'SEN' };
 
 // Ship vitals: hull / shields / laser charge as three semantic meters. This is
 // the classic per-page vitals strip lifted into a portable unit — it originally
@@ -44,7 +44,7 @@ export const powerStatus = defineWidget({
   hint: 'Engineering allocates — shown here for coordination.',
   mount({ root }) {
     const rows = {};
-    for (const sys of ['engines', 'shields', 'weapons', 'sensors', 'tractor']) {
+    for (const sys of ['engines', 'shields', 'weapons', 'sensors']) {
       const line = el('div', 'spread power-line');
       line.appendChild(el('span', 'label', SYS_LABEL[sys]));
       const val = el('span', 'readout');
