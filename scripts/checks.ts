@@ -356,6 +356,39 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   check('repair bay restores hull', g.hull > 60, `hull=${g.hull}`);
 }
 
+// --- 19. Snapshot now cracks a MID-size rock (≤ 1.3), only genuinely big survive ---
+{
+  const game = freshGame() as any;
+  game.charge = 100;
+  game.governor = 'snapshot';
+  game.asteroids.push({ id: 615, designation: 615, kind: 'rock', impactIn: 5, dmg: 5, size: 1.2, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 615 });
+  game.action('weapons', { kind: 'fire' });
+  check('snapshot cracks a mid-size rock (1.2 ≤ threshold)', !game.asteroids.some((a: any) => a.id === 615), 'survived');
+}
+
+// --- 20. GO-poll: allReady is false until every manned crew seat is ready ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  game.join('weapons', 'p1', 'Gun', 'officer'); // lobby, one manned seat
+  const before = game.serialize().allReady as boolean;
+  game.setReady('weapons', 'p1', true);
+  const after = game.serialize().allReady as boolean;
+  check('GO-poll allReady flips once the manned seat is ready', before === false && after === true, `before=${before} after=${after}`);
+}
+
+// --- 21. Debug crew-skill clamps to [0,1] ---
+{
+  const game = freshGame() as any;
+  game.debug = true;
+  game.action('main', { kind: 'setCrewSkill', value: 1.5 });
+  const hi = game.crewSkill;
+  game.action('main', { kind: 'setCrewSkill', value: -0.5 });
+  const lo = game.crewSkill;
+  check('debug crew-skill clamps to [0,1]', hi === 1 && lo === 0, `hi=${hi} lo=${lo}`);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) FAILED`);
   process.exit(1);

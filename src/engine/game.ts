@@ -466,6 +466,7 @@ export class Game {
   // Debug/sim-supervisor controls (opt-in per run via the launch payload).
   debug = false;         // whether debug controls are exposed for this run
   timeScale = 1;         // simulation speed multiplier (0 = paused)
+  crewSkill = 1;         // debug: 0..1 quality of the auto-assist bots (for solo playtesting)
   asteroids: Asteroid[] = [];
   gates: Gate[] = [];
   obstacles: Obstacle[] = [];    // large steer-around hazards (topology)
@@ -666,6 +667,7 @@ export class Game {
     this.runSeed = seed ?? randomSeed();
     this.rng = mulberry32(this.runSeed);
     this.debug = debug;
+    this.crewSkill = 1; // full-quality bots by default; the debug slider tunes it live
     // The crew's ship name (optional, set at launch): pure fiction, zero
     // mechanics — it flavors the log, the main-screen header, and the debrief.
     this.shipName = shipName.trim().slice(0, 24);
@@ -1004,11 +1006,36 @@ export class Game {
     if (a.kind === 'setTimeScale' && typeof a.value === 'number') {
       this.timeScale = clamp(a.value, 0, 4);
       this.event(this.timeScale === 0 ? '[debug] Simulation paused.' : `[debug] Simulation speed set to ${this.timeScale}x.`);
-    } else if (a.kind === 'spawnAsteroid' && this.mission) {
+    } else if (a.kind === 'setCrewSkill' && typeof a.value === 'number') {
+      // Tune how well the auto-assist bots play (solo-playtest aid).
+      this.crewSkill = clamp(a.value, 0, 1);
+      this.event(`[debug] CPU crew skill set to ${Math.round(this.crewSkill * 100)}%.`);
+    } else if (a.kind === 'spawn' && typeof a.what === 'string') {
+      this.debugSpawn(a.what as string);
+    } else if (a.kind === 'spawnAsteroid' && this.mission) { // legacy button
       this.spawnAsteroid(this.mission.impactIn, this.mission.asteroidDmg);
       this.event('[debug] Spawned an asteroid.');
     } else if (a.kind === 'spawnGate') {
       this.spawnGate(); // emits its own "nav gate ahead" beat
+    }
+  }
+
+  // Generic debug spawner (dropdown-driven): drop any contact/hazard on demand.
+  private debugSpawn(what: string) {
+    const m = this.mission;
+    if (!m) return;
+    const near = { min: 12, max: 18 };
+    switch (what) {
+      case 'rock': this.spawnContact('rock', m.impactIn, m.asteroidDmg); this.event('[debug] Spawned a rock.'); break;
+      case 'pod': this.spawnContact('pod', near, { min: 0, max: 0 }); this.event('[debug] Spawned a rescue pod.'); break;
+      case 'mineral': this.spawnContact('mineral', near, { min: 0, max: 0 }); this.event('[debug] Spawned salvage.'); break;
+      case 'ghost': this.spawnContact('ghost', near, { min: 0, max: 0 }); this.event('[debug] Spawned a sensor ghost.'); break;
+      case 'gate': this.spawnGate(); break;
+      case 'obstacle': this.spawnObstacle('DEBUG MASS', { min: 10, max: 15 }, OBSTACLE_DMG_DEFAULT); break;
+      case 'fire': this.startEmergency('fire', 1); break;
+      case 'boarders': this.startEmergency('boarders', 1); break;
+      case 'flare': this.flareAt = this.missionTime + 8; this.event('[debug] Solar flare inbound (8s) — SAFE POSTURE.'); break;
+      default: break;
     }
   }
 
@@ -1424,7 +1451,7 @@ export class Game {
         this.alignment += sign(delta) * step;
       } else {
         // No rings up: ease back onto the course line.
-        const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * dt);
+        const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * (0.4 + 0.6 * this.crewSkill) * dt);
         this.alignment -= sign(this.alignment) * correction;
       }
     } else if (this.courseHold) {
@@ -1432,7 +1459,7 @@ export class Game {
       // (half the bot's authority) so the pilot can look up on a quiet stretch —
       // but it NEVER chases gates/divert bearings (those are the pilot's to earn),
       // and manual steering disengages it (see the nudge action).
-      const correction = Math.min(Math.abs(this.alignment), (AUTO_HELM_CORRECTION * 0.5) * dt);
+      const correction = Math.min(Math.abs(this.alignment), (AUTO_HELM_CORRECTION * 0.5) * (0.4 + 0.6 * this.crewSkill) * dt);
       this.alignment -= sign(this.alignment) * correction;
     }
 
@@ -1473,7 +1500,8 @@ export class Game {
     for (const s of SYSTEMS) {
       if (this.breakers[s] !== null) {
         this.breakers[s]! += dt;
-        if (this.auto('engineering') && this.breakers[s]! > AUTO_ENG_RESET_AGE) this.resetBreaker(s);
+        // Debug crew-skill widens the reset delay for a sloppier bot engineer.
+        if (this.auto('engineering') && this.breakers[s]! > AUTO_ENG_RESET_AGE * (2 - this.crewSkill)) this.resetBreaker(s);
       }
     }
 
@@ -1525,7 +1553,9 @@ export class Game {
         this.targetId = closest.id;
         this.recordAcquire(closest.id);
         if (this.autoFireAt === null) {
-          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY);
+          // Debug crew-skill scales the deliberate fire pause (the bot gunner's
+          // main cost is TIME): skill 1 = as-is, skill 0 = twice as slow.
+          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY) * (2 - this.crewSkill);
         } else if (this.missionTime >= this.autoFireAt) {
           this.fire();
           this.autoFireAt = null;
@@ -2273,6 +2303,7 @@ export class Game {
       speed: round1(this.speed * 100), // display units
       debug: this.debug,
       timeScale: this.timeScale,
+      crewSkill: this.crewSkill,
       // charge is the laser recharge meter (100 = ready to fire).
       charge: Math.round(this.charge),
       targetId: this.targetId,

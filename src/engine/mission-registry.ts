@@ -14,6 +14,7 @@ import { deadlineKepler } from './missions/deadline-kepler.js';
 import { salvageClaim } from './missions/salvage-claim.js';
 import { blackoutApproach } from './missions/blackout-approach.js';
 import { firstContact } from './missions/first-contact.js';
+import { freeFlight } from './missions/free-flight.js';
 
 // Mission audit (Crew Chief expansion pass): kepler-rescue was REMOVED —
 // deadline-kepler (P#21) is the same station/premise with a real failure clock
@@ -23,6 +24,7 @@ import { firstContact } from './missions/first-contact.js';
 // first-flight leads the list: it's the intro mission a new crew should see first.
 const AUTHORED: MissionDef[] = [
   firstFlight, supplyRun, lifeboatRun, deadlineKepler, salvageClaim, blackoutApproach, firstContact, minedCorridor,
+  freeFlight, // debug/sandbox range (no ambient spawns) — launch with debug on
 ];
 
 // Generator presets exposed in the lobby. Intensity is fixed per preset for

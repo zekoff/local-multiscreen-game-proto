@@ -1,19 +1,39 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-12 — the **Crew Chief expansion pass** on branch
-`expansion-crew-chief` (a large batch from `docs/design/11`, driven by Playtest
-2). Committed / pushed / **deployed but NOT merged** — an exploratory swing the
-owner may keep or discard. Full detail:
-`docs/design/12-expansion-session-debrief.md`. This file is the "resume here"
-note — read it with `CLAUDE.md` at the start of a session.
+Last updated: 2026-07-12 — the **Crew Chief REVISION pass** on branch
+`expansion-crew-chief` (10 phases from Playtest 2 + a directed UX/Gameplay/
+Thematic batch). Committed / pushed / **NOT merged**. Full detail:
+`docs/design/14-crew-chief-revision-pass.md` (the revision) on top of
+`docs/design/12` (the original expansion). This file is the "resume here" note —
+read it with `CLAUDE.md` at the start of a session.
 
-**Next up (owner decisions):** (1) **playtest the expansion branch** with a real
-crew — especially the new Crew Chief console (tractor/cargo, damage control),
-the don't-shoot / rescue loop, and whether Engineering feels overloaded by the
-5th power channel; (2) decide whether to **merge** the branch; (3) pick a
-**framing** from `docs/design/13-thematic-enhancements.md` (scrappy vs elite vs
-frontier vs campaign-arc); (4) the owner's flagged **next** proposals are P#2
-(raider), P#7 (gravity well), P#16 (contact tagging).
+**Next up (owner decisions):** (1) **playtest the revision** with a real crew —
+the redesigned Crew Chief (wear/trim, committed crew, hull repair, optional
+seat), the forward-arc weapons scope, the GO-poll ready room, and the elite
+thematic layer; (2) **listen to the audio on a real device** (still never heard);
+(3) decide whether to **merge**; (4) **update `GAME_DESIGN_DIRECTION.md`** with
+the locked decisions (Option 2 elite flagship; 4 consoles + captain; optional
+Crew Chief; Cruise/Officer); (5) the deferred **ARCHITECTURAL pass** (full widget
+portability, edge-device perf, persistence + T7 + campaign arc) — see doc 14.
+
+## Latest: Crew Chief revision pass (2026-07-12, branch `expansion-crew-chief`)
+
+Framing locked to **Option 2 (elite flagship)**. Ten verified phases: difficulty
+→ Cruise/Officer; tractor folded into WEAPONS power with the **tow moved to
+Weapons**; Crew Chief rebuilt as an **optional** deck-ops console (system
+wear/trim, committed crew + posts, hull-repair bay, typed emergencies, no CPU
+chief, competent-chief score bonus); **three-threshold ID** (`???-NNN` →
+`CLASS-NNN`, rocks no longer self-ID); **weapons scope → forward arc** + snapshot
+cracks most rocks (captain calls the big ones); a big **main-screen visual pass**
+(notifications/red-alert, mission-end fades, deflector arc, collision banner,
+range rings, velocity, ion crackle); **widget de-dup** + inline power readouts;
+**ready-room GO-poll** + seat release + landing-page grey-out (new protocol in
+both transports); **pacing retune** (wider speed tiers; all-bot floor back to
+"barely arrives"); **elite thematics** (officer names, debrief sign-off +
+consequence, ship-computer voice, First Contact rebuilt); **debug crew-skill
+slider** + spawn dropdown + a **Free Flight** debug mission. Power pool 8→7.
+All green: typecheck, **33 checks**, smoke, smoke:cf, lab, headless render.
+Watch items + the still-open architectural pass are in doc 14.
 
 ## Latest: Crew Chief expansion pass (2026-07-12, branch `expansion-crew-chief`)
 

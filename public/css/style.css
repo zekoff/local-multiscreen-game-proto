@@ -333,8 +333,12 @@ select {
 .debug-panel.hidden { display: none; }
 .debug-title { font-size: 0.7rem; letter-spacing: 0.15em; color: var(--dim); text-transform: uppercase; }
 .debug-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; justify-content: center; }
-.debug-btn { min-height: 40px; padding: 0.4rem 0.7rem; font-size: 0.95rem; }
+.debug-btn { min-height: 34px; padding: 0.35rem 0.6rem; font-size: 0.85rem; }
 .debug-btn.on { background: var(--accent); color: #06090f; border-color: var(--accent); font-weight: 700; }
+/* Compact controls: crew-skill slider + spawn dropdown (shrunk to fit). */
+.debug-lbl { font-size: 0.62rem; color: var(--dim); white-space: nowrap; align-self: center; }
+.debug-slider { flex: 1; min-width: 56px; accent-color: var(--accent); }
+.debug-select { flex: 1; min-width: 84px; font-size: 0.75rem; background: #0d1322; color: var(--text); border: 1px solid var(--panel-edge); border-radius: 4px; padding: 0.25rem; }
 /* On the main screen the panel sits at the BOTTOM-LEFT of the viewscreen.
    Its `bottom` is set by JS to ride just above the HUD strip, so it never
    covers the hull/shield cells (fallback here for the first paint). */
