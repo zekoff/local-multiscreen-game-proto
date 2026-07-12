@@ -37,6 +37,12 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const isCrew = CREW.includes(seat);
   let latest = null; // most recent snapshot (for the GO-poll launch-button logic)
 
+  // Officer name on the console header (T1): "Weapons — Emma Cate".
+  if (isCrew && name) {
+    const h = document.querySelector('header h1');
+    if (h) h.textContent = `${h.textContent} — ${name}`;
+  }
+
   // Crew consoles get a "Leave Console" button (back out to role-select, freeing
   // the seat) added to the lobby overlay — the main screen keeps its own lobby.
   let leaveBtn = null;

@@ -11,9 +11,11 @@ export const firstContact: MissionDef = {
   id: 'first-contact',
   name: 'First Contact',
   briefing:
-    'An unknown formation has crossed into the Verge and is closing on your ' +
-    'position. Command wants answers, not a war. Read the contacts, hold your ' +
-    'fire, and do not shoot first unless you are certain.',
+    'FLAGSHIP ORDERS — Sector Command. An unknown formation has crossed into the ' +
+    'Verge on a bearing for your position. You are the ranking vessel: your ' +
+    'conduct is the Fleet\'s conduct. Command wants answers, not a war. Read the ' +
+    'contacts, spend your one sensor pulse when it counts, and do NOT fire first ' +
+    'unless you are certain a contact is hostile. An envoy is worth more than a kill.',
   arrivalName: 'the Verge boundary',
   rating: 'veteran',
   destination: { kind: 'planet', color: '#b58cff' },
@@ -52,13 +54,18 @@ export const firstContact: MissionDef = {
       ] },
     ] },
     { id: 'the-threat', at: { progress: 60 }, actions: [
-      { type: 'log', text: 'One return accelerates hard on an attack line — THAT is the hostile.' },
+      { type: 'log', text: 'One return breaks formation and accelerates hard on an attack line — THAT is the hostile. Confirm it, then put it down. Leave the envoy be.' },
+      // A genuine threat: it WILL hurt if ignored, so the crew must ID and engage
+      // the right contact while holding fire on the envoy (the whole puzzle).
       { type: 'spawnContact', kind: 'rock', impactIn: { min: 10, max: 14 }, count: 1 },
+      { type: 'spawnContact', kind: 'rock', impactIn: { min: 8, max: 12 }, count: 1 },
     ] },
+    // The hail channel opens on the resolution (T3) — the payoff for restraint.
     { id: 'resolve', at: { progress: 85 }, actions: [
-      { type: 'cinematic', title: 'Standing down', seconds: 6, lines: [
-        'The envoy holds its course, unharmed. A hail finally comes through — in kind.',
-        'Whatever this was, it was not a war. Not today.',
+      { type: 'cinematic', title: 'Hail — channel open', seconds: 7, lines: [
+        'The envoy holds its course, unharmed. A hail finally resolves through the static — measured, deliberate, in kind.',
+        'They came to take our measure. Today they found discipline, not guns.',
+        'Sector Command will log this as a first contact kept — and the Verge is quieter for it.',
       ] },
     ] },
   ],

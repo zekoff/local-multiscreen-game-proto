@@ -258,6 +258,7 @@ const NARRATE_DMG_WINDOW = 8;      // s — window for a damage burst
 const NARRATE_DMG_THRESHOLD = 30;  // hull damage within the window to warn on it
 const NARRATE_NOTE_COOLDOWN = 20;  // s — min gap between repeats of the same beat
 const NARRATE_CONSOLE_EVERY = 45;  // s — min gap between console-effectiveness notes
+const SHIP_VOICE_CADENCE = 38; // s — fixed cadence of ship-computer lines (T6; NO rng so it can't perturb the seeded run)
 
 // Each rock spawns with a lateral bearing (like a gate's), port or starboard,
 // so the main screen can place it off-axis and slide it with the helm's
@@ -529,6 +530,7 @@ export class Game {
   private gateTimer = 30;
   private spawnTimer = 10;
   private breakerTimer = 22;
+  private shipVoiceTimer = 12; // first computer status line ~12s in
   private spawnRateMult = 1;  // scripted 'spawnRate' actions replace this
   private calmUntil = 0;      // missionTime before which ambient spawns pause
   private maxAsteroidsOverride: number | null = null; // scripted 'setMaxAsteroids' (null = use MissionDef)
@@ -737,6 +739,7 @@ export class Game {
     this.debrief = null;
     this.spawnTimer = range(this.rng, def.spawnEvery);
     this.breakerTimer = range(this.rng, def.breakerEvery);
+    this.shipVoiceTimer = 12;
     this.spawnRateMult = 1;
     this.calmUntil = 0;
     this.maxAsteroidsOverride = null;
@@ -1682,6 +1685,15 @@ export class Game {
       this.breakerTimer = range(this.rng, m.breakerEvery) / this.diff('engineering');
     }
 
+    // Voice of the ship (T6): a measured computer persona reports status now and
+    // then — diegetic character, no mechanics. Reflects real state so it reads
+    // as the ship actually talking, not flavor noise.
+    this.shipVoiceTimer -= dt;
+    if (this.shipVoiceTimer <= 0) {
+      this.shipVoiceTimer = SHIP_VOICE_CADENCE;
+      this.shipVoice();
+    }
+
     // Spawn nav gates periodically (rate scaled by helm difficulty — more gates
     // is more steering load), capped so the field ahead never floods.
     this.gateTimer -= dt;
@@ -1906,6 +1918,22 @@ export class Game {
     this.spawnContact('ghost', { min: 10, max: 16 }, { min: 0, max: 0 });
   }
 
+  // Voice of the ship (T6): a measured computer status line reflecting real
+  // state — diegetic character, no mechanics. Prefixed so clients can style it.
+  private shipVoice() {
+    const options: string[] = ['Life support nominal.'];
+    options.push(this.hull < 55 ? `Hull integrity at ${Math.round(this.hull)} percent.` : 'Hull integrity holding.');
+    const tripped = SYSTEMS.filter((s) => this.breakers[s] !== null).length;
+    if (tripped > 0) options.push(`${tripped} breaker${tripped > 1 ? 's' : ''} offline. Engineering, advise.`);
+    const n = this.asteroids.filter((a) => this.targetable(a)).length;
+    if (n > 0) options.push(`Sensors tracking ${n} contact${n > 1 ? 's' : ''}.`);
+    if (this.shieldRaised) options.push(`Deflector screen at ${Math.round((this.shieldStrength / SHIELD_MAX) * 100)} percent.`);
+    // Deterministic pick (missionTime-indexed) — no rng, so the seeded run is
+    // byte-for-byte reproducible with or without anyone listening.
+    const line = options[Math.floor(this.missionTime / 7) % options.length];
+    this.event(`Computer: ${line}`);
+  }
+
   // Solar flare: when the announced strike time arrives, stress raised systems.
   private updateFlare() {
     if (this.flareAt === null || this.missionTime < this.flareAt) return;
@@ -2040,6 +2068,18 @@ export class Game {
       score >= 70 ? 'Commendable' :
       score >= 50 ? 'Mission Accomplished' :
       score >= 30 ? 'Pyrrhic Success' : 'Barely Survived';
+    // Elite-flagship sign-off + consequence beats (T2/T4). Self-contained in the
+    // debrief record; cross-run memory (a rescued convoy hailing next mission,
+    // salvage funding an upgrade) lands with the persistence layer.
+    const signoff = score >= 85 ? ' Sector Command logs the action with distinction.'
+      : score >= 50 ? ' Sector Command notes a duty well discharged.'
+      : ' Sector Command will want a full report.';
+    let consequence = '';
+    if (this.podsRescued > 0) consequence += ` ${this.podsRescued} soul${this.podsRescued > 1 ? 's' : ''} owe their lives to this crew.`;
+    if (this.podsDestroyed > 0) consequence += ' A pod lost to our own guns will weigh on the record.';
+    const salvageBanked = this.cargo.reduce((s, c) => s + c.value, 0);
+    if (salvageBanked > 0) consequence += ` ${salvageBanked} units of salvage banked to the ship's fund.`;
+    narrative += signoff + consequence;
     // Finalize telemetry averages.
     this.tel.avgAlignment = this.telSamples > 0 ? round1(this.alignAbsSum / this.telSamples) : 0;
     this.tel.avgThrottle = this.telSamples > 0 ? Math.round(this.throttleSum / this.telSamples) : 0;

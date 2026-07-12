@@ -215,9 +215,19 @@ const net = initStation({
 debugPanel = mountDebugPanel(document.getElementById('debug-panel'), net);
 
 // --- Captain's tactical readout: a one-glance status per station ---
+const OFFICER_POP = { helm: '#5bd6ff', engineering: '#ffb347', weapons: '#ff6f6f' };
 function updateCaptainHud(state) {
   captainHud.classList.toggle('hidden', state.phase !== 'active');
   if (state.phase !== 'active') return;
+  // Officer name chips (T1): a small console-pop dot + name on each crew row, so
+  // the captain (and the room) sees who's on each station. Kept small.
+  for (const [seatId, rowId, label] of [['helm', 'cap-helm', 'HELM'], ['engineering', 'cap-eng', 'ENG'], ['weapons', 'cap-wep', 'WEP']]) {
+    const el = document.querySelector(`#${rowId} .cap-name`);
+    if (!el) continue;
+    const s = state.seats[seatId];
+    const who = s && s.connected && s.name ? s.name : '';
+    el.innerHTML = who ? `<span style="color:${OFFICER_POP[seatId]}">■</span> ${label} · ${who}` : label;
+  }
   const off = Math.abs(state.alignment);
   const dir = state.alignment > 0 ? 'STBD' : 'PORT';
   const vel = `vel ${(state.speed ?? 0).toFixed(1)}`;
@@ -547,6 +557,7 @@ function frame(ts) {
   }
 
   if (latest && latest.phase === 'active') {
+    drawDistantTraffic(w, h, yawPx, dpr); // T5: faint far vessels crossing the lane
     drawDestination(w, h, cx, dpr);
     drawGates(w, h, cy, dpr);
     drawObstacles(w, h, cy, dpr);
@@ -589,6 +600,35 @@ function frame(ts) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// T5 environmental storytelling: a few faint, far-off vessels crossing the lane
+// (running lights blinking), seeded per mission so the Verge feels inhabited —
+// pure backdrop, no mechanics. Drifts with the helm's yaw at low parallax.
+let trafficLanes = [];
+let trafficKey = '';
+function trafficFor(missionId) {
+  if (missionId === trafficKey) return trafficLanes;
+  trafficKey = missionId;
+  let h = 0; for (const c of missionId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const rand = () => { h = (h * 1664525 + 1013904223) >>> 0; return h / 2 ** 32; };
+  trafficLanes = Array.from({ length: 2 + Math.floor(rand() * 2) }, () => ({
+    y: 0.16 + rand() * 0.4, speed: (0.006 + rand() * 0.01) * (rand() < 0.5 ? -1 : 1),
+    phase: rand(), col: rand() < 0.5 ? '#9fb4e0' : '#c8a882',
+  }));
+  return trafficLanes;
+}
+function drawDistantTraffic(w, h, yawPx, dpr) {
+  const tNow = performance.now() / 1000;
+  for (const v of trafficFor(latest.mission?.id || 'x')) {
+    const x = (((v.phase + v.speed * tNow) % 1) + 1) % 1 * w + yawPx * 0.25;
+    const y = v.y * h;
+    const blink = (Math.sin(tNow * 3 + v.phase * 9) + 1) / 2;
+    ctx.fillStyle = `rgba(${v.col === '#9fb4e0' ? '159,180,224' : '200,168,130'},0.5)`;
+    ctx.fillRect(x, y, 6 * dpr, 1.6 * dpr);           // tiny far hull
+    ctx.fillStyle = `rgba(180,220,255,${0.25 + blink * 0.55})`;
+    ctx.fillRect(x + (v.speed > 0 ? 6 * dpr : -1.5 * dpr), y - 0.5 * dpr, 1.5 * dpr, 1.5 * dpr); // running light
+  }
+}
 
 // Mission-end cinematic fade (DOM layer above the debrief overlay): win fades
 // from white, a loss from black, a destroyed ship flashes red then goes to black
