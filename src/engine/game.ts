@@ -260,9 +260,14 @@ const NARRATE_CONSOLE_EVERY = 45;  // s — min gap between console-effectivenes
 // positional (does not affect damage or time-to-impact).
 const ASTEROID_BEARING = { min: 12, max: 78 };
 
+// Sensor class prefix, revealed only once a contact is IDENTIFIED (inside the
+// ID ring). Until then a detected contact reads "???-NNN" (number only); at ID
+// it becomes "<CLASS>-NNN" — same number, so "???-314" resolves to "AST-314".
+const CLASS_PREFIX: Record<ContactKind, string> = { rock: 'AST', pod: 'POD', mineral: 'ORE', ghost: 'ANOM' };
+
 export interface Asteroid {
   id: number;
-  label: string;    // human-readable callsign, e.g. "AST-042"
+  designation: number; // stable 3-digit sensor tag (NNN); shown as ???-NNN then CLASS-NNN
   kind: ContactKind; // rock / pod / mineral / ghost (resolved on the scope at ID range)
   impactIn: number; // seconds until impact (for non-rocks, "seconds until it drifts past")
   dmg: number;      // damage dealt on impact (derived from size & speed; 0 for non-hazards)
@@ -529,7 +534,7 @@ export class Game {
   private debrisUntil = 0;     // while active, running hot scrapes the hull (helm pressure)
   private debrisTickTimer = 0; // paces the scrape feedback (fx/log) while in debris
   private fullLog: { t: number; text: string }[] = []; // complete captain's log (debrief review)
-  private usedLabels = new Set<string>(); // contact callsigns already issued this run
+  private usedDesignations = new Set<number>(); // contact callsigns already issued this run
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -714,7 +719,7 @@ export class Game {
     this.chargeFullTime = 0;
     this.log = [];
     this.fullLog = [];
-    this.usedLabels.clear();
+    this.usedDesignations.clear();
     this.killTimes = [];
     this.damageWindow = [];
     this.narratedHalfway = false;
@@ -913,7 +918,7 @@ export class Game {
     if (Math.abs(this.alignment - t.bearing) > TRACTOR_ARC) { this.event('Contact is outside the tractor arc — bring the bow around.'); return; }
     this.tractorLatched = true;
     this.pushFx({ kind: 'tractorBeam', targetId: t.id });
-    this.event(`Tractor beam latched onto ${t.label} — reeling it in. Helm, hold this line.`);
+    this.event(`Tractor beam latched onto ${this.label(t)} — reeling it in. Helm, hold this line.`);
   }
 
   // Dump one item from the hold (recovers maneuverability; forfeits its value).
@@ -985,7 +990,7 @@ export class Game {
     // lands, the charge is spent, the contact survives — the governor tradeoff).
     if (snapshot && target.size > SNAPSHOT_MAX_SIZE) {
       this.pushFx({ kind: 'laser', targetId: target.id, hit: false });
-      this.event(`Snapshot glanced off ${target.label} — too big for a partial charge.`);
+      this.event(`Snapshot glanced off ${this.label(target)} — too big for a partial charge.`);
       return;
     }
     // Ghosts are sensor false-positives: the shot passes through empty space.
@@ -994,7 +999,7 @@ export class Game {
       this.targetId = null;
       this.targetableSince.delete(target.id);
       this.pushFx({ kind: 'laser', targetId: target.id, hit: false });
-      this.event(`Fired on ${target.label} — nothing there. Sensor ghost.`);
+      this.event(`Fired on ${this.label(target)} — nothing there. Sensor ghost.`);
       return;
     }
     // Destroy the contact.
@@ -1006,19 +1011,19 @@ export class Game {
     if (target.kind === 'pod') {
       // The shame path: a rescue pod destroyed. Heavy scoring penalty in finish.
       this.podsDestroyed++;
-      this.event(`WE FIRED ON A RESCUE POD — ${target.label} lost with all hands. Confirm contacts before firing!`, true);
+      this.event(`WE FIRED ON A RESCUE POD — ${this.label(target)} lost with all hands. Confirm contacts before firing!`, true);
       return;
     }
     if (target.kind === 'mineral') {
       // Blasting salvage just wastes it (no score) — a soft mistake.
-      this.event(`Vaporized ${target.label} — that was salvage, not a threat.`);
+      this.event(`Vaporized ${this.label(target)} — that was salvage, not a threat.`);
       return;
     }
     // A rock killed before it reached us: a neutralized threat + kill-cluster feed.
     this.stats.destroyed++;
     this.killTimes.push(this.missionTime);
     this.threatsNeutralized++;
-    this.event(`Direct hit! ${target.label} destroyed.`);
+    this.event(`Direct hit! ${this.label(target)} destroyed.`);
   }
 
   // Bounded effect buffer: cleared by the transport after each broadcast, but
@@ -1090,15 +1095,14 @@ export class Game {
   }
 
   // Whether sensors currently resolve this contact's true kind (drives ID edge).
-  // A ROCK reads as a rock the moment it's detected — it's inert and obvious, so
-  // there's no combat penalty to the ID split (weapons can engage promptly).
-  // Everything else (pod / mineral / ghost) needs the tighter ID range or a
-  // pulse — so an UNKNOWN contact is precisely "detected but not a confirmed
-  // rock", i.e. possibly a rescue pod. That's the don't-shoot discipline: hold
-  // fire on UNKNOWN, and let sensors/pulse resolve it into a pod to tow.
+  // The THREE-threshold model: beyond detection range = no HUD (captain's eyes
+  // only); inside detection but outside the tighter ID range = tracked as a
+  // number-only "???-NNN" (targetable, kind UNKNOWN); inside the ID range (or
+  // pulse-revealed) = fully identified with its class letters. EVERY kind —
+  // rocks included — must enter the ID ring to resolve, so the captain reads
+  // silhouettes out the window and calls the type before the sensors letter it.
   private resolvesId(a: Asteroid): boolean {
     if (a.revealed) return true;
-    if (a.kind === 'rock') return a.impactIn <= this.sensorRange();
     return a.impactIn <= this.idRange();
   }
 
@@ -1230,25 +1234,23 @@ export class Game {
     return { kind: r.kind, unit: r.unit, label: r.label ?? null, total: r.total, remaining: round1(Math.max(0, remaining)) };
   }
 
-  // Contact callsigns: randomized designation (prefix + non-sequential number)
-  // so the sky reads like a survey catalog rather than a spawn counter.
-  // Seeded rng + a per-run used-set keeps them reproducible and unique.
-  private contactLabel(kind: ContactKind = 'rock'): string {
-    // Prefix hints at the kind for flavor once resolved — but note the client
-    // shows a neutral "UNKNOWN" designation until sensors identify it, so the
-    // prefix never leaks the kind early.
-    const prefixes = kind === 'pod' ? ['POD', 'LZ', 'SRV']
-      : kind === 'mineral' ? ['ORE', 'CHNK', 'LODE']
-      : kind === 'ghost' ? ['ANOM', 'ECHO', 'GHST']
-      : ['AST', 'KOR', 'TYR', 'OBJ', 'RHO', 'CET'];
-    for (let tries = 0; tries < 50; tries++) {
-      const label = `${prefixes[Math.floor(this.rng() * prefixes.length)]}-${10 + Math.floor(this.rng() * 90)}`;
-      if (!this.usedLabels.has(label)) {
-        this.usedLabels.add(label);
-        return label;
-      }
+  // A unique 3-digit sensor designation (the NNN). Kind-neutral by construction:
+  // the class prefix is only attached at identification, so a detected-but-
+  // unresolved contact can never leak its kind through the tag. Seeded + a
+  // per-run used-set keeps them reproducible and unique.
+  private contactDesignation(): number {
+    for (let tries = 0; tries < 80; tries++) {
+      const n = 100 + Math.floor(this.rng() * 900); // 100..999
+      if (!this.usedDesignations.has(n)) { this.usedDesignations.add(n); return n; }
     }
-    return `AST-${this.nextAsteroidId}`; // pathological fallback: guaranteed unique
+    return this.nextAsteroidId + 100; // pathological fallback: guaranteed unique
+  }
+
+  // The display tag for a contact: "???-NNN" until identified, then "CLASS-NNN"
+  // (same number). Used everywhere a contact is named — logs, scope, HUD — so the
+  // kind never leaks before the sensors resolve it.
+  private label(a: Asteroid): string {
+    return `${a.identified ? CLASS_PREFIX[a.kind] : '???'}-${a.designation}`;
   }
 
   private spawnAsteroid(impactIn: { min: number; max: number }, dmg: { min: number; max: number }) {
@@ -1274,7 +1276,7 @@ export class Game {
     const mass = kind === 'pod' ? 1 : kind === 'mineral' ? range(this.rng, { min: 1, max: 2 }) : 0;
     const a: Asteroid = {
       id,
-      label: this.contactLabel(kind),
+      designation: this.contactDesignation(),
       kind,
       impactIn: range(this.rng, impactIn),
       dmg: dealt,
@@ -1518,7 +1520,7 @@ export class Game {
         a.announced = true;
         this.targetableSince.set(a.id, this.missionTime);
         this.pushFx({ kind: 'sensorContact' });
-        this.event(`Sensor contact ${a.label} — designation unconfirmed.`);
+        this.event(`Sensor contact ${this.label(a)} — designation unconfirmed.`);
       }
     }
     // Identification edge: the first time sensors resolve a contact's true kind,
@@ -1527,9 +1529,9 @@ export class Game {
     for (const a of this.asteroids) {
       if (!a.identified && this.resolvesId(a)) {
         a.identified = true;
-        if (a.kind === 'pod') this.event(`ID: ${a.label} is a RESCUE POD — do NOT fire. Crew Chief, tractor it aboard.`, true);
-        else if (a.kind === 'mineral') this.event(`ID: ${a.label} is salvage — tractor it if you can.`, false);
-        else if (a.kind === 'ghost') this.event(`${a.label} resolved as a sensor ghost — nothing there.`, false);
+        if (a.kind === 'pod') this.event(`ID: ${this.label(a)} is a RESCUE POD — do NOT fire. Crew Chief, tractor it aboard.`, true);
+        else if (a.kind === 'mineral') this.event(`ID: ${this.label(a)} is salvage — tractor it if you can.`, false);
+        else if (a.kind === 'ghost') this.event(`${this.label(a)} resolved as a sensor ghost — nothing there.`, false);
       }
     }
     // Cull identified ghosts (false positives that have resolved).
@@ -1613,7 +1615,7 @@ export class Game {
       if (!locked) this.targetId = null;
       else if (!this.targetable(locked)) {
         this.targetId = null;
-        this.event(`Target lock lost — ${locked.label} faded below sensor resolution.`);
+        this.event(`Target lock lost — ${this.label(locked)} faded below sensor resolution.`);
       }
     }
     if (this.debrisUntil > 0 && this.missionTime >= this.debrisUntil) {
@@ -1690,8 +1692,8 @@ export class Game {
     this.pushFx({ kind: 'impact', hullDmg: Math.round(remaining), absorbed: remaining <= 0 });
     this.event(
       remaining > 0
-        ? `IMPACT: ${a.label} hit the hull for ${Math.round(remaining)} damage!`
-        : `${a.label} absorbed by shields.`,
+        ? `IMPACT: ${this.label(a)} hit the hull for ${Math.round(remaining)} damage!`
+        : `${this.label(a)} absorbed by shields.`,
     );
   }
 
@@ -1721,7 +1723,7 @@ export class Game {
     }
     const offset = Math.abs(this.alignment - t.bearing);
     if (offset > TRACTOR_ARC) {
-      this.event(`Latch on ${t.label} slipped — bow swung outside the arc. Progress held.`);
+      this.event(`Latch on ${this.label(t)} slipped — bow swung outside the arc. Progress held.`);
       this.tractorLatched = false; return;
     }
     // Reel rate scales with effective weapons power (0.4x at 1 power .. 1x at max)
@@ -1739,7 +1741,7 @@ export class Game {
     this.asteroids = this.asteroids.filter((a) => a.id !== t.id);
     this.targetableSince.delete(t.id);
     const value = t.kind === 'pod' ? 3 : Math.max(1, t.mass); // rescued lives score highest
-    this.cargo.push({ id: this.nextCargoId++, label: t.label, kind: t.kind, mass: Math.max(1, t.mass), value });
+    this.cargo.push({ id: this.nextCargoId++, label: this.label(t), kind: t.kind, mass: Math.max(1, t.mass), value });
     this.cargoRecovered++;
     if (t.kind === 'pod') this.podsRescued++;
     this.tractorLatched = false;
@@ -1747,15 +1749,15 @@ export class Game {
     this.tractorReel = 0;
     this.pushFx({ kind: 'stow' });
     this.event(t.kind === 'pod'
-      ? `${t.label} aboard — survivors recovered. Well done.`
-      : `${t.label} secured in the hold.`);
+      ? `${this.label(t)} aboard — survivors recovered. Well done.`
+      : `${this.label(t)} secured in the hold.`);
   }
 
   // A non-rock contact we never tractored has drifted past — lost (no score).
   private contactLost(c: Asteroid) {
     this.targetableSince.delete(c.id);
-    if (c.kind === 'pod') this.event(`${c.label} drifted out of range — the pod is lost.`, true);
-    else if (c.kind === 'mineral') this.event(`${c.label} drifted past — salvage lost.`, false);
+    if (c.kind === 'pod') this.event(`${this.label(c)} drifted out of range — the pod is lost.`, true);
+    else if (c.kind === 'mineral') this.event(`${this.label(c)} drifted past — salvage lost.`, false);
   }
 
   // Crew Chief deck operations. Runs every tick. With a human chief aboard,
@@ -2190,6 +2192,7 @@ export class Game {
       warpReadyIn: round1(this.warpCd),
       // Passive sensor range in seconds; sensor pulse readiness for engineering.
       sensorRange: round1(this.sensorRange()),
+      idRange: round1(this.idRange()), // inner ring: contacts inside it are IDENTIFIED (class letters)
       sensorPulseReadyIn: round1(this.sensorPulseCd),
       // Environmental obstacles: seconds remaining (0 = inactive). Engineering
       // renders the storm warning, helm the debris warning, main screen both.
@@ -2242,7 +2245,7 @@ export class Game {
       // `tractorable` is a convenience flag for the Crew Chief (a pod/mineral in
       // range the beam could latch).
       asteroids: this.asteroids.map((a) => ({
-        id: a.id, label: a.label, impactIn: round1(a.impactIn), dmg: a.dmg,
+        id: a.id, label: this.label(a), impactIn: round1(a.impactIn), dmg: a.dmg,
         size: round1(a.size), speed: round1(a.speed), targetable: this.targetable(a),
         // `kind` is the SENSOR-resolved classification (UNKNOWN until identified)
         // — the weapons scope uses it. `visualKind` reveals the true kind once a

@@ -158,7 +158,7 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   const trips = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(SANDBOX, 'engineering', d) as any;
     for (let i = 0; i < 20; i++) {
-      game.applyImpact({ id: 900 + i, label: `CHK-${i}`, dmg: 0.5, impactIn: 0, size: 1, speed: 1, bearing: 0, revealed: true });
+      game.applyImpact({ id: 900 + i, designation: 900 + i, dmg: 0.5, impactIn: 0, size: 1, speed: 1, bearing: 0, revealed: true });
       for (const s of ['engines', 'shields', 'weapons', 'sensors']) game.resetBreaker(s);
     }
     return game.stats.breakersTripped as number;
@@ -194,7 +194,7 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   // Default sensors=1 -> detection range 10+2 = 12s. Hand-place a rock at 11.5s
   // (targetable now, but only just — dropping a sensor point pulls range under it).
   game.asteroids.push({
-    id: 501, label: 'CHK-EDGE', kind: 'rock', impactIn: 11.5, dmg: 5, size: 1, speed: 1, mass: 0,
+    id: 501, designation: 501, kind: 'rock', impactIn: 11.5, dmg: 5, size: 1, speed: 1, mass: 0,
     revealed: false, identified: true, announced: true, bearing: 0,
   });
   game.action('weapons', { kind: 'target', id: 501 });
@@ -213,7 +213,7 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   const game = freshGame() as any;
   game.action('weapons', { kind: 'governor', mode: 'snapshot' });
   game.charge = 45;
-  game.asteroids.push({ id: 610, label: 'SMALL', kind: 'rock', impactIn: 5, dmg: 5, size: 0.8, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.asteroids.push({ id: 610, designation: 610, kind: 'rock', impactIn: 5, dmg: 5, size: 0.8, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
   game.action('weapons', { kind: 'target', id: 610 });
   game.action('weapons', { kind: 'fire' });
   check('snapshot at 40% destroys a small rock', !game.asteroids.some((a: any) => a.id === 610), 'small rock survived');
@@ -221,7 +221,7 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   const g2 = freshGame() as any;
   g2.action('weapons', { kind: 'governor', mode: 'snapshot' });
   g2.charge = 45;
-  g2.asteroids.push({ id: 611, label: 'BIG', kind: 'rock', impactIn: 5, dmg: 5, size: 1.5, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  g2.asteroids.push({ id: 611, designation: 611, kind: 'rock', impactIn: 5, dmg: 5, size: 1.5, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
   g2.action('weapons', { kind: 'target', id: 611 });
   g2.action('weapons', { kind: 'fire' });
   check('snapshot glances off a big rock (survives, charge spent)', g2.asteroids.some((a: any) => a.id === 611) && g2.charge === 0, `present=${g2.asteroids.some((a: any) => a.id === 611)} charge=${g2.charge}`);
@@ -232,7 +232,7 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   const game = freshGame() as any;
   game.charge = 100;
   game.tractorLatched = true;
-  game.asteroids.push({ id: 620, label: 'ROCK', kind: 'rock', impactIn: 5, dmg: 5, size: 1, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.asteroids.push({ id: 620, designation: 620, kind: 'rock', impactIn: 5, dmg: 5, size: 1, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
   game.action('weapons', { kind: 'target', id: 620 });
   game.action('weapons', { kind: 'fire' });
   check('cannot fire while tractor latched', game.asteroids.some((a: any) => a.id === 620) && game.charge === 100, `present=${game.asteroids.some((a: any) => a.id === 620)} charge=${game.charge}`);
@@ -289,7 +289,7 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
 {
   const game = freshGame() as any;
   game.charge = 100;
-  game.asteroids.push({ id: 630, label: 'POD-42', kind: 'pod', impactIn: 5, dmg: 0, size: 0.8, speed: 1, mass: 1, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.asteroids.push({ id: 630, designation: 642, kind: 'pod', impactIn: 5, dmg: 0, size: 0.8, speed: 1, mass: 1, revealed: true, identified: true, announced: true, bearing: 0 });
   game.action('weapons', { kind: 'target', id: 630 });
   game.action('weapons', { kind: 'fire' });
   check('firing on a pod removes it and records the shame stat', !game.asteroids.some((a: any) => a.id === 630) && game.podsDestroyed === 1, `podsDestroyed=${game.podsDestroyed}`);
