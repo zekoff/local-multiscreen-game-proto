@@ -137,6 +137,8 @@ select {
 .meter.cool > div { background: #4f7bd0; } /* charging / readiness (not health) */
 /* Snapshot-availability tick on the weapons charge gauge (40% threshold). */
 #snap-tick { position: absolute; top: 0; bottom: 0; left: 40%; width: 2px; border-radius: 1px; }
+/* Mission-end cinematic fade layer — sits above the debrief overlay. */
+#end-fade { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: 9999; background: #000; }
 .readout { font-family: monospace; font-size: 1.4rem; color: var(--accent); }
 .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
 

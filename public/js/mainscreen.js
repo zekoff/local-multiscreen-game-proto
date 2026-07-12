@@ -92,6 +92,22 @@ const net = initStation({
   },
   render(state) {
     consumeFx(state); // must run before we overwrite `latest`
+    // Animate out contacts that vanished since the last snapshot: a captured
+    // pod/salvage slides down toward the cargo bay; anything else that drifted
+    // past fades instead of popping out of existence.
+    if (latest && latest.asteroids) {
+      const nowIds = new Set(state.asteroids.map((a) => a.id));
+      const exploded = new Set((state.fx || []).filter((e) => e.kind === 'explosion').map((e) => e.id));
+      const stowed = (state.fx || []).some((e) => e.kind === 'stow');
+      for (const a of latest.asteroids) {
+        if (nowIds.has(a.id) || exploded.has(a.id)) continue; // still here, or blew up (own fx)
+        const p = astPos.get(a.id);
+        if (!p) continue;
+        const salvage = a.kind === 'pod' || a.kind === 'mineral' || a.visualKind === 'pod' || a.visualKind === 'mineral';
+        if (stowed && salvage) fadeCargo.push({ x: p.x, y: p.y, t: 0, kind: a.visualKind === 'pod' || a.kind === 'pod' ? 'pod' : 'mineral' });
+        else fadeAway.push({ x: p.x, y: p.y, t: 0 });
+      }
+    }
     latest = state;
     // Feed the alignment interpolator (smooth turning between snapshots).
     if (state.phase === 'active') onAlignmentSnapshot(state.alignment);
@@ -146,9 +162,10 @@ const net = initStation({
     if (debugPanel) debugPanel.update(state);
     // Debrief: populate ONCE per run (innerHTML rewrites reset the log's
     // scroll position, which the auto-scroller owns during the debrief).
-    if (state.phase !== 'debrief') debriefShownSeed = null;
+    if (state.phase !== 'debrief') { debriefShownSeed = null; endKind = ''; endFade = 0; }
     if (state.phase === 'debrief' && state.debrief && state.debrief.seed !== debriefShownSeed) {
       debriefShownSeed = state.debrief.seed;
+      triggerEndFade(state.debrief); // cinematic fade: win→white, loss→black, destroyed→red→black
       document.getElementById('debrief-mission').textContent =
         `${state.debrief.missionName} (seed ${state.debrief.seed})`;
       const s = state.debrief.stats;
@@ -203,14 +220,15 @@ function updateCaptainHud(state) {
   if (state.phase !== 'active') return;
   const off = Math.abs(state.alignment);
   const dir = state.alignment > 0 ? 'STBD' : 'PORT';
+  const vel = `vel ${(state.speed ?? 0).toFixed(1)}`;
   setCapRow('cap-helm',
-    off < 12 ? `on course · thr ${state.throttle}%` : `${off.toFixed(0)}° ${dir} · thr ${state.throttle}%`,
+    (off < 12 ? `on course · thr ${state.throttle}%` : `${off.toFixed(0)}° ${dir} · thr ${state.throttle}%`) + ` · ${vel}`,
     off > 45 ? 'alert' : off > 20 ? 'warn' : '');
-  const tripped = ['engines', 'shields', 'weapons', 'sensors', 'tractor'].filter((s) => state.breakers[s]);
+  const tripped = ['engines', 'shields', 'weapons', 'sensors'].filter((s) => state.breakers[s]);
   const p = state.power;
   const towing = state.tractor && state.tractor.latched;
   setCapRow('cap-eng',
-    `pwr e${p.engines} s${p.shields} w${p.weapons} sen${p.sensors} t${p.tractor} · det ${Math.round(state.sensorRange)}s`
+    `pwr e${p.engines} s${p.shields} w${p.weapons} sen${p.sensors} · det ${Math.round(state.sensorRange)}s`
       + (towing ? ' · TOWING' : '')
       + (tripped.length ? ` · ${tripped.join(',')} TRIPPED ×½` : ''), // tripped = running at half power
     tripped.length ? 'alert' : '');
@@ -283,11 +301,18 @@ function updateCinematic(state) {
 const lasers = [];      // { id, hit, life }
 const explosions = [];  // { id, life, max }
 const gateFx = [];      // { passed, life }
+const fadeCargo = [];   // captured contacts animating down toward the cargo bay
+const fadeAway = [];    // contacts that drifted past — fade out instead of vanishing
 let shake = 0;
 let warpFlash = 0;      // white full-screen flash on an Emergency Warp
 let pulseFlash = 0;     // cyan flash on an active sensor pulse
 let shieldFlash = 0;    // cool blue edge shimmer when the shields soak a hit
 let stormFlash = 0;     // brief wash when an ion storm front arrives
+let collisionBanner = 0;// brief centered COLLISION banner on a hull strike
+let glitch = 0;         // main-screen instability flicker (hull breach anomaly)
+let endFade = 0;        // mission-end transition progress (0..1), see endTransition
+let endKind = '';       // 'win' | 'loss' | 'destroyed'
+const prevCargoIds = new Set(); // to detect a newly-stowed contact (cargo animation)
 
 // The main screen renders EVERY effect visually, but only plays the ship-wide
 // sounds (explosion/impact/warp). The laser is heard at weapons, gate chimes at
@@ -298,15 +323,21 @@ function consumeFx(state) {
     if (e.kind === 'laser') { lasers.push({ id: e.targetId, hit: e.hit, life: 0.28 }); }
     else if (e.kind === 'explosion') { explosions.push({ id: e.id, life: 0.55, max: 0.55 }); }
     else if (e.kind === 'impact') {
-      shake = Math.min(30, shake + (e.absorbed ? 6 : 11 + e.hullDmg * 0.6));
-      // A soaked hit shimmers blue at the edges — the shield doing its job
-      // reads differently from the hull taking it.
-      if (e.absorbed) shieldFlash = 0.5;
+      if (e.absorbed) {
+        shake = Math.min(40, shake + 6);
+        // A soaked hit shimmers blue at the edges — the shield doing its job.
+        shieldFlash = 0.5;
+      } else {
+        // A real hull strike hits harder and longer, with a center COLLISION call.
+        shake = Math.min(40, shake + 16 + e.hullDmg * 0.7);
+        collisionBanner = 1;
+      }
     }
-    else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) shake = Math.min(shake + 3, 30); }
-    else if (e.kind === 'warp') { shake = 30; warpFlash = 0.7; }
+    else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) shake = Math.min(shake + 3, 40); }
+    else if (e.kind === 'warp') { shake = 34; warpFlash = 0.7; }
     else if (e.kind === 'sensorPulse') { pulseFlash = 0.45; }
     else if (e.kind === 'ionStorm') { stormFlash = 0.6; }
+    else if (e.kind === 'anomaly') { glitch = Math.min(1, glitch + 0.7); } // hull-breach instability
   }
   playFxAudio(state.fx, audio, MAIN_AUDIO_KINDS);
 }
@@ -344,13 +375,17 @@ function nebulaFor(missionId) {
   let hsh = 0;
   for (const c of missionId) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;
   const rand = () => { hsh = (hsh * 1664525 + 1013904223) >>> 0; return hsh / 2 ** 32; };
-  const palettes = [[96, 110, 200], [70, 140, 160], [140, 90, 170], [90, 130, 120]];
-  nebulaBlobs = Array.from({ length: 3 }, () => ({
-    x: 0.1 + rand() * 0.8, y: 0.1 + rand() * 0.6,
-    r: 0.25 + rand() * 0.3,
+  const palettes = [[96, 110, 200], [70, 140, 160], [140, 90, 170], [90, 130, 120], [150, 110, 90]];
+  // More blobs at VARIED parallax depths (0.2 = far/barely moves .. 0.8 = near/
+  // shifts more with the helm's steering) — layered depth reference points, not
+  // just the destination, so the topology reads as you turn.
+  nebulaBlobs = Array.from({ length: 5 }, () => ({
+    x: 0.05 + rand() * 0.9, y: 0.06 + rand() * 0.7,
+    r: 0.2 + rand() * 0.32,
     c: palettes[Math.floor(rand() * palettes.length)],
-    a: 0.035 + rand() * 0.03,
+    a: 0.03 + rand() * 0.03,
     drift: (rand() - 0.5) * 0.004, // slow horizontal drift, fraction of width/s
+    depth: 0.2 + rand() * 0.6,     // parallax factor vs the helm yaw
   }));
   return nebulaBlobs;
 }
@@ -402,14 +437,17 @@ function asteroidScreenPos(a, w, h, yawPx) {
   const closeness = Math.max(0, Math.min(1, 1 - a.impactIn / 25));
   const bx = (a.bearing ?? 0) / 100;       // -1..1 port/starboard
   const idH = (a.id * 0.377) % 1;          // stable vertical spread per rock
-  const centerX = w / 2 + yawPx;
-  const centerY = h / 2;
+  const idOff = ((a.id * 0.618) % 1) - 0.5; // -0.5..0.5 stable per rock
+  // Strike point is NOT dead center — each rock funnels to a slightly different
+  // spot, so they hit the ship at offset angles instead of all one point.
+  const strikeX = w / 2 + yawPx + idOff * w * 0.16;
+  const strikeY = h / 2 + (idH - 0.5) * h * 0.14;
   const farX = w / 2 + bx * w * 0.42 + yawPx;
   const farY = h * (0.22 + idH * 0.5);
   const t = closeness * closeness;          // accelerate convergence near impact
   return {
-    x: farX + (centerX - farX) * t,
-    y: farY + (centerY - farY) * t,
+    x: farX + (strikeX - farX) * t,
+    y: farY + (strikeY - farY) * t,
     closeness,
   };
 }
@@ -483,7 +521,7 @@ function frame(ts) {
   if (latest?.mission?.id) {
     const tNow = performance.now() / 1000;
     for (const b of nebulaFor(latest.mission.id)) {
-      const bx = ((b.x + b.drift * tNow) % 1.2) * w + yawPx * 0.5;
+      const bx = ((b.x + b.drift * tNow) % 1.2) * w + yawPx * b.depth;
       const by = b.y * h;
       const br = b.r * Math.min(w, h) * 1.6;
       const g = ctx.createRadialGradient(bx, by, br * 0.1, bx, by, br);
@@ -541,10 +579,119 @@ function frame(ts) {
   }
   drawGateFlash(w, h, dt);
   drawFlashes(w, h, dt);
+  drawFades(w, h, dt, dpr);
+  // Hull-breach instability flicker + centered COLLISION call on a strike.
+  drawGlitch(w, h, dt);
+  drawCollisionBanner(w, h, dt, dpr);
+  // Big translucent notices for ongoing effects / upcoming events / red alert.
+  if (latest && latest.phase === 'active') drawNotifications(w, h, dpr);
 
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// Mission-end cinematic fade (DOM layer above the debrief overlay): win fades
+// from white, a loss from black, a destroyed ship flashes red then goes to black
+// — then the layer fades out to reveal the debrief underneath.
+function triggerEndFade(debrief) {
+  const el = document.getElementById('end-fade');
+  if (!el) return;
+  const destroyed = debrief.outcome === 'adrift';
+  const win = !destroyed && debrief.score >= 50;
+  el.style.transition = 'none';
+  el.style.background = destroyed ? '#5a0000' : win ? '#ffffff' : '#000000';
+  el.style.opacity = '1';
+  requestAnimationFrame(() => {
+    el.style.transition = 'opacity 1.6s ease, background-color 0.8s ease';
+    if (destroyed) el.style.background = '#000000'; // red → black
+    el.style.opacity = '0';
+  });
+}
+
+// --- Notification framework: big, translucent banners for ongoing effects
+// (asteroid field, ion storm, debris, blackout), upcoming events (solar flare
+// in Ns), and a pulsing RED ALERT. One place feeds off the serialized flags. ---
+function activeNotices(s) {
+  const n = [];
+  if (s.hull !== undefined && s.hull < 25) n.push({ text: '⚠ RED ALERT', tone: 'alert', big: true });
+  if (s.flareIn > 0) n.push({ text: `☀ SOLAR FLARE IN ${Math.ceil(s.flareIn)}s — SAFE POSTURE`, tone: 'warn' });
+  if (s.viewImpaired) n.push({ text: '◇ FORWARD VIEW LOST — FLY ON SENSORS', tone: 'warn' });
+  if (s.ionStormIn > 0) n.push({ text: '≈ ION STORM — SENSORS DEGRADED', tone: 'warn' });
+  if (s.debrisIn > 0) n.push({ text: '⋯ DEBRIS FIELD — EASE THROTTLE', tone: 'warn' });
+  const inbound = (s.asteroids || []).filter((a) => a.targetable && (a.kind === 'rock' || a.kind === 'unknown')).length;
+  if (inbound >= 3) n.push({ text: '☄ ASTEROID FIELD', tone: 'warn' });
+  return n;
+}
+function drawNotifications(w, h, dpr) {
+  const notices = activeNotices(latest);
+  if (!notices.length) return;
+  ctx.textAlign = 'center';
+  let y = h * 0.12;
+  for (const nt of notices) {
+    const pulse = nt.tone === 'alert' ? 0.55 + 0.45 * Math.sin(performance.now() / 250) : 0.75;
+    const size = (nt.big ? 34 : 17) * dpr;
+    ctx.font = `700 ${size}px system-ui, sans-serif`;
+    ctx.fillStyle = nt.tone === 'alert' ? `rgba(255,70,70,${pulse})` : `rgba(255,190,90,${pulse})`;
+    ctx.fillText(nt.text, w / 2, y);
+    y += size * 1.3;
+  }
+  // Pulsing red edge bars reinforce a red-alert state.
+  if (notices.some((n) => n.tone === 'alert')) {
+    const p = 0.10 + 0.10 * Math.sin(performance.now() / 250);
+    ctx.fillStyle = `rgba(255,0,0,${p})`;
+    ctx.fillRect(0, 0, w, h * 0.05);
+    ctx.fillRect(0, h * 0.95, w, h * 0.05);
+  }
+}
+
+// Brief centered COLLISION call after a hull strike (with the heavier shake).
+function drawCollisionBanner(w, h, dt, dpr) {
+  if (collisionBanner <= 0) return;
+  collisionBanner = Math.max(0, collisionBanner - dt * 1.6);
+  ctx.textAlign = 'center';
+  ctx.font = `800 ${46 * dpr}px system-ui, sans-serif`;
+  ctx.fillStyle = `rgba(255,80,80,${Math.min(1, collisionBanner)})`;
+  ctx.fillText('COLLISION', w / 2, h * 0.5);
+}
+
+// Contacts leaving the screen: passed-by ones fade in place; captured salvage
+// slides down toward the cargo bay (bottom-center) and fades as it's stowed.
+function drawFades(w, h, dt, dpr) {
+  for (let i = fadeAway.length - 1; i >= 0; i--) {
+    const f = fadeAway[i];
+    f.t += dt / 0.6;
+    if (f.t >= 1) { fadeAway.splice(i, 1); continue; }
+    ctx.globalAlpha = (1 - f.t) * 0.5;
+    ctx.fillStyle = 'rgba(150,140,122,1)';
+    ctx.beginPath(); ctx.arc(f.x, f.y, (6 + f.t * 10) * dpr, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  const bayX = w / 2, bayY = h * 0.985;
+  for (let i = fadeCargo.length - 1; i >= 0; i--) {
+    const f = fadeCargo[i];
+    f.t += dt / 0.9;
+    if (f.t >= 1) { fadeCargo.splice(i, 1); continue; }
+    const x = f.x + (bayX - f.x) * f.t;
+    const y = f.y + (bayY - f.y) * f.t;
+    ctx.globalAlpha = 1 - f.t * 0.7;
+    ctx.fillStyle = f.kind === 'pod' ? '#4cd97b' : '#ffb347';
+    ctx.beginPath(); ctx.arc(x, y, 7 * (1 - f.t * 0.5) * dpr, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// Hull-breach instability: horizontal CRT-tear bands that decay.
+function drawGlitch(w, h, dt) {
+  if (glitch <= 0) return;
+  glitch = Math.max(0, glitch - dt * 1.2);
+  for (let i = 0; i < 3; i++) {
+    if (Math.random() > glitch) continue;
+    const by = Math.random() * h;
+    const bh = (4 + Math.random() * 18) * devicePixelRatio;
+    ctx.fillStyle = `rgba(120,200,255,${0.05 + glitch * 0.12})`;
+    ctx.fillRect(0, by, w, bh);
+  }
+}
 
 // Raised shields: a faint energy arc over the bow (bottom of the viewscreen),
 // its presence/brightness tracking the shield's remaining strength — the whole
@@ -552,19 +699,28 @@ requestAnimationFrame(frame);
 function drawShieldArc(w, h, dpr) {
   if (!latest.shields?.raised) return;
   const strength = (latest.shields.strength || 0) / 100;
-  const alpha = 0.12 + strength * 0.25;
+  // A big blue bow over the front of the ship. Its angular COVERAGE shrinks as
+  // the deflector drains — a strong screen wraps wide, a weak one is a sliver —
+  // with a light alpha-blue fill under the rim.
+  const cx = w / 2, cy = h * 1.18, rad = h * 0.62;
+  const half = (0.16 + 0.30 * strength) * Math.PI; // half-span grows with charge
+  const start = -Math.PI / 2 - half, end = -Math.PI / 2 + half;
+  const alpha = 0.10 + strength * 0.22;
   ctx.save();
-  ctx.strokeStyle = `rgba(120, 200, 255, ${alpha})`;
+  // Filled wedge (fades in toward the rim).
+  const g = ctx.createRadialGradient(cx, cy, rad * 0.55, cx, cy, rad);
+  g.addColorStop(0, 'rgba(120,200,255,0)');
+  g.addColorStop(1, `rgba(120,200,255,${alpha * 0.6})`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, rad, start, end);
+  ctx.closePath();
+  ctx.fill();
+  // Bright rim.
+  ctx.strokeStyle = `rgba(150,215,255,${0.3 + strength * 0.45})`;
   ctx.lineWidth = 3 * dpr;
-  ctx.beginPath();
-  ctx.arc(w / 2, h * 1.25, h * 0.42, Math.PI * 1.22, Math.PI * 1.78);
-  ctx.stroke();
-  // Soft glow just above the arc line.
-  ctx.strokeStyle = `rgba(120, 200, 255, ${alpha * 0.35})`;
-  ctx.lineWidth = 9 * dpr;
-  ctx.beginPath();
-  ctx.arc(w / 2, h * 1.25, h * 0.42, Math.PI * 1.22, Math.PI * 1.78);
-  ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, rad, start, end); ctx.stroke();
   ctx.restore();
 }
 
@@ -589,12 +745,18 @@ function drawSlipstream(w, h, cx, cy, dpr) {
     const a = (i / 9) * Math.PI * 2 + (performance.now() / 900) % (Math.PI * 2);
     const r0 = Math.min(w, h) * 0.12;
     const r1 = Math.min(w, h) * (0.5 + (i % 3) * 0.14);
-    ctx.strokeStyle = `rgba(143, 214, 255, ${0.05 + (i % 3) * 0.03})`;
+    const x0 = cx + Math.cos(a) * r0, y0 = cy + Math.sin(a) * r0 * 0.82;
+    const x1 = cx + Math.cos(a) * r1, y1 = cy + Math.sin(a) * r1 * 0.82;
+    // Softer + more transparent: a gradient stroke that fades to nothing at both
+    // ends (no hard line caps), at roughly half the old opacity.
+    const peak = 0.028 + (i % 3) * 0.016;
+    const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+    grad.addColorStop(0, 'rgba(143,214,255,0)');
+    grad.addColorStop(0.5, `rgba(163,222,255,${peak})`);
+    grad.addColorStop(1, 'rgba(143,214,255,0)');
+    ctx.strokeStyle = grad;
     ctx.lineWidth = (1 + (i % 2)) * dpr;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.82);
-    ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.82);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
   }
   ctx.restore();
 }
@@ -639,6 +801,22 @@ function drawIonStorm(w, h) {
     const bh = (1 + Math.random() * 2);
     ctx.fillStyle = `rgba(150, 170, 255, ${0.03 + Math.random() * 0.05})`;
     ctx.fillRect(0, y, w, bh);
+  }
+  // Crackle: occasional jagged discharge arcs across the view (charged static).
+  const dpr = devicePixelRatio;
+  const arcs = Math.random() < 0.5 ? 1 : 0;
+  for (let a = 0; a < arcs; a++) {
+    ctx.strokeStyle = `rgba(180, 200, 255, ${0.18 + Math.random() * 0.25})`;
+    ctx.lineWidth = 1.2 * dpr;
+    let x = Math.random() * w, y = Math.random() * h * 0.3;
+    ctx.beginPath(); ctx.moveTo(x, y);
+    const steps = 5 + Math.floor(Math.random() * 5);
+    for (let s = 0; s < steps; s++) {
+      x += (Math.random() - 0.5) * 60 * dpr;
+      y += (Math.random() * 40 + 10) * dpr;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
   }
 }
 
@@ -761,7 +939,17 @@ function drawAsteroids(w, h, yawPx, dpr) {
     // Colour is a flat, low-saturation grey-brown rock (no red warming);
     // threat is communicated by the ring, not the body.
     const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
-    const r = (0.7 + Math.pow(growth, 1.25) * 26) * (0.7 + 0.5 * size) * dpr;
+    // Objects about to strike loom larger (they fill more of the window).
+    const nearBoost = 1 + Math.max(0, 5 - a.impactIn) * 0.14;
+    const r = (0.7 + Math.pow(growth, 1.25) * 26) * (0.7 + 0.5 * size) * nearBoost * dpr;
+    // Shrinking range ring: a faint circle that starts wide and closes onto the
+    // body exactly at contact — a distance cue independent of body size, so the
+    // captain can tell a small-near object from a large-far one (size alone is
+    // ambiguous). Drawn for every contact, under the body.
+    const ringR = r + (34 * dpr + r * 0.8) * Math.min(1, a.impactIn / 16);
+    ctx.strokeStyle = 'rgba(160,180,220,0.16)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath(); ctx.arc(px, py, ringR, 0, Math.PI * 2); ctx.stroke();
     // visualKind reveals a pod/mineral up close (captain's naked eye) even while
     // the weapons scope still reads UNKNOWN — the don't-shoot cooperation hook.
     const vk = a.visualKind || 'unknown';
@@ -905,10 +1093,14 @@ function drawObstacles(w, h, cy, dpr) {
     ctx.strokeStyle = onCourseInto ? `rgba(255,90,90,${0.7 + pulse * 0.3})` : 'rgba(120,110,100,0.6)';
     ctx.lineWidth = (2 + t * 2) * dpr;
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = onCourseInto ? '#ff5c5c' : '#b7a99a';
+    ctx.fillStyle = onCourseInto ? '#ff5c5c' : '#7ddb9a';
     ctx.font = `${12 * dpr}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(onCourseInto ? `${ob.label} — STEER CLEAR` : ob.label, cx, cy - r - 8 * dpr);
+    // Make the collision read UNMISTAKABLE from the main screen (playtest: it was
+    // only legible on the helm console) — call the collision AND which way to
+    // steer to clear it, or confirm CLEAR when the bow is off it.
+    const steer = ob.bearing > align ? 'STEER PORT ◀' : '▶ STEER STARBOARD';
+    ctx.fillText(onCourseInto ? `⚠ ${ob.label} — COLLISION · ${steer}` : `${ob.label} — CLEAR`, cx, cy - r - 8 * dpr);
   }
 }
 
@@ -948,7 +1140,9 @@ function drawOffscreenChevron(w, h, dpr) {
 // world to near-black with faint static so the room must fly on sensors.
 function drawBlackout(w, h, dpr) {
   ctx.save();
-  ctx.fillStyle = 'rgba(2, 3, 6, 0.93)';
+  // Dimmer than before (playtest: "can only see the faintest of objects") — the
+  // crew flies almost entirely on sensors during a blackout.
+  ctx.fillStyle = 'rgba(2, 3, 6, 0.975)';
   ctx.fillRect(0, 0, w, h);
   for (let i = 0; i < 40; i++) {
     ctx.fillStyle = `rgba(120,140,180,${Math.random() * 0.06})`;
@@ -1059,13 +1253,16 @@ function drawFlashes(w, h, dt) {
   }
 }
 
-// Brief full-screen tint when a gate is passed (green) or missed (red).
+// Brief green shimmer when a gate is PASSED. A missed gate gets NO flash — it's
+// an opportunity lost, not a negative event; a red wash wrongly read as "damage".
 function drawGateFlash(w, h, dt) {
   for (let i = gateFx.length - 1; i >= 0; i--) {
     const f = gateFx[i];
-    const alpha = (f.life / 0.5) * 0.18;
-    ctx.fillStyle = f.passed ? `rgba(125, 219, 154, ${alpha})` : `rgba(255, 92, 92, ${alpha})`;
-    ctx.fillRect(0, 0, w, h);
+    if (f.passed) {
+      const alpha = (f.life / 0.5) * 0.18;
+      ctx.fillStyle = `rgba(125, 219, 154, ${alpha})`;
+      ctx.fillRect(0, 0, w, h);
+    }
     f.life -= dt;
     if (f.life <= 0) gateFx.splice(i, 1);
   }
