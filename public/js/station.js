@@ -13,7 +13,11 @@ import { Net } from './net.js';
 //                  to build its mission picker
 //   startPayload - optional; () => message object sent by the Launch button
 //                  (defaults to a plain start; the main screen adds missionId)
-export function initStation({ seat, render, onJoined, startPayload }) {
+//   intents      - optional; an optimistic-intent store (js/optimistic.js).
+//                  Reconciled against every snapshot BEFORE render(state), so
+//                  pages can paint commanded values instantly and let the
+//                  authoritative state take over when it confirms.
+export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   const name = params.get('name') || '';
@@ -29,6 +33,7 @@ export function initStation({ seat, render, onJoined, startPayload }) {
   const debriefOverlay = document.getElementById('debrief-overlay');
   const toasts = document.getElementById('toasts');
 
+  let lastDebriefSeed = null; // populate the debrief log once per run (keeps scroll position)
   const MAX_TOASTS = 3; // keep the corner stack short; drop the oldest beyond this
   function toast(text) {
     const el = document.createElement('div');
@@ -46,18 +51,41 @@ export function initStation({ seat, render, onJoined, startPayload }) {
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
       const crewed = ['helm', 'engineering', 'weapons']
-        .map((s) => `${s}: ${state.seats[s].connected ? state.seats[s].name : 'auto'}`)
+        .map((s) => {
+          const seat = state.seats[s];
+          // Show non-default difficulty so the party can see who's on chill/intense.
+          const diff = seat.difficulty && seat.difficulty !== 'normal' ? ` (${seat.difficulty})` : '';
+          return `${s}: ${seat.connected ? seat.name : 'auto'}${diff}`;
+        })
         .join(' · ');
       document.getElementById('lobby-crew').textContent = crewed;
     }
     // Debrief: show outcome summary.
     debriefOverlay.classList.toggle('hidden', state.phase !== 'debrief');
     if (state.phase === 'debrief' && state.debrief) {
+      // Destruction must not read like an arrival: the header keys off the
+      // outcome ('adrift' = hull gone / ship lost) so the one binary the
+      // fiction demands is unmistakable. Scores stay non-binary below it.
+      const title = document.getElementById('debrief-title');
+      if (title) {
+        const lost = state.debrief.outcome === 'adrift';
+        title.textContent = lost ? 'SHIP LOST' : 'Mission Debrief';
+        title.style.color = lost ? 'var(--bad)' : '';
+      }
       const grade = document.getElementById('debrief-grade');
       grade.textContent = `${state.debrief.grade} — ${state.debrief.score}/100`;
       // Color the grade by score band so a near-failure doesn't read as a win.
       grade.style.color = scoreColor(state.debrief.score);
       document.getElementById('debrief-narrative').textContent = state.debrief.narrative;
+      // Captain's log for review (populated once per run so a player's scroll
+      // position isn't reset by each snapshot).
+      const dlog = document.getElementById('debrief-log');
+      if (dlog && state.debrief.seed !== lastDebriefSeed) {
+        lastDebriefSeed = state.debrief.seed;
+        dlog.innerHTML = (state.debrief.log || [])
+          .map((l) => `<div>[${fmtTime(l.t)}] ${l.text}</div>`)
+          .join('');
+      }
     }
     // Suppress the toast corner while a full-screen overlay is up, so the
     // end-of-mission event burst can't bury the debrief (or the lobby QR).
@@ -71,6 +99,7 @@ export function initStation({ seat, render, onJoined, startPayload }) {
     difficulty,
     handlers: {
       onState: (state) => {
+        intents?.reconcile(state); // expire/confirm optimistic values first
         renderPhase(state);
         render(state);
       },
@@ -91,6 +120,32 @@ export function initStation({ seat, render, onJoined, startPayload }) {
 
   net.connect();
   return net;
+}
+
+// Console tutorial: a small "?" in the header opens a brief what-this-console-
+// does overlay. Content is supplied per page; the overlay sits above the
+// lobby/debrief overlays so a waiting player can read it before launch.
+export function mountHelp({ title, lines, diagram = '' }) {
+  const header = document.querySelector('header');
+  const btn = document.createElement('button');
+  btn.id = 'help-btn';
+  btn.textContent = '?';
+  btn.setAttribute('aria-label', 'Console tutorial');
+  header.insertBefore(btn, header.querySelector('.room-code'));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay hidden help-overlay';
+  // `diagram` is an inline SVG schematic of the console's controls, so a new
+  // player waiting in the lobby can SEE what they're about to operate.
+  overlay.innerHTML = `
+    <h2>${title}</h2>
+    ${diagram ? `<div class="help-diagram">${diagram}</div>` : ''}
+    <ul class="help-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+    <button class="primary" id="help-close">Back to console</button>`;
+  document.body.appendChild(overlay);
+
+  btn.addEventListener('click', () => overlay.classList.remove('hidden'));
+  overlay.querySelector('#help-close').addEventListener('click', () => overlay.classList.add('hidden'));
 }
 
 // Format seconds as m:ss for mission clocks and countdowns.

@@ -45,9 +45,11 @@
     <button class="primary" id="launch-btn">Launch (debug on)</button>
   </div>
   <div class="overlay hidden" id="debrief-overlay">
-    <h2>Mission Debrief</h2>
+    <h2 id="debrief-title">Mission Debrief</h2>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:26rem"></p>
+    <div class="label" style="margin-top:0.6rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 22vh; width: min(26rem, 88vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 

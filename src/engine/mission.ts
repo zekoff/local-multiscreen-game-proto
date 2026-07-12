@@ -8,11 +8,27 @@ import type { Range } from './rng.js';
 
 export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors';
 
+// What the progress readout shows the crew: a decreasing physical distance
+// (docks at 0) or a countdown toward mission failure (an escape pod losing
+// power, a convoy window closing). Distance-in-parsecs is the default,
+// derived from targetSeconds when a mission doesn't set its own.
+export interface MissionReadout {
+  kind: 'distance' | 'countdown';
+  unit: string;   // display unit, e.g. 'pc'
+  total: number;  // parsecs at launch, or seconds on the failure clock
+  label?: string; // optional display label ("Distance to <arrival>" default)
+}
+
 export interface MissionDef {
   id: string;              // stable identifier ('supply-run', 'gen:standard:12345')
   name: string;            // shown to players
   briefing: string;        // one-paragraph setup shown in the lobby / log
   arrivalName: string;     // destination, used in HUD labels and narrative
+  // Lobby difficulty rating shown in the mission picker
+  // ('training' | 'standard' | 'veteran' | 'hard' — free text).
+  rating?: string;
+  // Progress readout config (see MissionReadout; parsecs-distance default).
+  readout?: MissionReadout;
   // Optional themed body the main screen renders growing on the horizon as
   // progress climbs (a station or planet). Missions without it get a plain
   // marker. Focused on one mission for now (see supply-run).
@@ -48,7 +64,9 @@ export interface MissionDef {
 // clean run still takes (gate detours, turns) folded into SPEED_CALIB — tuned
 // against `npm run lab` so a `skilled` crew arrives near targetSeconds.
 // parTime sits above the well-executed time so the debrief time score has slack.
-export const SPEED_CALIB = 325;
+// Recalibrated 325 -> 260 after the 7-point power pool (default engines 3):
+// the faster baseline ship was landing skilled runs ~20% under targetSeconds.
+export const SPEED_CALIB = 260;
 export function pacingFor(targetSeconds: number): { targetSeconds: number; speedScale: number; parTime: number } {
   return {
     targetSeconds,
@@ -78,7 +96,20 @@ export type EventAction =
   // last value wins). >1 = more frequent spawns.
   | { type: 'spawnRate'; multiplier: number }
   // Suppress ambient spawning for a stretch (scripted quiet before a storm).
-  | { type: 'calm'; seconds: number };
+  | { type: 'calm'; seconds: number }
+  // Spawn a nav gate right now (scripted set piece — e.g. an intro mission's
+  // first guaranteed ring), in addition to the ambient gateEvery cadence.
+  | { type: 'spawnGate' }
+  // Override the mission's concurrent-asteroid cap from this point on (last
+  // value wins) — lets a mission ramp its ceiling over time, e.g. an intro
+  // that starts at 1 and only allows 3 in the final stretch.
+  | { type: 'setMaxAsteroids'; value: number }
+  // Ion storm: halves passive sensor range for the duration — engineering
+  // pressure (compensate with sensor power, or punch through with a pulse).
+  | { type: 'ionStorm'; seconds: number }
+  // Debris field: running hot scours the hull for the duration — helm
+  // pressure (ease the throttle through it; a slow crawl is free).
+  | { type: 'debrisField'; seconds: number };
 
 // Parameters for the procedural generator: small enough to expose in a UI,
 // expressive enough to change how a run feels.
@@ -94,4 +125,5 @@ export interface CatalogEntry {
   name: string;
   description: string;
   kind: 'authored' | 'generated';
+  rating: string; // lobby difficulty tag ('training' / 'standard' / ...)
 }

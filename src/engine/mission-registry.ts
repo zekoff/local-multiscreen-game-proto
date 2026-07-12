@@ -6,28 +6,33 @@
 import type { MissionDef, CatalogEntry, GenParams } from './mission.js';
 import { generateMission } from './mission-gen.js';
 import { randomSeed } from './rng.js';
+import { firstFlight } from './missions/first-flight.js';
 import { supplyRun } from './missions/supply-run.js';
 import { minedCorridor } from './missions/mined-corridor.js';
 import { keplerRescue } from './missions/kepler-rescue.js';
 
-const AUTHORED: MissionDef[] = [supplyRun, minedCorridor, keplerRescue];
+// first-flight leads the list: it's the intro mission a new crew should see first.
+const AUTHORED: MissionDef[] = [firstFlight, supplyRun, minedCorridor, keplerRescue];
 
 // Generator presets exposed in the lobby. Intensity is fixed per preset for
 // now; a fuller mission-setup UI can expose GenParams directly later.
-const GEN_PRESETS: Record<string, { name: string; description: string; params: Omit<GenParams, 'seed'> }> = {
+const GEN_PRESETS: Record<string, { name: string; description: string; rating: string; params: Omit<GenParams, 'seed'> }> = {
   'gen:short': {
     name: 'Generated: Short Hop',
     description: 'A quick generated run (~3 min). New route every time.',
+    rating: 'standard',
     params: { length: 'short', intensity: 0.5 },
   },
   'gen:standard': {
     name: 'Generated: Standard Run',
     description: 'A full-length generated mission (~4 min).',
+    rating: 'standard',
     params: { length: 'standard', intensity: 0.55 },
   },
   'gen:long': {
     name: 'Generated: Deep Haul',
     description: 'A long, grinding generated voyage (~5 min).',
+    rating: 'veteran',
     params: { length: 'long', intensity: 0.6 },
   },
 };
@@ -37,8 +42,8 @@ export const DEFAULT_MISSION_ID = supplyRun.id;
 // What the lobby lists. Sent to clients in the 'joined' message.
 export function missionCatalog(): CatalogEntry[] {
   return [
-    ...AUTHORED.map((m) => ({ id: m.id, name: m.name, description: m.briefing, kind: m.kind })),
-    ...Object.entries(GEN_PRESETS).map(([id, p]) => ({ id, name: p.name, description: p.description, kind: 'generated' as const })),
+    ...AUTHORED.map((m) => ({ id: m.id, name: m.name, description: m.briefing, kind: m.kind, rating: m.rating ?? 'standard' })),
+    ...Object.entries(GEN_PRESETS).map(([id, p]) => ({ id, name: p.name, description: p.description, kind: 'generated' as const, rating: p.rating })),
   ];
 }
 

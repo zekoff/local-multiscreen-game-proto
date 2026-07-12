@@ -16,6 +16,8 @@ export function playFxAudio(fx, audio, kinds) {
       case 'warp': audio.warp(); break;
       case 'sensorPulse': audio.sensorPulse(); break;
       case 'sensorContact': audio.sensorContact(); break;
+      case 'ionStorm': audio.ionStorm?.(); break; // static wash (engineering + main screen)
+      case 'debris': audio.debris?.(); break;     // low gravel rumble (helm + main screen)
     }
   }
 }

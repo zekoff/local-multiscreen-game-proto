@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
     "smoke": "node scripts/smoke.mjs",
     "smoke:cf": "node scripts/smoke-cf.mjs",
-    "lab": "tsx scripts/mission-lab.ts"
+    "lab": "tsx scripts/mission-lab.ts",
+    "checks": "tsx scripts/checks.ts"
   },
   "dependencies": {
     "express": "^4.19.0",

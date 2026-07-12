@@ -26,7 +26,10 @@ const DIFF_MULT: Record<Difficulty, number> = { chill: 0.6, normal: 1, intense: 
 const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors'];
 
 // Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
-const POWER_TOTAL = 6;      // total power units engineering can allocate
+// Pool raised 6 -> 7 post-playtest ("one more engine allocation point"): the
+// extra unit lands on engines in the default split. Per-system cap stays 4, so
+// speed/turn normalization (eff/POWER_MAX) is untouched.
+const POWER_TOTAL = 7;      // total power units engineering can allocate
 const POWER_MAX = 4;        // max units a single system can hold
 
 // Laser: no battery bank and no fixed cooldown. `charge` (0-100) is simply the
@@ -51,14 +54,36 @@ const BASE_TURN = 12;
 // |alignment| at or under this counts as "on course" for helm effectiveness.
 const ON_COURSE_THRESHOLD = 15;
 
+// Debris field (scripted obstacle): pulverized rock that scours the hull
+// while the ship runs hot. No damage at or under the safe throttle; the
+// scrape scales quadratically above it, so full throttle through a field is
+// a real mistake while a cautious crawl is free — a helm judgment call.
+const DEBRIS_SAFE_THROTTLE = 40;
+const DEBRIS_DPS = 2.2; // hull/s at full throttle inside a field
+
 // Auto-assist is a survival net for an abandoned seat, not a competent crew
-// member. Deliberately mediocre so a FULL bot crew loses, while one human at a
-// console (with bots elsewhere) can still pull a win out with the hull low.
-const AUTO_WEAPONS_REACT_RANGE = 7;  // seconds-to-impact before auto-turret engages (was 8 — reacts a touch later)
-const AUTO_WEAPONS_MISS_CHANCE = 0.38; // fraction of auto shots that go wide (was 0.2 — much worse aim)
-const AUTO_HELM_THROTTLE = 70;       // auto-helm cruises easy, not fast (was 80)
-const AUTO_HELM_CORRECTION = 5;      // course-correction authority per second (was 8 — drifts more)
-const AUTO_ENG_RESET_AGE = 9;        // seconds a breaker stays tripped before auto-eng restores it (was 6)
+// member. Post-playtest rebalance: the CPU is SLOW rather than INCOMPETENT —
+// no dice-roll misses, just deliberate reaction lag. A full bot crew should
+// barely scrape to the station; a human at any console beats the bot at it
+// (and a human ENGINEER now genuinely helps a bot gunner: pumping weapon
+// power shortens the recharge wait, which the CPU can actually use).
+const AUTO_WEAPONS_REACT_RANGE = 7;  // seconds-to-impact before auto-turret engages
+// Deliberate pause between "charged + target acquired" and pulling the
+// trigger (replaces the old 38% miss chance — every shot now lands, the cost
+// is time). Seeded per shot via this.rng.
+const AUTO_WEAPONS_FIRE_DELAY = { min: 1, max: 2 };
+// Auto shield doctrine: raise only when a real volley is incoming (more than
+// one rock inside the threat window), drop a beat after the sky is clear.
+const AUTO_SHIELD_THREAT_WINDOW = 5; // seconds-to-impact that counts as "incoming"
+const AUTO_SHIELD_THREAT_COUNT = 2;  // rocks inside the window before shields go up
+const AUTO_SHIELD_LINGER = 3;        // seconds shields stay up after the last contact clears
+const AUTO_HELM_THROTTLE = 70;       // auto-helm cruises easy, not fast
+const AUTO_HELM_CORRECTION = 5;      // course-correction authority per second
+// Auto-helm makes a POOR attempt at slipstream rings: it swings toward the
+// gate bearing, but with so little turn authority that only a ring that
+// spawned near the current heading is actually catchable.
+const AUTO_HELM_GATE_STEP = 3;       // degrees/second toward a gate's bearing
+const AUTO_ENG_RESET_AGE = 4;        // seconds a breaker stays tripped before auto-eng restores it (was 9 — impacts trip breakers now, so the bot engineer keeps up)
 
 // Sensors: detection range in seconds-to-impact. An asteroid is only targetable
 // on the weapons scope once its impactIn drops to within this range, which
@@ -170,7 +195,9 @@ export type Effect =
   | { kind: 'gate'; id: number; passed: boolean }
   | { kind: 'warp' }          // Emergency Warp jump (big shake/flash + sound)
   | { kind: 'sensorPulse' }   // active sensor sweep (expanding ring on the scope)
-  | { kind: 'sensorContact' }; // a contact just resolved on sensors (engineering ping)
+  | { kind: 'sensorContact' } // a contact just resolved on sensors (engineering ping)
+  | { kind: 'ionStorm' }      // ion storm front hits (engineering static + viewscreen wash)
+  | { kind: 'debris' };       // debris field entered (helm rumble + viewscreen specks)
 
 interface SeatState {
   playerId: string | null; // sticky id so a dropped client can resume its seat
@@ -205,7 +232,7 @@ export interface Telemetry {
 
 export interface ConsoleMetrics {
   helm: { gatePassRate: number; avgAlignmentError: number; onCoursePct: number };
-  weapons: { hitRate: number; avgAcquireLatency: number; neutralizedPct: number };
+  weapons: { hitRate: number; avgAcquireLatency: number; neutralizedPct: number; chargeIdlePct: number };
   engineering: { avgPowerUtil: number; breakerDowntime: number };
   // Captain proxy: coordinationScore is a 0..1 composite of the crew outcomes a
   // good caller drives — defense, gate discipline, and fast target hand-offs.
@@ -219,6 +246,8 @@ export interface Debrief {
   narrative: string;
   missionId: string;
   missionName: string;
+  shipName: string;       // crew-chosen ship name ('' if unnamed) — career-history fiction
+  log: { t: number; text: string }[]; // the full captain's log, for debrief review
   seed: number;           // (missionId, seed) reproduces the run's randomness
   stats: {
     time: number;
@@ -284,6 +313,16 @@ export class Game {
   private breakerTimer = 22;
   private spawnRateMult = 1;  // scripted 'spawnRate' actions replace this
   private calmUntil = 0;      // missionTime before which ambient spawns pause
+  private maxAsteroidsOverride: number | null = null; // scripted 'setMaxAsteroids' (null = use MissionDef)
+  private autoFireAt: number | null = null;        // missionTime when the auto-turret's deliberate shot lands
+  private autoShieldClearAt: number | null = null; // missionTime when auto shields drop after the sky clears
+  private shipName = ''; // optional crew-chosen ship name (fiction only, set at launch)
+  // Timed environmental obstacles (scripted via mission events):
+  private ionStormUntil = 0;   // while active, sensor range is halved (engineering pressure)
+  private debrisUntil = 0;     // while active, running hot scrapes the hull (helm pressure)
+  private debrisTickTimer = 0; // paces the scrape feedback (fx/log) while in debris
+  private fullLog: { t: number; text: string }[] = []; // complete captain's log (debrief review)
+  private usedLabels = new Set<string>(); // contact callsigns already issued this run
   private firedEvents = new Set<string>(); // scripted events that already ran
   private driftBias = 0;      // slow persistent drift the helm must fight
   private driftBiasTimer = 0;
@@ -292,6 +331,7 @@ export class Game {
   private alignAbsSum = 0;
   private throttleSum = 0;
   private telSamples = 0;
+  private chargeFullTime = 0; // seconds the laser sat at 100% (unused firepower - a weapons-console pacing metric)
   private log: { t: number; text: string }[] = [];
 
   // --- Narrative log state (see narrate()): rolling windows the ship's log
@@ -362,13 +402,36 @@ export class Game {
   // Begin a mission run. The transport resolves the MissionDef (registry or
   // generator) and passes the run seed so (missionId, seed) reproduces the
   // run's randomness exactly.
-  start(def: MissionDef, seed?: number, debug = false) {
+  start(
+    def: MissionDef,
+    seed?: number,
+    debug = false,
+    shipName = '',
+    difficulties?: Partial<Record<SeatId, Difficulty>>,
+    pace = 1,
+  ) {
     if (this.phase === 'active') return;
     this.mission = def;
     this.runSeed = seed ?? randomSeed();
     this.rng = mulberry32(this.runSeed);
     this.debug = debug;
-    this.timeScale = 1;
+    // The crew's ship name (optional, set at launch): pure fiction, zero
+    // mechanics — it flavors the log, the main-screen header, and the debrief.
+    this.shipName = shipName.trim().slice(0, 24);
+    // Launch-time per-seat difficulty (the main-screen lobby surfaces this so
+    // the whole party sees it). Only explicitly-chosen seats are overridden —
+    // a player's own join-URL difficulty stands otherwise.
+    if (difficulties) {
+      for (const s of Object.keys(difficulties) as SeatId[]) {
+        const d = difficulties[s];
+        if (this.seats[s] && d && DIFF_MULT[d]) this.seats[s].difficulty = d;
+      }
+    }
+    // Mission pace (ready-room setting): a real-time multiplier on the whole
+    // simulation. Slower = more thinking time (accessibility), faster = a
+    // tighter session; sim-relative balance is untouched. Debug speed
+    // controls still override it live when debug is enabled.
+    this.timeScale = Math.max(0.5, Math.min(1.5, pace || 1));
     // Reset all mission state for a fresh run.
     this.phase = 'active';
     this.missionTime = 0;
@@ -376,7 +439,7 @@ export class Game {
     this.hull = 100;
     this.shieldRaised = false;
     this.shieldStrength = SHIELD_MAX;
-    this.power = { engines: 2, shields: 1, weapons: 2, sensors: 1 };
+    this.power = { engines: 3, shields: 1, weapons: 2, sensors: 1 }; // default split spends the full pool (7)
     this.breakers = { engines: null, shields: null, weapons: null, sensors: null };
     this.throttle = 0;
     this.alignment = 0;
@@ -395,6 +458,12 @@ export class Game {
     this.breakerTimer = range(this.rng, def.breakerEvery);
     this.spawnRateMult = 1;
     this.calmUntil = 0;
+    this.maxAsteroidsOverride = null;
+    this.autoFireAt = null;
+    this.autoShieldClearAt = null;
+    this.ionStormUntil = 0;
+    this.debrisUntil = 0;
+    this.debrisTickTimer = 0;
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
@@ -403,7 +472,10 @@ export class Game {
     this.alignAbsSum = 0;
     this.throttleSum = 0;
     this.telSamples = 0;
+    this.chargeFullTime = 0;
     this.log = [];
+    this.fullLog = [];
+    this.usedLabels.clear();
     this.killTimes = [];
     this.damageWindow = [];
     this.narratedHalfway = false;
@@ -415,7 +487,9 @@ export class Game {
     this.acquireLatencies = [];
     this.threatsNeutralized = 0;
     this.powerUtilSum = 0;
-    this.event(`Mission start: ${def.name}. Godspeed.`);
+    this.event(this.shipName
+      ? `Mission start: ${def.name}. The ${this.shipName} is underway — Godspeed.`
+      : `Mission start: ${def.name}. Godspeed.`);
     this.event(def.briefing);
   }
 
@@ -570,11 +644,13 @@ export class Game {
     if (this.fx.length > 0) this.fx = [];
   }
 
-  // Effective power for a system: allocated units, but ZERO while its breaker is
-  // tripped — a tripped system is fully offline (no thrust / no charge / no
-  // shield regen / sensors fall back to their base range) until it's restored.
+  // Effective power for a system: allocated units, HALVED while its breaker is
+  // tripped — a tripped system limps at half effectiveness (reverted from the
+  // full-offline experiment: playtest showed hard-zero felt like a dead console
+  // rather than an urgent repair). Fractional eff is fine: every consumer is
+  // continuous math (charge rate, turn authority, regen, ranges).
   private eff(system: SystemId): number {
-    return this.breakers[system] !== null ? 0 : this.power[system];
+    return this.power[system] * (this.breakers[system] !== null ? 0.5 : 1);
   }
 
   // Turn authority per nudge: rises with engine power, falls with throttle — so
@@ -586,8 +662,11 @@ export class Game {
   }
 
   // Passive sensor detection range (seconds-to-impact), grows with sensor power.
+  // An active ion storm halves it — engineering can partially compensate with
+  // more sensor power, or punch through entirely with a pulse.
   private sensorRange(): number {
-    return SENSOR_BASE + SENSOR_PER_POWER * this.eff('sensors');
+    const base = SENSOR_BASE + SENSOR_PER_POWER * this.eff('sensors');
+    return this.missionTime < this.ionStormUntil ? base * 0.5 : base;
   }
 
   // A contact is targetable once it's within passive sensor range, or after a
@@ -669,7 +748,53 @@ export class Game {
       this.spawnRateMult = action.multiplier;
     } else if (action.type === 'calm') {
       this.calmUntil = this.missionTime + action.seconds;
+    } else if (action.type === 'spawnGate') {
+      this.spawnGate();
+    } else if (action.type === 'setMaxAsteroids') {
+      this.maxAsteroidsOverride = action.value;
+    } else if (action.type === 'ionStorm') {
+      this.ionStormUntil = this.missionTime + action.seconds;
+      this.pushFx({ kind: 'ionStorm' });
+      this.event('ION STORM FRONT — sensor returns degraded. More sensor power or a pulse will cut through.');
+    } else if (action.type === 'debrisField') {
+      this.debrisUntil = this.missionTime + action.seconds;
+      this.debrisTickTimer = 0;
+      this.pushFx({ kind: 'debris' });
+      this.event('DEBRIS FIELD — pulverized rock in the lane. Ease the throttle or it will scour the hull.');
     }
+  }
+
+  // Concurrent-asteroid ceiling: the mission's cap unless a scripted
+  // setMaxAsteroids event has overridden it (intro-style difficulty ramps).
+  private maxAsteroids(): number {
+    return this.maxAsteroidsOverride ?? this.mission!.maxAsteroids;
+  }
+
+  // The crew-facing progress readout (mission-configurable; see MissionReadout).
+  // Default: a parsec distance derived from mission length, reaching 0 at dock.
+  private readout() {
+    if (!this.mission) return null;
+    const r = this.mission.readout
+      ?? { kind: 'distance' as const, unit: 'pc', total: Math.max(4, Math.round(this.mission.targetSeconds / 15)) };
+    const remaining = r.kind === 'distance'
+      ? r.total * (1 - this.progress / 100)
+      : Math.max(0, r.total - this.missionTime);
+    return { kind: r.kind, unit: r.unit, label: r.label ?? null, total: r.total, remaining: round1(Math.max(0, remaining)) };
+  }
+
+  // Contact callsigns: randomized designation (prefix + non-sequential number)
+  // so the sky reads like a survey catalog rather than a spawn counter.
+  // Seeded rng + a per-run used-set keeps them reproducible and unique.
+  private contactLabel(): string {
+    const prefixes = ['AST', 'KOR', 'TYR', 'OBJ', 'RHO', 'CET'];
+    for (let tries = 0; tries < 50; tries++) {
+      const label = `${prefixes[Math.floor(this.rng() * prefixes.length)]}-${10 + Math.floor(this.rng() * 90)}`;
+      if (!this.usedLabels.has(label)) {
+        this.usedLabels.add(label);
+        return label;
+      }
+    }
+    return `AST-${this.nextAsteroidId}`; // pathological fallback: guaranteed unique
   }
 
   private spawnAsteroid(impactIn: { min: number; max: number }, dmg: { min: number; max: number }) {
@@ -682,7 +807,7 @@ export class Game {
     const dealt = Math.max(3, Math.round(baseDmg * (0.65 + 0.35 * size) * (0.7 + 0.3 * speed)));
     const a: Asteroid = {
       id,
-      label: `AST-${String(id).padStart(3, '0')}`,
+      label: this.contactLabel(),
       impactIn: range(this.rng, impactIn),
       dmg: dealt,
       size,
@@ -737,9 +862,22 @@ export class Game {
     // never chases nav gates (a human earns those slipstream rewards), so a bot
     // helm simply plods the straight line and drifts more than a crewed one.
     if (this.auto('helm')) {
-      this.throttle = AUTO_HELM_THROTTLE;
-      const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * dt);
-      this.alignment -= sign(this.alignment) * correction;
+      // The bot helm eases off in a debris field — sluggishly, to 45 (still a
+      // hair above the safe line), so it survives the field but pays a little.
+      this.throttle = this.missionTime < this.debrisUntil ? 45 : AUTO_HELM_THROTTLE;
+      const gate = this.gates[0];
+      if (gate) {
+        // Poor slipstream attempt: crawl toward the ring's bearing. The step
+        // is small enough that only near-heading rings are catchable — a
+        // human helm still earns the far ones.
+        const delta = gate.bearing - this.alignment;
+        const step = Math.min(Math.abs(delta), AUTO_HELM_GATE_STEP * dt);
+        this.alignment += sign(delta) * step;
+      } else {
+        // No rings up: ease back onto the course line.
+        const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * dt);
+        this.alignment -= sign(this.alignment) * correction;
+      }
     }
 
     // Speed derives from throttle, effective engine power, course alignment,
@@ -761,6 +899,9 @@ export class Game {
     }
     // Laser recharge meter refills at a rate set by weapon power (100 = ready).
     this.charge = Math.min(100, this.charge + LASER_CHARGE_RATE * this.eff('weapons') * dt);
+    // Track time spent sitting at full charge — unused firepower, surfaced as
+    // the weapons console's chargeIdlePct in the per-console telemetry.
+    if (this.charge >= 100) this.chargeFullTime += dt;
 
     // Telemetry accumulation (station-load measurements).
     if (this.shieldRaised) this.tel.shieldUptime += dt;
@@ -784,39 +925,55 @@ export class Game {
     // Emergency Warp zeroes it) toward a sensible default, so an unmanned
     // engineer can't leave the ship dead in the water.
     if (this.auto('engineering')) {
-      const target: Record<SystemId, number> = { engines: 2, weapons: 2, shields: 1, sensors: 1 };
+      const target: Record<SystemId, number> = { engines: 3, weapons: 2, shields: 1, sensors: 1 }; // mirrors the default split
       let spare = POWER_TOTAL - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
       for (const s of SYSTEMS) {
         while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
       }
     }
 
-    // Auto-weapons: manage shields (raise near a threat, lower to recharge) and
-    // only engage once a contact is close (reaction latency), sometimes missing
-    // (accuracy penalty) — an unmanned seat survives, it doesn't perform like a
-    // crewed one. Respects the phaser cooldown like a human would.
+    // Auto-weapons: every shot lands, but only after a deliberate 1-2s pause
+    // once the laser is charged and a target is in range — the CPU's cost is
+    // TIME, not aim. A human engineer pumping weapon power shortens the wait
+    // between shots, so the bot gunner visibly benefits from crew support.
     if (this.auto('weapons')) {
       // Only contacts the sensors have resolved can be engaged.
       const acquirable = this.asteroids.filter((a) => this.targetable(a));
       const closest = acquirable.length > 0
         ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
         : null;
-      // Shield triage with hysteresis: up when something's inbound, down to
-      // recharge when the sky is clear.
-      this.shieldRaised = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE + 2;
+      // Shield doctrine: raise only for a real volley (2+ rocks inside the
+      // threat window); once the sky is clear of targetable contacts, keep
+      // them up a linger beat, then drop to recharge.
+      const imminent = acquirable.filter((a) => a.impactIn <= AUTO_SHIELD_THREAT_WINDOW).length;
+      if (imminent >= AUTO_SHIELD_THREAT_COUNT) {
+        this.shieldRaised = true;
+        this.autoShieldClearAt = null; // threat live: cancel any pending drop
+      } else if (acquirable.length === 0 && this.shieldRaised) {
+        if (this.autoShieldClearAt === null) {
+          this.autoShieldClearAt = this.missionTime + AUTO_SHIELD_LINGER;
+        } else if (this.missionTime >= this.autoShieldClearAt) {
+          this.shieldRaised = false;
+          this.autoShieldClearAt = null;
+        }
+      } else {
+        // Contacts remain (but no volley): hold the current shield state.
+        this.autoShieldClearAt = null;
+      }
+      // Deliberate fire: once (charged && target in range) first holds, roll
+      // the pause, then pull the trigger when the clock reaches it. Any break
+      // in the condition (target destroyed/impacted, charge gone) re-arms it.
       if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= 100) {
         this.targetId = closest.id;
         this.recordAcquire(closest.id);
-        if (this.rng() < AUTO_WEAPONS_MISS_CHANCE) {
-          // Shot goes wide: the recharge is spent but the target survives.
-          this.charge = 0;
-          this.tel.shotsFired++;
-          this.pushFx({ kind: 'laser', targetId: closest.id, hit: false });
-          this.targetId = null;
-          this.event(`Auto-turret shot goes wide — ${closest.label} still inbound!`);
-        } else {
+        if (this.autoFireAt === null) {
+          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY);
+        } else if (this.missionTime >= this.autoFireAt) {
           this.fire();
+          this.autoFireAt = null;
         }
+      } else {
+        this.autoFireAt = null;
       }
     }
 
@@ -859,18 +1016,55 @@ export class Game {
     this.spawnTimer -= dt;
     if (
       this.spawnTimer <= 0 &&
-      this.asteroids.length < m.maxAsteroids &&
+      this.asteroids.length < this.maxAsteroids() &&
       this.missionTime >= this.calmUntil
     ) {
       // Usually one rock, but sometimes a 2-3 cluster arrives in short order so
       // it isn't always one-at-a-time. Cluster rocks are staggered slightly and
       // still respect the concurrent cap.
       const burst = this.rng() < BURST_CHANCE ? (this.rng() < 0.4 ? 3 : 2) : 1;
-      for (let i = 0; i < burst && this.asteroids.length < m.maxAsteroids; i++) {
+      for (let i = 0; i < burst && this.asteroids.length < this.maxAsteroids(); i++) {
         this.spawnAsteroid(m.impactIn, m.asteroidDmg);
         if (i > 0) this.asteroids[this.asteroids.length - 1].impactIn -= i * range(this.rng, { min: 0.5, max: 2 });
       }
       this.spawnTimer = range(this.rng, m.spawnEvery) / (this.diff('weapons') * this.spawnRateMult);
+    }
+
+    // Timed environmental obstacles. Debris: scrape the hull while running
+    // hot (quadratic above the safe throttle), with paced feedback so the
+    // room hears/sees the mistake without toast spam. Both obstacles announce
+    // once when they clear (the *Until fields are zeroed as the announcement).
+    if (this.missionTime < this.debrisUntil && this.throttle > DEBRIS_SAFE_THROTTLE) {
+      const hot = (this.throttle - DEBRIS_SAFE_THROTTLE) / (100 - DEBRIS_SAFE_THROTTLE);
+      const dps = DEBRIS_DPS * hot * hot;
+      this.hull = Math.max(0, this.hull - dps * dt);
+      this.tel.hullDamageTaken += dps * dt;
+      this.debrisTickTimer -= dt;
+      if (this.debrisTickTimer <= 0) {
+        this.debrisTickTimer = 3;
+        this.pushFx({ kind: 'impact', hullDmg: Math.max(1, Math.round(dps * 3)), absorbed: false });
+        this.event('Debris scouring the hull — ease the throttle!', false);
+      }
+    }
+    if (this.ionStormUntil > 0 && this.missionTime >= this.ionStormUntil) {
+      this.ionStormUntil = 0;
+      this.event('Ion storm front has passed — sensor returns clearing.');
+    }
+    // Target-lock upkeep: if the locked contact slips back below sensor
+    // resolution (sensor power dropped, ion storm rolled in), the lock is
+    // lost — weapons can't hold a firing solution on a contact the ship can
+    // no longer resolve. (A missing contact means it died/hit; clear quietly.)
+    if (this.targetId !== null) {
+      const locked = this.asteroids.find((a) => a.id === this.targetId);
+      if (!locked) this.targetId = null;
+      else if (!this.targetable(locked)) {
+        this.targetId = null;
+        this.event(`Target lock lost — ${locked.label} faded below sensor resolution.`);
+      }
+    }
+    if (this.debrisUntil > 0 && this.missionTime >= this.debrisUntil) {
+      this.debrisUntil = 0;
+      this.event('Clear of the debris field. Resume speed.');
     }
 
     // Trip breakers periodically, rate scaled by engineering difficulty.
@@ -909,6 +1103,18 @@ export class Game {
     this.tel.hullDamageTaken += remaining;
     // Feed the captain's-log damage-burst detector (only real hull damage).
     if (remaining > 0) this.damageWindow.push({ t: this.missionTime, dmg: Math.round(remaining) });
+    // A hull-damaging strike jolts a breaker loose — impacts, not the ambient
+    // timer, are now the main source of engineering emergencies. Hits fully
+    // absorbed by shields do NOT trip anything: good shield play spares the
+    // engineer. The chance scales with the ENGINEERING seat's difficulty so
+    // the knob really changes that console's workload: chill ~60% of hull
+    // hits trip one, normal always trips one, intense always trips one and
+    // half the time jolts a second loose.
+    if (remaining > 0) {
+      const engDiff = this.diff('engineering'); // 0.6 / 1 / 1.5
+      if (this.rng() < Math.min(1, engDiff)) this.tripBreaker();
+      if (engDiff > 1 && this.rng() < engDiff - 1) this.tripBreaker();
+    }
     this.targetableSince.delete(a.id);
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
     // Screen shake + sound scale off this on the main screen; absorbed hits get
@@ -928,10 +1134,12 @@ export class Game {
     let score: number;
     let narrative: string;
     const { destroyed, impacts, dodged, gatesPassed, gatesMissed, warpsUsed, pulsesUsed } = this.stats;
+    // Fiction hook: reference the crew's named ship where the story allows.
+    const ship = this.shipName ? `the ${this.shipName}` : 'the ship';
     if (outcome === 'adrift') {
       // Even a lost ship gets partial credit for distance covered.
       score = Math.round(this.progress * 0.25);
-      narrative = 'Hull breach critical. The crew was recovered by a tow ship two days later — the cargo was not.';
+      narrative = `Hull breach critical. ${ship.charAt(0).toUpperCase() + ship.slice(1)} went dark ${Math.round(this.progress)}% of the way to ${m.arrivalName}; a tow ship recovered the crew two days later. The cargo was not so lucky.`;
     } else {
       const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
       const shotsAtUs = destroyed + impacts + dodged;
@@ -943,11 +1151,11 @@ export class Game {
       const gateBonus = Math.min(8, gatesPassed * 2);
       score = Math.min(100, Math.round(base + gateBonus));
       narrative =
-        score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as you glide in.`
+        score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as ${ship} glides in.`
         : score >= 70 ? 'Solid work. Some scorch marks, but the cargo is intact and morale is high.'
-        : score >= 50 ? 'Mission accomplished — though the ship will spend a week in drydock.'
+        : score >= 50 ? `Mission accomplished — though ${ship} will spend a week in drydock.`
         : score >= 30 ? 'You made it, barely. The insurance adjusters would like a word.'
-        : 'The ship limps into dock, venting atmosphere. Nobody claps.';
+        : `${ship.charAt(0).toUpperCase() + ship.slice(1)} limps into dock, venting atmosphere. Nobody claps.`;
     }
     const grade =
       score >= 85 ? 'Legendary Run' :
@@ -983,7 +1191,7 @@ export class Game {
     const coordinationScore = round2(0.45 * defense + 0.30 * gatePassRate + 0.25 * latencyScore);
     this.tel.perConsole = {
       helm: { gatePassRate, avgAlignmentError: this.tel.avgAlignment, onCoursePct },
-      weapons: { hitRate, avgAcquireLatency, neutralizedPct },
+      weapons: { hitRate, avgAcquireLatency, neutralizedPct, chargeIdlePct: this.missionTime > 0 ? round2(this.chargeFullTime / this.missionTime) : 0 },
       engineering: { avgPowerUtil, breakerDowntime: this.tel.breakerDowntime },
       captain: { coordinationScore, avgAcquireLatency, gatePassRate, defense },
     };
@@ -994,6 +1202,8 @@ export class Game {
       narrative,
       missionId: m.id,
       missionName: m.name,
+      shipName: this.shipName,
+      log: [...this.fullLog],
       seed: this.runSeed,
       stats: {
         time: Math.round(this.missionTime),
@@ -1028,6 +1238,10 @@ export class Game {
   private event(text: string, toast = true) {
     this.log.push({ t: Math.round(this.missionTime), text });
     if (this.log.length > 10) this.log.shift();
+    // Full captain's log for the debrief review (the live `log` is a rolling
+    // 10-line window; this keeps the whole story, sanely capped).
+    this.fullLog.push({ t: Math.round(this.missionTime), text });
+    if (this.fullLog.length > 250) this.fullLog.shift();
     if (toast) this.onEvent(text);
   }
 
@@ -1109,6 +1323,7 @@ export class Game {
       mission: this.mission
         ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null }
         : null,
+      shipName: this.shipName,
       missionTime: Math.round(this.missionTime),
       // Target duration of a well-executed run (seconds) — drives the music
       // build arc on the main screen (build over ~180s, then hold/pad longer).
@@ -1132,6 +1347,16 @@ export class Game {
       // Passive sensor range in seconds; sensor pulse readiness for engineering.
       sensorRange: round1(this.sensorRange()),
       sensorPulseReadyIn: round1(this.sensorPulseCd),
+      // Environmental obstacles: seconds remaining (0 = inactive). Engineering
+      // renders the storm warning, helm the debris warning, main screen both.
+      ionStormIn: round1(Math.max(0, this.ionStormUntil - this.missionTime)),
+      debrisIn: round1(Math.max(0, this.debrisUntil - this.missionTime)),
+      // Slipstream open (post-gate speed boost) — drives the viewscreen streaks.
+      slipstream: this.gateBoostTimer > 0,
+      // Progress readout: what the distance line on main screen + helm shows.
+      // Distance counts down to 0 at dock (parsecs by default); countdown
+      // missions show seconds left on a failure clock instead.
+      readout: this.readout(),
       // Contacts carry size/speed (for main-screen threat read-out) and whether
       // sensors have resolved them yet (targetable on the weapons scope).
       asteroids: this.asteroids.map((a) => ({
@@ -1176,7 +1401,7 @@ function freshTelemetry(): Telemetry {
     pulsesUsed: 0,
     perConsole: {
       helm: { gatePassRate: 0, avgAlignmentError: 0, onCoursePct: 0 },
-      weapons: { hitRate: 0, avgAcquireLatency: 0, neutralizedPct: 0 },
+      weapons: { hitRate: 0, avgAcquireLatency: 0, neutralizedPct: 0, chargeIdlePct: 0 },
       engineering: { avgPowerUtil: 0, breakerDowntime: 0 },
       captain: { coordinationScore: 0, avgAcquireLatency: 0, gatePassRate: 0, defense: 0 },
     },

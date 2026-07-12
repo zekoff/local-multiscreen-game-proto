@@ -25,6 +25,10 @@
       <div class="cap-row" id="cap-helm"><span class="cap-name">HELM</span><span class="cap-val"></span></div>
       <div class="cap-row" id="cap-eng"><span class="cap-name">ENG</span><span class="cap-val"></span></div>
       <div class="cap-row" id="cap-wep"><span class="cap-name">WEP</span><span class="cap-val"></span></div>
+      <!-- Captain's situational rows: what's inbound and where the next ring
+           is — the information a caller needs to actually call plays. -->
+      <div class="cap-row" id="cap-threat"><span class="cap-name">THR</span><span class="cap-val"></span></div>
+      <div class="cap-row" id="cap-nav"><span class="cap-name">NAV</span><span class="cap-val"></span></div>
     </div>
 
     <!-- Sim-debug overlay (shown only when the run was launched with debug on) -->
@@ -41,7 +45,8 @@
         <div class="meter"><div id="shield-bar"></div></div>
       </div>
       <div class="cell">
-        <div class="label" id="progress-label">Distance to Destination</div>
+        <div class="label"><span id="progress-label">Distance to Destination</span>
+          <span id="readout-val" style="color:var(--text); font-family:monospace; margin-left:0.4rem; text-transform:none; letter-spacing:0;"></span></div>
         <div class="meter"><div id="progress-bar"></div></div>
       </div>
       <div class="cell">
@@ -65,9 +70,36 @@
     <!-- Mission picker: authored missions + procedural presets, populated
          from the catalog the server sends on join -->
     <div style="width:min(28rem, 90%); text-align:left;">
+      <!-- Ship naming: pure fiction, no mechanics — flavors the log, the
+           header, and the debrief. The field persists across runs. -->
+      <div class="label" style="margin-bottom:0.3rem;">Ship name <span style="color:var(--dim); text-transform:none; letter-spacing:0;">(optional)</span></div>
+      <input type="text" id="ship-name" maxlength="24" placeholder="e.g. Dauntless" autocomplete="off" style="margin-bottom:0.7rem;">
       <div class="label" style="margin-bottom:0.3rem;">Mission</div>
       <select id="mission-select"></select>
       <p id="mission-desc" style="color:var(--dim); font-size:0.85rem; margin-top:0.5rem; min-height:3em;"></p>
+      <!-- Per-console difficulty, visible to the whole party (design pillar:
+           varied skill levels on one crew). "Crew default" leaves whatever the
+           player chose on their own join screen untouched. -->
+      <div class="label" style="margin-bottom:0.3rem;">Console difficulty</div>
+      <div id="difficulty-row" style="display:flex; gap:0.5rem; margin-bottom:0.7rem;">
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Helm
+          <select id="diff-helm" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Engineering
+          <select id="diff-engineering" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+        <label style="flex:1; color:var(--dim); font-size:0.8rem;">Weapons
+          <select id="diff-weapons" class="diff-select"><option value="">crew default</option><option value="chill">chill</option><option value="normal">normal</option><option value="intense">intense</option></select>
+        </label>
+      </div>
+      <!-- Mission speed: a real-time multiplier on the whole simulation.
+           Slower = more thinking time for a learning crew. -->
+      <div class="label" style="margin-bottom:0.3rem;">Mission speed</div>
+      <select id="pace-select" style="margin-bottom:0.7rem;">
+        <option value="0.75">Relaxed (0.75×)</option>
+        <option value="1" selected>Standard (1×)</option>
+        <option value="1.25">Brisk (1.25×)</option>
+      </select>
       <!-- Game setup: expose sim-debug controls (pause/speed/spawn) on the main
            screen and to any "Sim Supervisor" role that joins the room. -->
       <label style="display:flex; gap:0.5rem; align-items:center; color:var(--dim); font-size:0.9rem;">
@@ -79,11 +111,18 @@
 
   <!-- Debrief: full mission results for the whole room -->
   <div class="overlay hidden" id="debrief-overlay">
-    <h2>Mission Debrief</h2>
+    <h2 id="debrief-title">Mission Debrief</h2>
     <p id="debrief-mission" style="color:var(--dim)"></p>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:30rem"></p>
     <div class="stats-grid" id="debrief-stats"></div>
+    <!-- Crew performance: the per-console telemetry, so the debrief talk can
+         be about what each station actually did (orders vs outcomes). -->
+    <div class="label" style="margin-top:0.8rem;">Crew Performance</div>
+    <div class="stats-grid" id="debrief-crew"></div>
+    <!-- The full captain's log, written out for review. -->
+    <div class="label" style="margin-top:0.8rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 18vh; width: min(34rem, 90vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 

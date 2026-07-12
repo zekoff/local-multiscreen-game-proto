@@ -48,18 +48,21 @@
     <button class="primary" id="launch-btn">Launch Mission</button>
   </div>
   <div class="overlay hidden" id="debrief-overlay">
-    <h2>Mission Debrief</h2>
+    <h2 id="debrief-title">Mission Debrief</h2>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:26rem"></p>
+    <div class="label" style="margin-top:0.6rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 22vh; width: min(26rem, 88vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 
   <script type="module">
-    import { initStation, setHealthBar, setChargeBar } from '/js/station.js';
+    import { initStation, setHealthBar, setChargeBar, mountHelp } from '/js/station.js';
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio } from '/js/fx-audio.js';
+    import { createIntents } from '/js/optimistic.js';
 
     // Console-local audio: weapons hears its own laser, target lock, fire-ready
     // chime, and shields raise/lower. The laser is deliberately NOT on the main
@@ -80,12 +83,14 @@
     const scopeScene = new WeaponsScopeScene();
     mountPhaser({ parentId: 'scope-mount', width: 320, height: 320, scene: scopeScene });
 
+    const intents = createIntents();
     const net = initStation({
       seat: 'weapons',
+      intents,
       render(state) {
         // The scope scene reads this on its own update loop; tapping a blip
         // calls back here with the id, same action any target-list UI would send.
-        scopeScene.onTarget = (id) => net.action({ kind: 'target', id });
+        scopeScene.onTarget = (id) => { net.action({ kind: 'target', id }); audio.tapTick(); };
         scopeScene.setState(state);
         // Weapons-local SFX: laser (from the fx stream), a lock chime when a new
         // contact is acquired, and a soft chime the moment the bank recharges.
@@ -107,24 +112,78 @@
         scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label}` : '';
 
         // Charge is the laser recharge meter — green and firable only at full.
-        const ready = state.charge >= 100;
-        setChargeBar(document.getElementById('charge-bar'), state.charge, ready);
+        // A just-tapped FIRE renders as drained immediately (optimistic flash)
+        // even though the server won't echo the empty meter for a tick.
+        const charge = intents.has('fired') ? 0 : state.charge;
+        const ready = charge >= 100;
+        setChargeBar(document.getElementById('charge-bar'), charge, ready);
         fireBtn.disabled = !ready || state.targetId === null;
         fireBtn.textContent = !ready
           ? 'CHARGING…'
           : state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
-        // Shield toggle reflects server state; sound the raise/lower edge.
-        shieldsRaised = state.shields.raised;
-        if (shieldsRaised && !prevShieldsRaised) audio.shieldUp();
-        else if (!shieldsRaised && prevShieldsRaised) audio.shieldDown();
-        prevShieldsRaised = shieldsRaised;
+        // Shield toggle: prefer the just-commanded value (optimistic) over the
+        // snapshot; the audio edge detector stays on authoritative state.
+        if (state.shields.raised && !prevShieldsRaised) audio.shieldUp();
+        else if (!state.shields.raised && prevShieldsRaised) audio.shieldDown();
+        prevShieldsRaised = state.shields.raised;
+        shieldsRaised = intents.get('shields') ?? state.shields.raised;
         shieldsBtn.textContent = shieldsRaised ? 'Lower Shields' : 'Raise Shields';
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
       },
     });
 
-    fireBtn.addEventListener('click', () => net.action({ kind: 'fire' }));
-    shieldsBtn.addEventListener('click', () => net.action({ kind: 'shields', raised: !shieldsRaised }));
+    fireBtn.addEventListener('click', () => {
+      net.action({ kind: 'fire' });
+      audio.trigger(); // dry local trigger click; the zap follows via fx
+      // Optimistic: drain the meter and disable the button right now — the
+      // server's own drained charge arrives next tick and takes over.
+      intents.flash('fired', 2);
+      setChargeBar(document.getElementById('charge-bar'), 0, false);
+      fireBtn.disabled = true;
+      fireBtn.textContent = 'CHARGING…';
+    });
+    shieldsBtn.addEventListener('click', () => {
+      const want = !shieldsRaised;
+      net.action({ kind: 'shields', raised: want });
+      // Optimistic: flip the button label instantly; reconciled when the
+      // snapshot's shields.raised matches (or reverts after 3 snapshots).
+      intents.set('shields', want, (s) => s.shields.raised === want);
+      shieldsRaised = want;
+      shieldsBtn.textContent = want ? 'Lower Shields' : 'Raise Shields';
+    });
+
+    // Console tutorial (the "?" in the header): a schematic of the controls
+    // plus plain-language notes, readable from the lobby before launch.
+    mountHelp({
+      title: 'Weapons — you defend the ship',
+      diagram: `
+        <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="9">
+          <!-- radar scope with a blip and a tap -->
+          <circle cx="70" cy="62" r="50" fill="none" stroke="#39456b"/>
+          <circle cx="70" cy="62" r="30" fill="none" stroke="#39456b" stroke-dasharray="3 4"/>
+          <circle cx="70" cy="62" r="4" fill="currentColor"/>
+          <circle cx="99" cy="40" r="7" fill="#7d8db3"/>
+          <circle cx="99" cy="40" r="13" fill="none" stroke="currentColor"/>
+          <text x="99" y="24" fill="#7d8db3" text-anchor="middle">1. TAP = TARGET</text>
+          <text x="70" y="124" fill="#7d8db3" text-anchor="middle">ROCKS SHOW WHEN SENSORS SEE THEM</text>
+          <!-- charge meter + fire -->
+          <rect x="160" y="30" width="120" height="12" rx="6" fill="none" stroke="#39456b"/>
+          <rect x="160" y="30" width="120" height="12" rx="6" fill="currentColor" opacity="0.85"/>
+          <text x="220" y="24" fill="#7d8db3" text-anchor="middle">CHARGE (FULL = READY)</text>
+          <rect x="185" y="50" width="70" height="22" rx="5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <text x="220" y="65" fill="currentColor" text-anchor="middle">2. FIRE</text>
+          <!-- shield arc -->
+          <path d="M175 108 Q220 84 265 108" fill="none" stroke="#78c8ff" stroke-width="3"/>
+          <text x="220" y="122" fill="#7d8db3" text-anchor="middle">SHIELDS: BLOCK HITS, DRAIN WHILE UP</text>
+        </svg>`,
+      lines: [
+        '<b>Tap a blip</b> on the scope to target it. Press <b>FIRE</b> when the charge bar is full. Shots always hit.',
+        'The laser <b>recharges faster with more weapon power</b> — ask Engineering when rocks are thick.',
+        'Rocks appear on the scope only when <b>sensors detect them</b> — more sensor power or a pulse means earlier targeting.',
+        '<b>Shields</b> block damage but drain while raised, and only recharge while lowered.',
+        'The <b>captain</b> reads speed and threat on the main screen and calls priorities.',
+      ],
+    });
   </script>
 </body>
 </html>

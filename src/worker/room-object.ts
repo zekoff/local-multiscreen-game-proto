@@ -157,7 +157,17 @@ export class RoomObject {
           typeof msg.missionId === 'string' ? msg.missionId : undefined,
           typeof msg.seed === 'number' ? msg.seed : undefined,
         );
-        this.game.start(def, seed, msg.debug === true);
+        // shipName is optional launch fiction (crew-chosen, engine-sanitized);
+        // difficulties is the lobby's optional per-seat override (engine
+        // validates the seat ids and values).
+        this.game.start(
+          def,
+          seed,
+          msg.debug === true,
+          typeof msg.shipName === 'string' ? msg.shipName : '',
+          msg.difficulties && typeof msg.difficulties === 'object' ? msg.difficulties : undefined,
+          typeof msg.pace === 'number' ? msg.pace : 1, // ready-room mission speed (engine clamps)
+        );
         this.ensureTicking();
       }
     } else if (msg.type === 'restart') {

@@ -12,13 +12,14 @@ export const minedCorridor: MissionDef = {
     'The direct route to Depot Tycho was seeded with proximity mines during ' +
     'the blockade. Sweepers cleared a lane — mostly. Fly it slow and stay sharp.',
   arrivalName: 'Depot Tycho',
+  rating: 'veteran',
   kind: 'authored',
   ...pacingFor(260),                       // a longer, wave-structured haul
   spawnEvery: { min: 14, max: 22 },       // quiet between the waves
-  impactIn: { min: 14, max: 22 },
+  impactIn: { min: 18, max: 26 }, // ambient rocks spawn beyond max sensor range (16s): seen dim on screen before sensors resolve them
   asteroidDmg: { min: 8, max: 14 },       // mines are numerous but small
   maxAsteroids: 6,                        // waves need headroom over ambient
-  breakerEvery: { min: 20, max: 32 },
+  breakerEvery: { min: 30, max: 48 }, // widened +50%: impacts now trip breakers, ambient trips are the exception
   driftScale: 1,
   events: [
     {
@@ -26,7 +27,15 @@ export const minedCorridor: MissionDef = {
       at: { progress: 18 },
       actions: [
         { type: 'log', text: 'Sensors: mine cluster ahead — brace!' },
-        { type: 'spawnAsteroids', count: 4, impactIn: { min: 8, max: 13 }, dmg: { min: 8, max: 12 } },
+        { type: 'spawnAsteroids', count: 4, impactIn: { min: 12, max: 16 }, dmg: { min: 8, max: 12 } },
+      ],
+    },
+    {
+      id: 'grinder-wake',
+      at: { progress: 30 },
+      actions: [
+        { type: 'log', text: 'The sweepers ground the mines they caught to dust. The dust is still here.' },
+        { type: 'debrisField', seconds: 22 },
       ],
     },
     {
@@ -42,8 +51,15 @@ export const minedCorridor: MissionDef = {
       at: { progress: 58 },
       actions: [
         { type: 'log', text: 'Contact! Drifting mines, all quadrants!' },
-        { type: 'spawnAsteroids', count: 6, impactIn: { min: 8, max: 14 }, dmg: { min: 8, max: 14 } },
+        { type: 'spawnAsteroids', count: 6, impactIn: { min: 12, max: 16 }, dmg: { min: 8, max: 14 } },
         { type: 'tripBreaker' },
+      ],
+    },
+    {
+      id: 'arrival-visual',
+      at: { progress: 92 },
+      actions: [
+        { type: 'log', text: "Depot Tycho's lights through the debris. The dockmaster owes this crew a drink." },
       ],
     },
     {

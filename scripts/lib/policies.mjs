@@ -32,8 +32,11 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       const seekGate = gate && gate.reachIn < 7;
       const targetAlign = seekGate ? gate.bearing : 0;
       // Ease the throttle while swinging onto a gate (turn harder, slow its
-      // approach); otherwise cruise at the profile's travel throttle.
-      const wantThrottle = seekGate ? 55 : knobs.throttle;
+      // approach); otherwise cruise at the profile's travel throttle. A
+      // debris field overrides everything: running hot in one scours the
+      // hull, so drop under the safe threshold until it clears.
+      let wantThrottle = seekGate ? 55 : knobs.throttle;
+      if ((state.debrisIn || 0) > 0) wantThrottle = Math.min(wantThrottle, 35);
       if (Math.abs(state.throttle - wantThrottle) > 5) actions.push({ kind: 'throttle', value: wantThrottle });
       if (Math.abs(state.alignment - targetAlign) > knobs.alignTolerance) {
         actions.push({ kind: 'nudge', dir: state.alignment > targetAlign ? -1 : 1 });
@@ -45,22 +48,29 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
       const sys = ['engines', 'shields', 'weapons', 'sensors'];
       const actions = [];
-      // Clear tripped breakers first — a tripped system is now fully offline.
+      // Clear tripped breakers first — a tripped system runs at half power.
       for (const s of sys) {
         if (state.breakers[s]) actions.push({ kind: 'resetBreaker', system: s });
       }
-      // Threat-aware power triage: when rocks are inbound, pump weapons + sensors
-      // (fast refire + early detection); when the sky is clear, feed the engines
-      // to travel. Novice's default split is flatter (it barely re-triages).
+      // Ion storm halves sensor range: burn the pulse to punch through if
+      // it's charged (the intended engineering counter-play).
+      if ((state.ionStormIn || 0) > 0 && state.sensorPulseReadyIn <= 0) {
+        actions.push({ kind: 'sensorPulse' });
+      }
+      // Threat-aware power triage over the 7-point pool: shift weight toward
+      // weapons when a rock is genuinely close, keep the engines fed the rest
+      // of the time (starving engines stretches the mission and multiplies
+      // total spawns — the old always-in-combat split lost to the bot crew).
+      // Novice barely re-triages (sticks near the default split).
       const nearest = state.asteroids.length
         ? Math.min(...state.asteroids.map((a) => a.impactIn))
         : Infinity;
-      const combat = nearest <= 20;
+      const combat = nearest <= 14;
       const target = profile === 'novice'
-        ? { engines: 2, weapons: 2, shields: 1, sensors: 1 }
+        ? { engines: 3, weapons: 2, shields: 1, sensors: 1 }
         : combat
-          ? { engines: 1, weapons: 3, shields: 0, sensors: 2 }
-          : { engines: 3, weapons: 1, shields: 1, sensors: 1 };
+          ? { engines: 2, weapons: 3, shields: 1, sensors: 1 }
+          : { engines: 3, weapons: 2, shields: 1, sensors: 1 };
       // Nudge one point toward the target split: free an over-allocated system,
       // then raise an under-allocated one (net-neutral on the power budget, or a
       // pure fill after an Emergency Warp zeroes everything).

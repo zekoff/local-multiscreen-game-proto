@@ -49,7 +49,7 @@ export function generateMission(params: GenParams): MissionDef {
   const spawnMid = lerp(16, 8, t);
   const dmgLo = Math.round(lerp(8, 12, t));
   const dmgHi = Math.round(lerp(14, 22, t));
-  const breakerMid = lerp(30, 16, t);
+  const breakerMid = lerp(45, 24, t); // widened +50%: impacts now trip breakers, ambient trips are the exception
 
   // 2-4 set pieces at spaced-out progress marks, drawn from a small pool.
   const events: ScriptedEvent[] = [];
@@ -65,7 +65,7 @@ export function generateMission(params: GenParams): MissionDef {
       at: { progress: mark },
       actions: [
         { type: 'log', text: 'Debris storm ahead — multiple contacts inbound!' },
-        { type: 'spawnAsteroids', count: int(rng, 3, 4 + Math.round(t)), impactIn: { min: 7, max: 13 } },
+        { type: 'spawnAsteroids', count: int(rng, 3, 4 + Math.round(t)), impactIn: { min: 12, max: 16 } },
       ],
     }),
     (mark, i) => ({
@@ -93,6 +93,22 @@ export function generateMission(params: GenParams): MissionDef {
         { type: 'spawnRate', multiplier: lerp(1.3, 1.8, t) },
       ],
     }),
+    (mark, i) => ({
+      id: `gen-ionstorm-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Charged particle front rolling across the lane — instruments hazy.' },
+        { type: 'ionStorm', seconds: int(rng, 18, 28) },
+      ],
+    }),
+    (mark, i) => ({
+      id: `gen-debris-${i}`,
+      at: { progress: mark },
+      actions: [
+        { type: 'log', text: 'Pulverized rock haze ahead — the fast way through costs paint and plating.' },
+        { type: 'debrisField', seconds: int(rng, 15, 25) },
+      ],
+    }),
   ];
   for (let i = 0; i < setPieces; i++) {
     events.push(pick(rng, pool)(marks[i], i));
@@ -107,7 +123,7 @@ export function generateMission(params: GenParams): MissionDef {
     targetSeconds: pacing.targetSeconds,
     parTime: pacing.parTime,
     spawnEvery: { min: spawnMid * 0.75, max: spawnMid * 1.35 },
-    impactIn: { min: lerp(16, 12, t), max: lerp(24, 18, t) },
+    impactIn: { min: lerp(20, 18, t), max: lerp(28, 24, t) }, // ambient spawns stay beyond max sensor range (16s)
     asteroidDmg: { min: dmgLo, max: dmgHi },
     maxAsteroids: 4 + Math.round(t * 2),
     breakerEvery: { min: breakerMid * 0.75, max: breakerMid * 1.35 },

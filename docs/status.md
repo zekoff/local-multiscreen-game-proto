@@ -1,16 +1,99 @@
 # Project Status Snapshot
 
-Last updated: 2026-07-11 (gameplay-overhaul pass — implemented, verified,
-committed to branch `gameplay-overhaul`, and deployed to Cloudflare). This file
-is the "resume here" note — read it with `CLAUDE.md` at the start of a session.
+Last updated: 2026-07-11 (three passes on branch `worktree-revision-pass` —
+post-playtest revision, follow-up implementation, polish + expansion menu —
+**merged to `main` via PR #6** and deployed to Cloudflare). This file is the
+"resume here" note — read it with `CLAUDE.md` at the start of a session.
 
-## Latest pass: gameplay overhaul (2026-07-11)
+**Next up (owner decisions):** (1) pick proposals from
+`docs/design/11-gameplay-expansion-menu.md` to define the next feature arc;
+(2) playtest the revision with a real crew (first-flight with newcomers, CPU
+feel, optimistic UI, new obstacles); (3) FINALLY listen to the audio on a
+real device — five tracks + all SFX are still only code-verified.
+
+## Latest: polish + expansion-menu pass (2026-07-11, same branch/PR #6)
+
+Third owner-directed pass on the branch. Highlights:
+- **Feel**: snapshot interpolation for alignment (held turns and slipstream
+  rings glide, no jump-then-smooth); slipstream streaks centered on ship
+  heading; polygonal tumbling asteroids; captain HUD rebuilt as a wrapping
+  grid (nothing truncates at TV widths); debug panel bottom-left.
+- **Consoles**: outlined fixed-height breaker boxes (OK text centered),
+  30px pips, thick sliders with 34px thumbs; graphical SVG tutorials with
+  plain-language prose; captain's log on every debrief (auto-scrolls on the
+  main screen); random contact callsigns (KOR-97 style).
+- **Config**: mission speed (0.75/1/1.25×) in the ready room; difficulty
+  rating shown per mission in the picker; parsec distance readout
+  (mission-configurable; countdown kind supported for future fail clocks).
+- **Engine**: target lock drops when a contact falls below sensor
+  resolution (checks assert it); 16 total checks green.
+- **Audio**: five tracks (added Halcyon, Meridian); throttle servo, warp
+  engage clunk, trigger click, scope tap tick. STILL not heard on device.
+- **Menu**: docs/design/11-gameplay-expansion-menu.md — 27 numbered
+  proposals (challenges/counters, widgets, missions) for owner selection.
+
+## Previous: follow-up implementation pass (2026-07-11, same branch/PR #6)
+
+Owner-directed follow-up implementing report proposals 1/2/5 + polish:
+
+- **Difficulty at launch (P5)**: per-console chill/normal/intense selectors
+  in the main-screen lobby ("crew default" leaves join-URL choices alone);
+  every knob verified real per console (`npm run checks` asserts helm drift,
+  eng trips-per-hit — impact trips now scale with eng difficulty — and
+  weapons spawn pressure).
+- **New obstacles (P2)**: **ion storm** (halves sensor range; counter =
+  sensor power / pulse) and **debris field** (running hot scours the hull;
+  counter = throttle <40%). Scripted EventActions, authored uses (kepler,
+  mined-corridor), gen templates, per-console warnings, bot counters.
+- **Captain tools (P1)**: HUD THREAT row (closest rocks, converge warning,
+  hazards) + NAV row (next ring bearing/countdown); debrief Crew Performance
+  panel (per-console telemetry) + full **Captain's Log** written out.
+- **Music**: three tracks (Drift/Ember/Aurora) drawn at random per mission;
+  end-phase beat ~halved with breakdown bars; pattern rotation/rest bars
+  kill the loopiness. Still needs a real-device listen.
+- **Graphics pass**: nebula depth wash (seeded per mission), slipstream
+  streaks + 2.4× star rush, shield bow-arc + blue soak shimmer vs red hull
+  vignette, ion-storm interference, debris motes, scope blip halos, panel
+  accent hairlines; overlays scroll (Launch was off-screen at 720p — fixed).
+- **Console tutorials**: "?" on every crew console; readable from the lobby.
+- Balance targets re-verified (supply auto 60%/hull 18 barely arrives;
+  first-flight 100% for all; orderings intact; skilled on target).
+
+## Previous: post-playtest revision (2026-07-11, after the first human playtests)
+
+Full report: `docs/design/10-revision-playtest-report.md`; design-direction
+audit: `docs/design/09-design-direction-audit.md`. Highlights:
+
+- **Bug verdicts**: laser "slow recharge" was the full-offline breaker rule
+  (reverted to ×0.5; `npm run checks` pins the recharge contract); scope taps
+  fixed (scene-level 36px hit test); every station control is now optimistic
+  via `public/js/optimistic.js` (instant paint, 3-snapshot revert);
+  destruction shows **SHIP LOST** (debrief.outcome finally read by clients).
+- **Breakers**: impacts trip breakers (shielded hits don't); ambient trips
+  ~50% rarer; equal-height breaker UI; hollow pips for tripped-but-allocated.
+- **Power**: pool 7 (was 6), default `{e3 s1 w2 sen1}`; `SPEED_CALIB` 325→260.
+- **CPU crew**: no miss chance — deliberate 1-2s fire delay (human engineer
+  visibly helps a bot gunner); volley-only shields; 4s breaker resets; weak
+  gate chasing. Balance: all-bot crew barely arrives on supply-run (60-70%,
+  hull ~16); hard missions still defeat it; 2 humans + bot gunner beat any
+  1-human crew (weapons-linchpin softened).
+- **New intro mission** `first-flight` (rock t=20, ring t=40, cap ramp 1→2→3
+  via new `spawnGate`/`setMaxAsteroids` event actions); ambient spawns ≥18s
+  (beyond max sensor range), star-sized until sensors could see them.
+- **Thematic**: optional ship naming at launch (log/header/debrief + debrief
+  record); mission story beats; TV-scale captain HUD bar; smaller toasts.
+- **Toolchain**: `npm run checks`; fixed skilled-eng lab policy (was losing
+  to the bot crew); `2h-helm-eng` scenario; `chargeIdlePct` metric.
+- **Owner attention**: watch items + assumptions + ranked proposals are in
+  the report (§audit watch items, §assumptions, §proposals).
+
+## Previous pass: gameplay overhaul (2026-07-11)
 
 A large tuning + UX pass on top of the pre-playtest work. All of it typechecks,
 passes `npm run smoke`/`smoke:cf`, sweeps clean in `npm run lab`, and renders
 error-free under the `/run` headless driver. Committed on branch
-`gameplay-overhaul` and deployed; **not yet merged to `main`** (open the PR /
-merge when the playtest confirms it).
+`gameplay-overhaul`, deployed, and since merged to `main` (PR #5).
+
 
 - **Mission length is now a parameter.** `MissionDef.targetSeconds` (via
   `pacingFor()` in `mission.ts`, `SPEED_CALIB=325`) derives `speedScale` +
@@ -43,8 +126,8 @@ merge when the playtest confirms it).
   `architecture.md` (answer to "can stations feel instant?": yes for
   selection/toggle controls, no general prediction engine).
 - **Open:** audio is code+render verified but **not heard** (headless is
-  silent — needs a real-device listen); branch not yet merged to `main`, pending
-  the human playtest.
+  silent — needs a real-device listen). Branch merged to `main` in PR #5
+  after the first human playtests.
 
 ## Where things stand
 
@@ -94,9 +177,9 @@ merge when the playtest confirms it).
 
 ## The decision queue (things deliberately left open)
 
-1. **Human playtest — the actual near-term goal, still not done.** The whole
-   pre-playtest pass exists to make the game communicate its vision and hold up
-   with real people. Nothing here has been played by humans yet. This is next.
+1. **Human playtesting — first rounds DONE (solo + two-human, 2026-07-11).** The
+   feedback drove the post-playtest revision pass above; next: playtest the
+   revision (esp. first-flight with a fresh crew, CPU feel, optimistic UI).
 2. **Audio is code-verified, not heard.** Headless has no sound output; the
    mix/feel needs a listen on a real device — check levels and taste.
 3. **Balance of the new mechanics is first-pass.** Tunable constants are all at

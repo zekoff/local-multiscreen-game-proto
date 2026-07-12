@@ -14,6 +14,8 @@ import Phaser from '/js/vendor/phaser.esm.min.js';
 
 const MAX_RANGE_S = 20; // impactIn (seconds) mapped to the outer ring
 const URGENT_S = 6;     // matches the .eta.urgent threshold in the old list UI
+const TAP_RADIUS = 36;  // scene px: how far a tap can land from a blip and still select it
+const BLIP_RADIUS = 10; // base blip dot size (was 8 — bigger touch/read targets)
 
 const COLOR_ACCENT = 0xff6f6f; // weapons station accent (--accent in style.css)
 const COLOR_DIM = 0x7d8db3;
@@ -42,6 +44,12 @@ export class WeaponsScopeScene extends Phaser.Scene {
     this.cx = width / 2;
     this.cy = height / 2;
     this.radius = Math.min(width, height) / 2 - 14;
+
+    // Scene-level tap handling: pick the nearest blip within TAP_RADIUS of
+    // the pointer, instead of tiny per-sprite hit areas on moving dots (the
+    // playtest found taps sporadically missing). One generous circle around
+    // the finger, resolved against current blip positions at tap time.
+    this.input.on('pointerdown', (pointer) => this.handleTap(pointer));
 
     this.ringsGfx = this.add.graphics();
     this.drawRings();
@@ -149,23 +157,34 @@ export class WeaponsScopeScene extends Phaser.Scene {
     return ((id * 137.508) % 360) * (Math.PI / 180); // golden-angle spread
   }
 
+  // Nearest blip within TAP_RADIUS wins the tap (ties go to the closer one).
+  handleTap(pointer) {
+    let bestId = null;
+    let bestD = Infinity;
+    for (const [id, blip] of this.blips) {
+      const d = Phaser.Math.Distance.Between(pointer.x, pointer.y, blip.container.x, blip.container.y);
+      if (d < bestD) { bestD = d; bestId = id; }
+    }
+    if (bestId === null || bestD > TAP_RADIUS) return;
+    // Paint this blip acquired right now; the next frame's updateBlip reads
+    // optimisticTargetId so the ring turns white before the server replies.
+    this.optimisticTargetId = bestId;
+    this.optimisticSnap = this.snapCount;
+    this.onTarget?.(bestId);
+  }
+
   makeBlip(id) {
-    const dot = this.add.circle(0, 0, 8, COLOR_DIM).setStrokeStyle(2, COLOR_DIM);
+    // Soft halo behind the dot: gives blips a clean radar-glow read without
+    // adding any UI clutter (it inherits the dot's threat color each frame).
+    const halo = this.add.circle(0, 0, BLIP_RADIUS * 2, COLOR_DIM, 0.14);
+    const dot = this.add.circle(0, 0, BLIP_RADIUS, COLOR_DIM).setStrokeStyle(2, COLOR_DIM);
     // Label is the contact NAME only — threat/speed data lives on the main
     // screen so the captain (not the gunner) reads and calls out priorities.
     const label = this.add
-      .text(0, 13, '', { fontSize: '10px', color: '#7d8db3', fontFamily: 'monospace' })
+      .text(0, 15, '', { fontSize: '10px', color: '#7d8db3', fontFamily: 'monospace' })
       .setOrigin(0.5, 0);
-    const container = this.add.container(this.cx, this.cy, [dot, label]);
-    dot.setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Circle(0, 0, 16), hitAreaCallback: Phaser.Geom.Circle.Contains });
-    dot.on('pointerdown', () => {
-      // Paint this blip acquired right now; the next frame's updateBlip reads
-      // optimisticTargetId so the ring turns white before the server replies.
-      this.optimisticTargetId = id;
-      this.optimisticSnap = this.snapCount;
-      this.onTarget?.(id);
-    });
-    return { container, dot, label };
+    const container = this.add.container(this.cx, this.cy, [halo, dot, label]);
+    return { container, halo, dot, label };
   }
 
   updateBlip(blip, a) {
@@ -180,8 +199,10 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const color = targeted ? COLOR_TARGETED : urgent ? COLOR_BAD : COLOR_DIM;
     blip.dot.setFillStyle(color);
     blip.dot.setStrokeStyle(targeted ? 3 : 2, color);
+    blip.halo.setFillStyle(color, targeted ? 0.22 : 0.12);
+    blip.halo.setRadius(BLIP_RADIUS * (targeted ? 2.4 : 2) * (0.8 + 0.35 * (a.size ?? 1)));
     // Bigger rocks read as bigger blips (the captain's early-spot cue too).
-    blip.dot.setRadius((targeted ? 10 : 8) * (0.8 + 0.35 * (a.size ?? 1)));
+    blip.dot.setRadius((targeted ? BLIP_RADIUS + 2 : BLIP_RADIUS) * (0.8 + 0.35 * (a.size ?? 1)));
     blip.label.setText(a.label);
     blip.label.setColor(urgent ? '#ff5c5c' : '#7d8db3');
   }

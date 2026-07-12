@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Helm Station</title>
   <link rel="stylesheet" href="/css/style.css">
-  <style>:root { --accent: #6fa8ff; }</style>
+  <style>
+    :root { --accent: #6fa8ff; }
+    /* Instant tactile ack for a steering nudge: the marker flares briefly. */
+    .align-marker.nudging { box-shadow: 0 0 10px 3px var(--accent); }
+  </style>
 </head>
 <body>
   <header>
@@ -20,7 +24,7 @@
     <div class="panel">
       <div class="spread">
         <div><div class="label">Velocity</div><div class="readout" id="speed">0</div></div>
-        <div style="text-align:right"><div class="label">Distance to Station</div><div class="readout" id="dist">100%</div></div>
+        <div style="text-align:right"><div class="label" id="dist-label">Distance to Station</div><div class="readout" id="dist">—</div></div>
       </div>
     </div>
 
@@ -59,36 +63,53 @@
     <button class="primary" id="launch-btn">Launch Mission</button>
   </div>
   <div class="overlay hidden" id="debrief-overlay">
-    <h2>Mission Debrief</h2>
+    <h2 id="debrief-title">Mission Debrief</h2>
     <div class="grade" id="debrief-grade"></div>
     <p id="debrief-narrative" style="max-width:26rem"></p>
+    <div class="label" style="margin-top:0.6rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 22vh; width: min(26rem, 88vw); text-align: left;"></div>
     <button class="primary" id="return-btn">Return to Ready Room</button>
   </div>
 
   <script type="module">
-    import { initStation } from '/js/station.js';
+    import { initStation, mountHelp, fmtTime } from '/js/station.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio } from '/js/fx-audio.js';
+    import { createIntents } from '/js/optimistic.js';
 
     // Helm-local audio: the nav-gate pass/miss chimes and a subtle blip on each
     // steering nudge. (Music + ship-wide booms live on the main screen.)
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
-    const HELM_FX = new Set(['gate']);
+    const HELM_FX = new Set(['gate', 'debris']);
 
     const throttle = document.getElementById('throttle');
     const warpBtn = document.getElementById('warp-btn');
     let draggingThrottle = false;
 
+    const intents = createIntents();
     const net = initStation({
       seat: 'helm',
+      intents,
       render(state) {
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         document.getElementById('speed').textContent = state.speed.toFixed(1);
-        document.getElementById('dist').textContent = `${Math.max(0, 100 - state.progress).toFixed(0)}%`;
+        // Mission-configurable readout: parsecs count down to 0 at dock, or a
+        // failure-clock countdown on missions that define one.
+        if (state.readout) {
+          document.getElementById('dist-label').textContent = state.readout.label
+            || (state.readout.kind === 'countdown' ? 'Time Remaining' : `Distance to ${state.mission?.arrivalName ?? 'Destination'}`);
+          document.getElementById('dist').textContent = state.readout.kind === 'countdown'
+            ? fmtTime(state.readout.remaining)
+            : `${state.readout.remaining.toFixed(1)} ${state.readout.unit}`;
+        }
+        // Throttle is a commanded setpoint: echo the value just sent (intent)
+        // until the snapshot repeats it back, so the readout never snaps to a
+        // stale % for a tick. Derived values (speed) stay server-driven.
+        const shownThrottle = intents.get('throttle') ?? state.throttle;
         // Don't fight the player's finger: only sync the slider when idle.
-        if (!draggingThrottle) throttle.value = state.throttle;
-        document.getElementById('throttle-val').textContent = `${state.throttle}%`;
+        if (!draggingThrottle) throttle.value = shownThrottle;
+        document.getElementById('throttle-val').textContent = `${shownThrottle}%`;
         // Alignment marker: map -100..100 onto the track width.
         const pct = (state.alignment + 100) / 200;
         document.getElementById('align-marker').style.left = `calc(${(pct * 100).toFixed(1)}% - 5px)`;
@@ -96,8 +117,8 @@
         // The window is centered on the gate's BEARING (well off the 0 course
         // line) so the helm has to actively swing onto it; with no gate, the
         // band just marks the on-course zone around 0. A tripped engines breaker
-        // is fully offline (0 power), collapsing the window to its minimum.
-        const effEngines = state.breakers.engines ? 0 : state.power.engines;
+        // halves engine power (mirrors eff() in src/engine/game.ts).
+        const effEngines = state.power.engines * (state.breakers.engines ? 0.5 : 1);
         const win = 12 + 18 * (effEngines / 4);
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
@@ -110,8 +131,13 @@
         document.getElementById('align-state').textContent = lined ? (next ? 'on the gate' : 'on course') : 'off line';
         document.getElementById('align-state').style.color = lined ? 'var(--good)' : 'var(--warn)';
         // Next nav gate readout: closest gate, its bearing, and steering hint.
+        // A debris field takes over the line — throttle discipline is this
+        // console's call and outranks ring-chasing while the hull is scraping.
         const gateEl = document.getElementById('gate-readout');
-        if (next) {
+        if (state.debrisIn > 0) {
+          gateEl.textContent = `DEBRIS FIELD ${Math.ceil(state.debrisIn)}s — keep throttle under 40% or the hull scours.`;
+          gateEl.style.color = 'var(--bad)';
+        } else if (next) {
           const dir = next.bearing > 0 ? 'starboard' : 'port';
           gateEl.textContent = lined
             ? `${next.label} in ${Math.ceil(next.reachIn)}s — on the gate ✓`
@@ -121,18 +147,31 @@
           gateEl.textContent = 'No nav gate ahead.';
           gateEl.style.color = 'var(--dim)';
         }
-        // Emergency Warp availability.
-        warpBtn.disabled = state.warpReadyIn > 0;
-        warpBtn.textContent = state.warpReadyIn > 0
-          ? `Warp charging (${Math.ceil(state.warpReadyIn)}s)`
-          : 'Emergency Warp';
+        // Emergency Warp availability (a just-tapped warp reads engaged
+        // immediately via the optimistic flash, before the cooldown arrives).
+        const warping = intents.has('warped');
+        warpBtn.disabled = warping || state.warpReadyIn > 0;
+        warpBtn.textContent = warping
+          ? 'WARP!'
+          : state.warpReadyIn > 0
+            ? `Warp charging (${Math.ceil(state.warpReadyIn)}s)`
+            : 'Emergency Warp';
       },
     });
 
     // Throttle sends on change; track dragging so render() doesn't stomp it.
+    // The servo confirmation sounds once on RELEASE (change), not per input
+    // event — one short diegetic beat per committed setpoint, sparse tone.
     throttle.addEventListener('pointerdown', () => (draggingThrottle = true));
     throttle.addEventListener('pointerup', () => (draggingThrottle = false));
-    throttle.addEventListener('input', () => net.action({ kind: 'throttle', value: Number(throttle.value) }));
+    throttle.addEventListener('change', () => audio.throttleSet(Number(throttle.value)));
+    throttle.addEventListener('input', () => {
+      const value = Number(throttle.value);
+      net.action({ kind: 'throttle', value });
+      // Setpoint echo: hold the commanded % until the server repeats it back.
+      intents.set('throttle', value, (s) => s.throttle === value);
+      document.getElementById('throttle-val').textContent = `${value}%`;
+    });
 
     // Hold-to-steer: the engine still turns once per tick, but the helmsman can
     // just hold the button down instead of tapping repeatedly. Pressing fires an
@@ -141,7 +180,15 @@
     function holdToSteer(btn, dir) {
       let timer = null;
       btn.style.touchAction = 'none'; // no scroll/zoom hijack of a held press
-      const fire = () => { net.action({ kind: 'nudge', dir }); audio.nudgeTick(); };
+      const marker = document.getElementById('align-marker');
+      const fire = () => {
+        net.action({ kind: 'nudge', dir });
+        audio.nudgeTick();
+        // Visual acknowledgment (not prediction): pulse the course marker so
+        // the press registers instantly; its position stays server-driven.
+        marker.classList.add('nudging');
+        setTimeout(() => marker.classList.remove('nudging'), 180);
+      };
       const start = (e) => {
         e.preventDefault();
         if (timer !== null) return;
@@ -157,7 +204,44 @@
     }
     holdToSteer(document.getElementById('port-btn'), -1);
     holdToSteer(document.getElementById('starboard-btn'), 1);
-    warpBtn.addEventListener('click', () => net.action({ kind: 'warp' }));
+
+    // Console tutorial (the "?" in the header): a schematic of the controls
+    // plus plain-language notes, readable from the lobby before launch.
+    mountHelp({
+      title: 'Helm — you fly the ship',
+      diagram: `
+        <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="9">
+          <!-- throttle slider -->
+          <rect x="14" y="20" width="14" height="86" rx="7" fill="none" stroke="#39456b"/>
+          <circle cx="21" cy="52" r="11" fill="currentColor"/>
+          <text x="21" y="14" fill="#7d8db3" text-anchor="middle">THROTTLE</text>
+          <text x="21" y="120" fill="#7d8db3" text-anchor="middle">= SPEED</text>
+          <!-- ship + steering -->
+          <polygon points="150,55 141,75 159,75" fill="currentColor"/>
+          <path d="M126 70 Q112 55 126 40" fill="none" stroke="#7d8db3" stroke-width="2" marker-end="none"/>
+          <path d="M174 70 Q188 55 174 40" fill="none" stroke="#7d8db3" stroke-width="2"/>
+          <text x="112" y="90" fill="#7d8db3" text-anchor="middle">◀ PORT</text>
+          <text x="190" y="90" fill="#7d8db3" text-anchor="middle">STBD ▶</text>
+          <text x="150" y="106" fill="#7d8db3" text-anchor="middle">HOLD TO TURN</text>
+          <!-- slipstream ring off to starboard -->
+          <ellipse cx="286" cy="50" rx="26" ry="21" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M162 62 Q225 70 264 58" fill="none" stroke="#7d8db3" stroke-dasharray="4 4"/>
+          <text x="286" y="86" fill="#7d8db3" text-anchor="middle">RING = STEER ONTO IT</text>
+          <text x="286" y="98" fill="#7d8db3" text-anchor="middle">FOR A SPEED BOOST</text>
+        </svg>`,
+      lines: [
+        '<b>Throttle</b> sets speed. Hold <b>Port / Starboard</b> to turn.',
+        'The ship turns faster when <b>engine power</b> is higher (ask Engineering) and when the <b>throttle is lower</b>.',
+        'Steer onto a <b>slipstream ring&rsquo;s</b> position before it arrives to get a speed boost.',
+        'In a <b>debris field</b>, keep the throttle under 40% to avoid hull damage.',
+        '<b>Emergency Warp</b> escapes all threats but knocks every system out for a while. Last resort.',
+        'The captain sees the whole sky on the main screen — ask and answer.',
+      ],
+    });
+    warpBtn.addEventListener('click', () => {
+      net.action({ kind: 'warp' });
+      audio.warpEngage(); // local engage clunk; the ship-wide whoosh follows via fx
+    });
   </script>
 </body>
 </html>
