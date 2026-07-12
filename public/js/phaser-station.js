@@ -24,6 +24,15 @@ export function mountPhaser({ parentId, width, height, scene }) {
     fps: { target: 30, forceSetTimeOut: true },
     powerPreference: 'low-power',
     banner: false,
+    // Let vertical page scroll pass THROUGH the canvas: by default Phaser sets
+    // touch-action:none and preventDefaults touch events, so a scroll that
+    // begins on the scope froze the whole console. capture:false stops the
+    // preventDefault; touch-action:pan-y (set on the canvas below) lets the
+    // browser scroll vertically while horizontal taps still register as targets.
+    input: { touch: { capture: false } },
+    callbacks: {
+      postBoot: (g) => { if (g.canvas) g.canvas.style.touchAction = 'pan-y'; },
+    },
     scene,
   });
 

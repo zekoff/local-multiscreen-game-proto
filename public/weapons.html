@@ -19,7 +19,7 @@
     <!-- Incoming asteroid contacts: radar scope, tap a blip to target it -->
     <div class="panel">
       <h2>Sensor Contacts</h2>
-      <div id="scope-mount" style="width:100%; aspect-ratio:1; max-width:320px; margin:0 auto;"></div>
+      <div id="scope-mount" style="width:100%; aspect-ratio:9 / 5; max-width:420px; margin:0 auto;"></div>
       <p id="scope-empty" style="color:var(--dim); text-align:center; margin-top:0.5rem">No contacts.</p>
       <p id="scope-target" style="text-align:center; margin-top:0.5rem"></p>
     </div>
@@ -28,7 +28,7 @@
     <div class="panel">
       <h2>Phaser Bank</h2>
       <div class="label">Charge</div>
-      <div class="meter" style="margin-bottom:0.75rem"><div id="charge-bar"></div></div>
+      <div class="meter" style="margin-bottom:0.75rem; position:relative"><div id="charge-bar"></div><div id="snap-tick"></div></div>
       <button class="primary" id="fire-btn" style="width:100%">FIRE</button>
       <!-- Charge governor (P#10): STANDARD full-power shots vs SNAPSHOT quick
            weak shots (fire at 40%, small contacts only) — your call on pacing. -->
@@ -98,7 +98,7 @@
     let shieldsRaised = false;
 
     const scopeScene = new WeaponsScopeScene();
-    mountPhaser({ parentId: 'scope-mount', width: 320, height: 320, scene: scopeScene });
+    mountPhaser({ parentId: 'scope-mount', width: 360, height: 200, scene: scopeScene });
 
     const intents = createIntents();
     const net = initStation({
@@ -151,6 +151,12 @@
         const charge = intents.has('fired') ? 0 : state.charge;
         const ready = charge >= needed;
         setChargeBar(document.getElementById('charge-bar'), charge, ready);
+        // Snapshot tick: mark the 40% threshold on the gauge in SNAPSHOT mode so
+        // the gunner can see at a glance when a quick shot is available. Green
+        // once the meter has crossed it.
+        const snapTick = document.getElementById('snap-tick');
+        snapTick.style.display = gov === 'snapshot' ? 'block' : 'none';
+        snapTick.style.background = charge >= 40 ? 'var(--good)' : 'rgba(255,255,255,0.55)';
         // Never let the gunner fire on a confirmed pod (the don't-shoot invariant
         // is enforced server-side too, but the UI refuses it and says why).
         fireBtn.disabled = !ready || state.targetId === null || isPod;
@@ -233,8 +239,8 @@
           <text x="220" y="122" fill="#7d8db3" text-anchor="middle">SHIELDS: BLOCK HITS, DRAIN WHILE UP</text>
         </svg>`,
       lines: [
-        '<b>Tap a blip</b> on the scope to target it. Press <b>FIRE</b> when the charge bar is full. Shots always hit.',
-        '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% for a quick weak shot that only cracks small rocks — trade firepower for less waiting.',
+        'The scope is a <b>forward arc</b> out the front window — contacts sit where they are relative to your bow (port ↔ starboard) and slide toward you as they close. <b>Tap a blip</b> to target it, then <b>FIRE</b> when charged. Shots always hit.',
+        '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% and cracks <b>most</b> rocks fast — but a genuinely <b>big</b> rock shrugs it off and needs a full shot. You can\'t tell size on the scope; the <b>captain</b> calls the big ones from the viewscreen. The gauge tick shows when a snapshot is ready.',
         'Contacts read <b>UNKNOWN</b> until sensors identify them. A <b>RESCUE POD</b> looks like a rock at range — <b>never fire on a pod</b> (the console will refuse it). Confirm before you shoot.',
         'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> shares your emitter: latch a pod/salvage in the arc to reel it in — but the <b>laser is offline while latched</b>, so it\'s a "tow or shoot?" call. Weapons power drives both.',
         'The <b>deflector screen</b> blocks damage but drains while up, and only recharges while down.',

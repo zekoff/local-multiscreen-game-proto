@@ -61,7 +61,12 @@ const LASER_CHARGE_RATE = 7; // charge points/s per allocated weapon power unit
 // for a weak shot that only kills SMALL rocks — trading firepower for a shorter
 // wait (addresses the "weapons is all waiting" playtest note). Threshold 40%.
 const SNAPSHOT_CHARGE = 40;    // minimum charge to fire a snapshot
-const SNAPSHOT_MAX_SIZE = 1.0; // a snapshot only destroys contacts at or under this size
+// A snapshot cracks MOST rocks (size ≤ this); only genuinely LARGE rocks shrug
+// it off. Rocks range 0.6–1.6, so ~the top ~30% survive a partial charge and
+// need a full STANDARD shot. Crucially the scope can't show size (all blips
+// read the same) — only the captain, watching the viewscreen silhouettes, can
+// call "that one's too big for a snapshot." That's the cooperation.
+const SNAPSHOT_MAX_SIZE = 1.3;
 
 // Emergency Warp: a drastic escape that jumps the ship elsewhere, scattering
 // its systems (see doWarp). Long cooldown so it's a last resort, not a rhythm.

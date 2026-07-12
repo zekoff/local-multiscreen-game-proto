@@ -135,6 +135,8 @@ select {
 .meter.warn > div { background: var(--warn); }
 .meter.bad > div { background: var(--bad); }
 .meter.cool > div { background: #4f7bd0; } /* charging / readiness (not health) */
+/* Snapshot-availability tick on the weapons charge gauge (40% threshold). */
+#snap-tick { position: absolute; top: 0; bottom: 0; left: 40%; width: 2px; border-radius: 1px; }
 .readout { font-family: monospace; font-size: 1.4rem; color: var(--accent); }
 .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
 
