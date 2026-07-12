@@ -32,6 +32,9 @@
     <div class="panel">
       <h2>Throttle <span id="throttle-val" style="color:var(--accent)">0%</span></h2>
       <input type="range" id="throttle" min="0" max="100" step="5" value="0">
+      <!-- Engineering's engine allocation, shown where it matters: it sets top
+           speed AND turn authority (harder turns need engines fed). -->
+      <p class="label" id="eng-power" style="margin-top:0.5rem"></p>
     </div>
 
     <!-- Course alignment: keep the marker centered against drift -->
@@ -124,6 +127,11 @@
         // halves engine power (mirrors eff() in src/engine/game.ts).
         const effEngines = state.power.engines * (state.breakers.engines ? 0.5 : 1);
         const win = 12 + 18 * (effEngines / 4);
+        // Inline engine-power readout (no separate power panel on this console).
+        const ep = state.power.engines, eTrip = state.breakers.engines;
+        document.getElementById('eng-power').innerHTML = ep > 0
+          ? `🚀 Engine power <b style="color:var(--accent)">${ep}</b>${eTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — speed + turn authority`
+          : '<b style="color:var(--bad)">NO ENGINE POWER</b> — ask Engineering';
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
         const center = next ? next.bearing : 0;

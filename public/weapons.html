@@ -27,6 +27,7 @@
     <!-- Weapon charge and fire control -->
     <div class="panel">
       <h2>Phaser Bank</h2>
+      <p class="label" id="wpn-power" style="margin-bottom:0.4rem"></p>
       <div class="label">Charge</div>
       <div class="meter" style="margin-bottom:0.75rem; position:relative"><div id="charge-bar"></div><div id="snap-tick"></div></div>
       <button class="primary" id="fire-btn" style="width:100%">FIRE</button>
@@ -45,6 +46,7 @@
          depends on engineering's shield power allocation. -->
     <div class="panel">
       <h2>Deflector Screen</h2>
+      <p class="label" id="shd-power" style="margin-bottom:0.4rem"></p>
       <div class="label">Strength</div>
       <div class="meter" style="margin-bottom:0.75rem"><div id="shield-bar"></div></div>
       <button id="shields-btn" style="width:100%">Screen Up</button>
@@ -174,6 +176,17 @@
         shieldsBtn.textContent = shieldsRaised ? 'Screen Down' : 'Screen Up';
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
         if (towHost) towHost.render(state);
+        // Inline power readouts: Engineering's allocation shown right where it
+        // matters (drives laser recharge + tractor reel, and shield regen), with
+        // a NO-POWER call — no separate power panel needed on this console.
+        const wp = state.power.weapons, wTrip = state.breakers.weapons;
+        document.getElementById('wpn-power').innerHTML = wp > 0
+          ? `⚡ Weapon power <b style="color:var(--accent)">${wp}</b>${wTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — drives recharge + tractor`
+          : '<b style="color:var(--bad)">NO WEAPON POWER</b> — ask Engineering';
+        const sp = state.power.shields, sTrip = state.breakers.shields;
+        document.getElementById('shd-power').innerHTML = sp > 0
+          ? `🛡️ Shield power <b style="color:var(--accent)">${sp}</b>${sTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — regen rate`
+          : '<b style="color:var(--bad)">NO SHIELD POWER</b> — regen stalled';
       },
     });
 

@@ -39,7 +39,6 @@
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
     import { mountWidgets } from '/js/widget.js';
-    import { shipVitals, powerStatus } from '/js/widgets/common.js';
     import { cargoHold, deckCrew } from '/js/widgets/crewchief.js';
 
     // Console-local audio: the Crew Chief owns the deck sounds — cargo stow /
@@ -61,12 +60,12 @@
       },
     });
 
-    // Lay out the console. Cargo + damage control are the Crew Chief's own;
-    // ship vitals + power grid are portable read-only widgets for situational
-    // awareness (proof the abstraction moves display widgets freely).
+    // Lay out the console: the Crew Chief owns cargo + the deck crew. Hull /
+    // shields / power all read off the MAIN SCREEN now — no duplicate panels
+    // here (the console shows only what this seat acts on).
     host = mountWidgets(
       document.getElementById('cc-widgets'),
-      [cargoHold, deckCrew, shipVitals, powerStatus],
+      [cargoHold, deckCrew],
       { net, intents, audio, seat: 'crewchief' },
     );
 

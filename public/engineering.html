@@ -37,7 +37,7 @@
   <div id="toasts"></div>
 
   <main>
-    <!-- Power budget: 8 units across five systems, max 4 each -->
+    <!-- Power budget: 7 units across four systems, max 4 each -->
     <div class="panel">
       <h2>Power Distribution <span id="power-free" style="color:var(--accent)"></span></h2>
       <div id="power-systems"></div>
@@ -63,15 +63,7 @@
       <h2>Breakers</h2>
       <div id="breakers"></div>
     </div>
-
-    <!-- Ship vitals so engineering can see the effect of their choices -->
-    <div class="panel">
-      <h2>Ship Vitals</h2>
-      <div class="label">Hull</div>
-      <div class="meter good" style="margin-bottom:0.6rem"><div id="hull-bar"></div></div>
-      <div class="label">Shields</div>
-      <div class="meter"><div id="shield-bar"></div></div>
-    </div>
+    <!-- (Hull/shield vitals live on the main screen now — no duplicate here.) -->
   </main>
 
   <!-- Phase overlays (shared shell fills these in) -->
@@ -101,16 +93,16 @@
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
     const ENGINEERING_FX = new Set(['sensorContact', 'sensorPulse', 'ionStorm']);
-    const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false, tractor: false };
+    const prevBreakers = { engines: false, shields: false, weapons: false, sensors: false };
     // Per-system restore-gesture progress (armed via the slider, then 3 taps).
     const RESTORE_TAPS = 3;
-    const restore = { engines: null, shields: null, weapons: null, sensors: null, tractor: null };
+    const restore = { engines: null, shields: null, weapons: null, sensors: null };
 
-    // Five powered systems now — tractor is engineering-powered but operated by
-    // the Crew Chief (like sensors are operated at the weapons scope).
-    const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors', 'tractor'];
+    // Four powered systems. Sensors are engineering-powered but operated at the
+    // weapons scope; the tractor now draws from WEAPONS power (shared emitter).
+    const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors'];
     const POWER_MAX = 4;
-    const POWER_TOTAL = 8; // keep in sync with POWER_TOTAL in src/engine/game.ts
+    const POWER_TOTAL = 7; // keep in sync with POWER_TOTAL in src/engine/game.ts
 
     // Build the power rows and breaker widgets once; render() updates state.
     const systemsEl = document.getElementById('power-systems');
@@ -153,8 +145,8 @@
     for (const sys of SYSTEMS) resetGesture(sys);
 
     const intents = createIntents();
-    let lastPower = { engines: 0, shields: 0, weapons: 0, sensors: 0, tractor: 0 }; // latest authoritative allocation
-    let lastBreakers = { engines: false, shields: false, weapons: false, sensors: false, tractor: false };
+    let lastPower = { engines: 0, shields: 0, weapons: 0, sensors: 0 }; // latest authoritative allocation
+    let lastBreakers = { engines: false, shields: false, weapons: false, sensors: false };
 
     // The commanded allocation: optimistic intent if pending, else the snapshot.
     const shownPower = (sys) => intents.get(`power-${sys}`) ?? lastPower[sys];
@@ -201,8 +193,6 @@
           label.textContent = tripped ? `${sys}: TRIPPED — HALF POWER` : `${sys}: OK`;
           restoreEl.classList.toggle('idle', !tripped); // reserve space either way (no reflow)
         }
-        setHealthBar(document.getElementById('hull-bar'), state.hull);
-        setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
         // Sensors: current detection range + pulse cooldown. An ion storm
         // halves the range — flag it loudly, this console owns the response.
         const rangeEl = document.getElementById('sensor-range');
@@ -231,7 +221,7 @@
       title: 'Engineering — you run the power grid',
       diagram: `
         <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="8.5">
-          <!-- power pips: five systems, moveable points -->
+          <!-- power pips: four systems, moveable points -->
           ${['ENGINES', 'SHIELDS', 'WEAPONS', 'SENSORS', 'TRACTOR'].map((n, row) => `
             <text x="14" y="${18 + row * 20}" fill="#7d8db3">${n}</text>
             ${[0, 1, 2, 3].map((i) => `<rect x="${70 + i * 18}" y="${9 + row * 20}" width="13" height="13" rx="3"
@@ -247,7 +237,7 @@
           <text x="264" y="80" fill="#7d8db3" text-anchor="middle">2. TAP ×3 = FIXED</text>
         </svg>`,
       lines: [
-        'You have <b>8 power points</b> across five systems (max 4 each). Moving them is your main job.',
+        'You have <b>7 power points</b> across four systems (max 4 each). Moving them is your main job.',
         '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate. <b>Sensors</b> = how early contacts are detected AND identified. <b>Shields</b> = shield recharge (only while lowered). <b>Tractor</b> = the Crew Chief\'s beam — feed it when they\'re towing.',
         '<b>Breakers</b> trip when rocks hit the hull. A tripped system runs at half power until you slide to arm and tap 3 times.',
         'The <b>Sensor Pulse</b> reveals AND identifies every contact at once and cuts through ion storms (long cooldown).',
