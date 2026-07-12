@@ -15,7 +15,11 @@ export type Phase = 'lobby' | 'active' | 'debrief';
 // 'supervisor' is the debug/sim-control role. Crew seats are the other four
 // (helm/engineering/weapons/crewchief).
 export type SeatId = 'helm' | 'engineering' | 'weapons' | 'crewchief' | 'main' | 'supervisor';
-export type Difficulty = 'chill' | 'normal' | 'intense';
+// Two engagement settings. 'officer' is the default and the balance target
+// (formerly 'normal'); 'cruise' is the lighter workload (formerly 'chill').
+// The old three-state chill/normal/intense collapsed to these two — Cruise may
+// later also drop widgets on some consoles (deferred forward work).
+export type Difficulty = 'cruise' | 'officer';
 export type { SystemId } from './mission.js';
 
 // The crew seats that hold an exclusive station, run auto-assist when unmanned,
@@ -24,8 +28,9 @@ export type { SystemId } from './mission.js';
 const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief'];
 
 // Difficulty multiplies the burden a station must handle (drift rate for helm,
-// breaker trip rate for engineering, asteroid spawn rate for weapons).
-const DIFF_MULT: Record<Difficulty, number> = { chill: 0.6, normal: 1, intense: 1.5 };
+// breaker trip rate for engineering, asteroid spawn rate for weapons). Officer
+// is the 1.0 baseline everything is tuned against; Cruise lightens the load.
+const DIFF_MULT: Record<Difficulty, number> = { cruise: 0.6, officer: 1 };
 
 // Powered systems (allocated by engineering from the shared pool). Sensors and
 // tractor are engineering-powered but *operated* from other consoles (weapons
@@ -522,7 +527,7 @@ export class Game {
     this.seats = Object.fromEntries(
       ([...CREW_SEATS, 'main'] as SeatId[]).map((s) => [
         s,
-        { playerId: null, name: '', connected: false, difficulty: 'normal' as Difficulty },
+        { playerId: null, name: '', connected: false, difficulty: 'officer' as Difficulty },
       ]),
     ) as Record<SeatId, SeatState>;
   }
@@ -1620,13 +1625,11 @@ export class Game {
     // timer, are now the main source of engineering emergencies. Hits fully
     // absorbed by shields do NOT trip anything: good shield play spares the
     // engineer. The chance scales with the ENGINEERING seat's difficulty so
-    // the knob really changes that console's workload: chill ~60% of hull
-    // hits trip one, normal always trips one, intense always trips one and
-    // half the time jolts a second loose.
+    // the knob really changes that console's workload: Cruise ~60% of hull
+    // hits trip one, Officer always trips one.
     if (remaining > 0) {
-      const engDiff = this.diff('engineering'); // 0.6 / 1 / 1.5
+      const engDiff = this.diff('engineering'); // 0.6 (cruise) / 1 (officer)
       if (this.rng() < Math.min(1, engDiff)) this.tripBreaker();
-      if (engDiff > 1 && this.rng() < engDiff - 1) this.tripBreaker();
     }
     this.targetableSince.delete(a.id);
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });

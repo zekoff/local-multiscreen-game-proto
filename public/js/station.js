@@ -21,7 +21,7 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   const name = params.get('name') || '';
-  const difficulty = params.get('d') || 'normal';
+  const difficulty = params.get('d') || 'officer';
   if (!room) {
     location.href = '/'; // no room code: back to the join page
     return null;
@@ -53,8 +53,8 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
       const crewed = ['helm', 'engineering', 'weapons', 'crewchief']
         .map((s) => {
           const seat = state.seats[s];
-          // Show non-default difficulty so the party can see who's on chill/intense.
-          const diff = seat.difficulty && seat.difficulty !== 'normal' ? ` (${seat.difficulty})` : '';
+          // Show non-default engagement setting so the party can see who's on Cruise.
+          const diff = seat.difficulty && seat.difficulty !== 'officer' ? ` (${seat.difficulty})` : '';
           return `${s}: ${seat.connected ? seat.name : 'auto'}${diff}`;
         })
         .join(' · ');

@@ -45,7 +45,7 @@ function freshGame(): Game {
   // Man every crew seat so no auto-assist interferes with the measurement
   // (auto-eng would reallocate power, auto-weapons would manage shields).
   for (const seat of ['helm', 'engineering', 'weapons'] as const) {
-    game.join(seat, `chk-${seat}`, `chk-${seat}`, 'normal');
+    game.join(seat, `chk-${seat}`, `chk-${seat}`, 'officer');
   }
   game.start(SANDBOX, 42);
   return game;
@@ -128,33 +128,34 @@ function measureRecharge(game: Game, secs: number): number {
 // helm = course drift, engineering = breaker trips per hull hit, weapons =
 // asteroid spawn pressure. Same seed both sides, so the comparison is exact.
 
-function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons', difficulty: 'chill' | 'intense'): Game {
+function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons', difficulty: 'cruise' | 'officer'): Game {
   const game = new Game();
   game.onEvent = () => {};
   for (const s of ['helm', 'engineering', 'weapons'] as const) {
-    game.join(s, `chk-${s}`, `chk-${s}`, s === seat ? difficulty : 'normal');
+    game.join(s, `chk-${s}`, `chk-${s}`, s === seat ? difficulty : 'officer');
   }
   game.start(def, 42);
   return game;
 }
 
 {
-  // Helm: drift pressure scales with the helm seat's difficulty.
+  // Helm: drift pressure scales with the helm seat's difficulty (Cruise 0.6 vs
+  // Officer 1.0 — a 1.67x span).
   const driftDef: MissionDef = { ...SANDBOX, driftScale: 1 };
-  const drift = (d: 'chill' | 'intense') => {
+  const drift = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(driftDef, 'helm', d);
     tickFor(game, 60);
     return Math.abs(game.serialize().alignment as number);
   };
-  const chill = drift('chill');
-  const intense = drift('intense');
-  check('helm difficulty scales course drift', intense > chill && intense >= chill * 1.5, `chill=${chill} intense=${intense}`);
+  const cruise = drift('cruise');
+  const officer = drift('officer');
+  check('helm difficulty scales course drift', officer > cruise && officer >= cruise * 1.5, `cruise=${cruise} officer=${officer}`);
 }
 
 {
   // Engineering: breaker trips per hull hit scale with the eng seat's
-  // difficulty (chill ~60% of hits, normal every hit, intense adds seconds).
-  const trips = (d: 'chill' | 'intense') => {
+  // difficulty (Cruise ~60% of hits, Officer every hit).
+  const trips = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(SANDBOX, 'engineering', d) as any;
     for (let i = 0; i < 20; i++) {
       game.applyImpact({ id: 900 + i, label: `CHK-${i}`, dmg: 0.5, impactIn: 0, size: 1, speed: 1, bearing: 0, revealed: true });
@@ -162,9 +163,9 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
     }
     return game.stats.breakersTripped as number;
   };
-  const chill = trips('chill');
-  const intense = trips('intense');
-  check('eng difficulty scales impact breaker trips', chill <= 17 && intense >= 22 && intense > chill, `chill=${chill}/20 hits, intense=${intense}/20 hits`);
+  const cruise = trips('cruise');
+  const officer = trips('officer');
+  check('eng difficulty scales impact breaker trips', cruise <= 17 && officer >= 19 && officer > cruise, `cruise=${cruise}/20 hits, officer=${officer}/20 hits`);
 }
 
 {
@@ -175,14 +176,14 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
     impactIn: { min: 99999, max: 99999 }, // never actually arrive
     maxAsteroids: 999,
   };
-  const spawned = (d: 'chill' | 'intense') => {
+  const spawned = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(spawnDef, 'weapons', d) as any;
     tickFor(game, 100);
     return game.tel.asteroidsSpawned as number;
   };
-  const chill = spawned('chill');
-  const intense = spawned('intense');
-  check('weapons difficulty scales spawn pressure', intense >= chill * 1.5 && intense > chill, `chill=${chill} intense=${intense}`);
+  const cruise = spawned('cruise');
+  const officer = spawned('officer');
+  check('weapons difficulty scales spawn pressure', officer >= cruise * 1.5 && officer > cruise, `cruise=${cruise} officer=${officer}`);
 }
 
 // --- 8. Target lock is lost when the contact falls below sensor resolution ---

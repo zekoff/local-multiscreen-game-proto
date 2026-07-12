@@ -14,7 +14,7 @@ function connectSeat(base, code, seat, onState) {
     ws.on('open', () => {
       ws.send(JSON.stringify({
         type: 'join', room: code, seat,
-        name: `bot-${seat}`, difficulty: 'normal',
+        name: `bot-${seat}`, difficulty: 'officer',
         playerId: `smoke-${seat}`,
       }));
     });

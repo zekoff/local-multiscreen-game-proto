@@ -22,6 +22,16 @@ html, body {
   font-family: system-ui, -apple-system, sans-serif;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+  /* This is a control panel, not a document — text selection just gets in the
+     way (accidental highlights while tapping controls). Disable it everywhere. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ...except real text entry, which still needs selection to be usable. */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 body { display: flex; flex-direction: column; }

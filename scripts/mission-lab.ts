@@ -69,7 +69,7 @@ function runOnce(missionId: string, scenario: Scenario, seed: number): RunRecord
   // Manned seats join like human players would; 'auto' seats stay unmanned so
   // the engine's auto-assist plays them.
   const manned = CREW_SEATS.filter((s) => scenario.seats[s] !== 'auto');
-  for (const seat of manned) game.join(seat, `lab-${seat}`, `lab-${seat}`, 'normal');
+  for (const seat of manned) game.join(seat, `lab-${seat}`, `lab-${seat}`, 'officer');
   // One crew per policy flavour used this run (seeded, so the cell is
   // reproducible). We only ever call the policy for a manned seat.
   const crews: Partial<Record<SeatMode, ReturnType<typeof makeCrew>>> = {};

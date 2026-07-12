@@ -7,7 +7,7 @@ export class Net {
     this.room = room;
     this.seat = seat;
     this.name = name || '';
-    this.difficulty = difficulty || 'normal';
+    this.difficulty = difficulty || 'officer';
     this.handlers = handlers; // { onState, onEvent, onJoined, onError, onStatus }
     this.retryMs = 1000;
     this.closedByUser = false;
