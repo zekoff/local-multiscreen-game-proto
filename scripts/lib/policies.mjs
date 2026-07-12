@@ -132,18 +132,30 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       return actions;
     },
 
-    // Crew Chief: damage control only now (the tow moved to the weapons emitter).
-    // Skilled works every tick (react 1.0); novice is slow (react 0.35).
+    // Crew Chief: deck operations — trim wear, patch hull, fight emergencies
+    // (tow moved to the weapons emitter). Commit is add-only; crew free
+    // themselves on completion. One post per tick, priority-ordered. Skilled
+    // works every tick (react 1.0); novice is slow (react 0.35).
     crewchief(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
-      const actions = [];
-      // Damage control: put a free hand on an unattended emergency.
-      const emg = state.emergencies || [];
       const free = state.crew ? state.crew.free : 0;
+      if (free <= 0) return [];
+      const chief = state.chief || { maint: [], repair: { hull: 100, crew: 0 } };
+      const emg = state.emergencies || [];
+      // 1. Staff any unmanned emergency first.
       const unmanned = emg.find((e) => e.assigned === 0);
-      if (unmanned && free > 0) actions.push({ kind: 'assignCrew', id: unmanned.id, delta: 1 });
-      else if (free > 0 && emg.length > 0) actions.push({ kind: 'assignCrew', id: emg[0].id, delta: 1 });
-      return actions;
+      if (unmanned) return [{ kind: 'assignCrew', post: String(unmanned.id) }];
+      // 2. Patch the hull when it's hurt and no detail is on it yet.
+      const rep = chief.repair || { hull: 100, crew: 0 };
+      if (rep.hull < 70 && rep.crew === 0) return [{ kind: 'assignCrew', post: 'repair' }];
+      // 3. Trim the most-worn system that has no hand on it.
+      const worst = (chief.maint || [])
+        .filter((p) => p.wear > 0.15 && p.crew === 0)
+        .sort((a, b) => b.wear - a.wear)[0];
+      if (worst) return [{ kind: 'assignCrew', post: 'maint:' + worst.system }];
+      // 4. Pile a spare hand onto an active emergency (diminishing returns).
+      if (emg.length) return [{ kind: 'assignCrew', post: String(emg[0].id) }];
+      return [];
     },
   };
 }

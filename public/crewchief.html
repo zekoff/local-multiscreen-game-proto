@@ -40,7 +40,7 @@
     import { createIntents } from '/js/optimistic.js';
     import { mountWidgets } from '/js/widget.js';
     import { shipVitals, powerStatus } from '/js/widgets/common.js';
-    import { cargoHold, damageControl } from '/js/widgets/crewchief.js';
+    import { cargoHold, deckCrew } from '/js/widgets/crewchief.js';
 
     // Console-local audio: the Crew Chief owns the deck sounds — cargo stow /
     // jettison, fire + boarders alarms. (Tractor hum moved to Weapons.)
@@ -66,7 +66,7 @@
     // awareness (proof the abstraction moves display widgets freely).
     host = mountWidgets(
       document.getElementById('cc-widgets'),
-      [cargoHold, damageControl, shipVitals, powerStatus],
+      [cargoHold, deckCrew, shipVitals, powerStatus],
       { net, intents, audio, seat: 'crewchief' },
     );
 
@@ -74,27 +74,28 @@
       title: 'Crew Chief — you run the deck',
       diagram: `
         <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="9">
-          <!-- tractor beam pulling a pod into the hold -->
+          <!-- deploy crew to posts -->
           <rect x="14" y="16" width="150" height="46" rx="8" fill="none" stroke="#39456b"/>
-          <text x="89" y="30" fill="#7d8db3" text-anchor="middle">TRACTOR BEAM</text>
-          <circle cx="34" cy="48" r="6" fill="currentColor"/>
-          <line x1="40" y1="48" x2="150" y2="48" stroke="currentColor" stroke-dasharray="3 3"/>
-          <rect x="150" y="42" width="12" height="12" rx="2" fill="none" stroke="currentColor"/>
-          <text x="89" y="78" fill="#7d8db3" text-anchor="middle">latch → hold the line → aboard</text>
-          <!-- damage control: crew to tasks -->
+          <text x="89" y="30" fill="#7d8db3" text-anchor="middle">DEPLOY CREW</text>
+          <circle cx="34" cy="46" r="5" fill="currentColor"/>
+          <circle cx="48" cy="46" r="5" fill="currentColor"/>
+          <text x="110" y="49" fill="#7d8db3" text-anchor="middle">→ trim / repair</text>
+          <text x="89" y="78" fill="#7d8db3" text-anchor="middle">committed until the job is done</text>
+          <!-- emergencies -->
           <rect x="176" y="16" width="150" height="46" rx="8" fill="none" stroke="#39456b"/>
           <text x="251" y="30" fill="#ff6f6f" text-anchor="middle">FIRE — DECK 3</text>
           <circle cx="210" cy="48" r="5" fill="currentColor"/>
           <circle cx="224" cy="48" r="5" fill="currentColor"/>
-          <text x="251" y="52" fill="#7d8db3" text-anchor="middle">assign crew →</text>
-          <text x="170" y="104" fill="#7d8db3" text-anchor="middle">heavy hold = sluggish helm — jettison to lighten</text>
+          <text x="262" y="52" fill="#7d8db3" text-anchor="middle">+ crew</text>
+          <text x="170" y="104" fill="#7d8db3" text-anchor="middle">heavy cargo hold = sluggish helm — jettison to lighten</text>
         </svg>`,
       lines: [
-        'You run the <b>tractor beam</b> and the <b>deck crew</b> — the ship\'s hands.',
-        '<b>Tractor</b>: latch a rescue pod or salvage that Sensors have identified, then Helm must <b>hold the line</b> or the beam breaks. The <b>laser can\'t fire</b> while you\'re latched — coordinate with Weapons.',
-        'A <b>full cargo hold</b> makes the ship turn slowly. <b>Jettison</b> to get your maneuverability back if Helm needs it.',
-        '<b>Damage control</b>: assign your crew to fires, boarders, and hull breaches. Left alone, a fire burns the hull down — put hands on it fast.',
-        '<b>Confirm before Weapons fires</b> — a pod looks like a rock until Sensors resolve it. That\'s the whole crew\'s job, and you\'re the one who tows it home.',
+        'You run the <b>deck crew</b> — the ship\'s hands. This console is <b>optional</b>: without you the ship self-manages, but a sharp Chief makes a real difference to the score.',
+        '<b>Maintenance</b>: systems slowly drift out of trim. Send a hand to a worn system to bring it back — a trimmed ship runs at full power.',
+        '<b>Hull Repair</b>: commit a detail to the repair bay to patch battle damage over a shift.',
+        '<b>Emergencies</b>: fires, breaches, boarders, coolant leaks — each hits the ship differently. Put hands on them fast; unattended, they bite.',
+        'Crew are <b>committed</b>: once you send a hand it stays until the job is done (more hands finish faster, with diminishing returns). Spend a scarce roster wisely.',
+        'You also manage the <b>cargo hold</b> — a heavy hold turns sluggishly; <b>jettison</b> to recover maneuverability. (Towing itself is now the Weapons console\'s job.)',
       ],
     });
   </script>

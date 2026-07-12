@@ -312,6 +312,50 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   check('tractor will not latch without power', game.serialize().tractor.latched === false, 'latched with no power');
 }
 
+// --- 16. Crew Chief: committed maintenance crew trim a worn system down ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons', 'crewchief'] as const) {
+    game.join(s, `chk-${s}`, `chk-${s}`, 'officer');
+  }
+  game.start(SANDBOX, 42);
+  const g = game as any;
+  g.wear.engines = 0.4;
+  game.action('crewchief', { kind: 'assignCrew', post: 'maint:engines' });
+  tickFor(game, 5);
+  check('committed crew trim system wear down', g.wear.engines < 0.4, `after=${g.wear.engines}`);
+}
+
+// --- 17. No chief aboard: automated upkeep holds all wear at zero ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons'] as const) { // crewchief UNMANNED
+    game.join(s, `chk-${s}`, `chk-${s}`, 'officer');
+  }
+  game.start(SANDBOX, 42);
+  const g = game as any;
+  tickFor(game, 30);
+  const maxWear = Math.max(...['engines', 'shields', 'weapons', 'sensors'].map((s) => g.wear[s]));
+  check('automated upkeep holds wear at zero with no chief', maxWear === 0, `maxWear=${maxWear}`);
+}
+
+// --- 18. Crew Chief: the repair bay restores hull ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons', 'crewchief'] as const) {
+    game.join(s, `chk-${s}`, `chk-${s}`, 'officer');
+  }
+  game.start(SANDBOX, 42);
+  const g = game as any;
+  g.hull = 60;
+  game.action('crewchief', { kind: 'assignCrew', post: 'repair' });
+  tickFor(game, 4);
+  check('repair bay restores hull', g.hull > 60, `hull=${g.hull}`);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) FAILED`);
   process.exit(1);

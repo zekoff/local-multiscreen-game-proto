@@ -61,58 +61,103 @@ export const cargoHold = defineWidget({
   },
 });
 
-// --- Damage-control crew board: assign a scarce roster of hands to shipboard
-// emergencies. Pure allocation under scarcity (no twitch). ---
-export const damageControl = defineWidget({
-  id: 'damage-control',
-  label: 'Damage Control',
-  hint: 'Assign crew to fires, boarders, and breaches — unattended, they bleed the ship.',
+// --- Deck Crew board: COMMIT a scarce roster of hands to deploy posts —
+// per-system maintenance (trim out drifting wear), the hull-repair bay, and
+// shipboard emergencies. Commitment is real: you can only ADD hands (no yanking
+// mid-job); crew free themselves when the job is done. Stacking is faster but
+// with diminishing returns. When no human chief is aboard, automated systems run
+// the deck (the board shows an automated note instead of posts). ---
+const SYS_ICON = { engines: '🚀', shields: '🛡️', weapons: '🔫', sensors: '📡' };
+const SYS_NAME = { engines: 'Engines', shields: 'Shields', weapons: 'Weapons', sensors: 'Sensors' };
+const EMG_ICON = { fire: '🔥', boarders: '🚨', breach: '💥', leak: '💧' };
+
+export const deckCrew = defineWidget({
+  id: 'deck-crew',
+  label: '👷 Deck Crew',
+  hint: 'Commit hands to trim systems, patch the hull, and fight emergencies — they stay until the job is done. More hands = faster (diminishing returns).',
   mount({ root, net }) {
     const roster = el('div', 'crew-roster');
+    const auto = el('div', 'label');        // automated note when no human chief
+    const posts = el('div', 'deck-posts');  // maintenance + repair posts
     const list = el('div', 'emergency-list');
-    root.append(roster, list);
+    root.append(roster, auto, posts, list);
 
-    list.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('button[data-emg]');
-      if (!btn) return;
-      net.action({ kind: 'assignCrew', id: Number(btn.dataset.emg), delta: Number(btn.dataset.delta) });
+    // One delegated handler: every "+ crew" button carries its post key.
+    root.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-post]');
+      if (!btn || btn.disabled) return;
+      net.action({ kind: 'assignCrew', post: btn.dataset.post });
     });
+
+    function postRow(icon, name, status, meterClass, fillPct, postKey, disabled) {
+      const row = el('div', 'deck-post');
+      row.innerHTML =
+        `<div class="spread"><span>${icon} ${name}</span><span class="label">${status}</span></div>` +
+        `<div class="meter ${meterClass}" style="margin:0.25rem 0"><div style="width:${fillPct}%"></div></div>`;
+      const b = el('button', 'deck-add', '+ crew');
+      b.dataset.post = postKey;
+      b.disabled = disabled;
+      row.appendChild(b);
+      return row;
+    }
 
     return {
       render(state) {
         const crew = state.crew || { total: 4, free: 4 };
+        const chief = state.chief || { manned: true, maint: [], repair: { crew: 0, active: false, hull: 100 } };
+        const canAdd = crew.free > 0;
+
+        // Roster dots.
         const dots = Array.from({ length: crew.total }, (_, i) =>
           `<span class="crew-dot${i < crew.free ? ' free' : ''}"></span>`).join('');
-        roster.innerHTML = `<span class="label">Crew</span> ${dots} <span class="label">${crew.free} free</span>`;
+        roster.innerHTML = `<span class="label">👷 Crew</span> ${dots} <span class="label">${crew.free} free</span>`;
 
+        // Automated note vs live posts.
+        auto.textContent = chief.manned ? '' : '⚙️ Automated systems are maintaining the ship — a Crew Chief would do it better.';
+        auto.style.display = chief.manned ? 'none' : '';
+        posts.style.display = chief.manned ? '' : 'none';
+
+        if (chief.manned) {
+          posts.innerHTML = '';
+          for (const p of chief.maint || []) {
+            const worn = p.wear > 0.02;
+            const status = p.crew ? `${p.crew} on it` : (worn ? 'drifting' : 'in trim');
+            // wear serialized 0..0.6 (cap); show it as 0..100% of the cap.
+            posts.appendChild(postRow(SYS_ICON[p.system] || '', SYS_NAME[p.system] || p.system, status,
+              'warn', Math.round((p.wear / 0.6) * 100), 'maint:' + p.system, !canAdd || !worn));
+          }
+          const rep = chief.repair || { crew: 0, hull: 100 };
+          const repStatus = rep.crew ? `${rep.crew} on it` : (rep.hull < 100 ? 'hull damaged' : 'hull full');
+          posts.appendChild(postRow('🔧', 'Hull Repair', repStatus, 'cool', rep.hull, 'repair', !canAdd || rep.hull >= 100));
+        }
+
+        // Emergencies (add-only; crew free themselves on resolve).
         const emg = state.emergencies || [];
-        // Rebuild only when the set of emergencies changes; otherwise update in place.
-        const sig = emg.map((e) => e.id).join(',');
+        const sig = emg.map((e) => e.id + ':' + e.kind).join(',');
         if (list.dataset.sig !== sig) {
           list.dataset.sig = sig;
           list.innerHTML = '';
-          if (emg.length === 0) {
-            list.appendChild(el('div', 'label', 'All stations nominal.'));
-          }
+          if (emg.length === 0) list.appendChild(el('div', 'label', 'No active emergencies.'));
           for (const e of emg) {
             const card = el('div', 'emergency');
             card.dataset.id = e.id;
-            card.innerHTML = `
-              <div class="spread"><span class="emg-label">${e.label}</span><span class="emg-assigned"></span></div>
-              <div class="meter cool" style="margin:0.3rem 0"><div class="emg-bar"></div></div>
-              <div class="row">
-                <button data-emg="${e.id}" data-delta="-1" style="flex:0.4">−</button>
-                <button data-emg="${e.id}" data-delta="1" style="flex:0.4">+ crew</button>
-              </div>`;
+            card.innerHTML =
+              `<div class="spread"><span class="emg-label">${EMG_ICON[e.kind] || '⚠️'} ${e.label}</span><span class="emg-assigned"></span></div>` +
+              `<div class="meter cool" style="margin:0.3rem 0"><div class="emg-bar"></div></div>`;
+            const b = el('button', 'deck-add', '+ crew');
+            b.dataset.post = String(e.id);
+            card.appendChild(b);
             list.appendChild(card);
           }
         }
         for (const e of emg) {
           const card = list.querySelector(`.emergency[data-id="${e.id}"]`);
           if (!card) continue;
-          card.querySelector('.emg-assigned').textContent = `${e.assigned} on it`;
+          card.querySelector('.emg-assigned').textContent = e.assigned ? `${e.assigned} on it` : (chief.manned ? 'unmanned!' : 'automated');
           card.querySelector('.emg-bar').style.width = `${Math.round((e.progress || 0) * 100)}%`;
-          card.classList.toggle('unmanned', e.assigned === 0);
+          card.classList.toggle('unmanned', chief.manned && e.assigned === 0);
+          const addBtn = card.querySelector('button[data-post]');
+          if (addBtn) addBtn.disabled = !canAdd;
         }
       },
     };

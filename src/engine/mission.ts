@@ -19,7 +19,7 @@ export type ContactKind = 'rock' | 'pod' | 'mineral' | 'ghost';
 
 // A shipboard emergency the Crew Chief resolves by assigning crew (damage
 // control). Purely allocation under scarcity — see the crew-assignment board.
-export type EmergencyKind = 'fire' | 'boarders' | 'breach';
+export type EmergencyKind = 'fire' | 'boarders' | 'breach' | 'leak';
 
 // What the progress readout shows the crew: a decreasing physical distance
 // (docks at 0) or a countdown toward mission failure (an escape pod losing

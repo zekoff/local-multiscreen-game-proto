@@ -197,6 +197,11 @@ select {
 .emergency .emg-label { font-weight: 600; }
 .emergency.unmanned .emg-label { color: var(--bad); }
 .emergency .emg-assigned { font-size: 0.8rem; color: var(--dim); }
+/* Crew Chief deploy posts (maintenance + hull repair) */
+.deck-posts { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.7rem; }
+.deck-post { background: #0d1322; border: 1px solid var(--panel-edge); border-radius: 8px; padding: 0.5rem 0.6rem; }
+.deck-add { margin-top: 0.35rem; width: 100%; min-height: 34px; }
+.deck-add:disabled { opacity: 0.4; }
 
 /* --- Event log --- */
 .log { font-size: 0.85rem; line-height: 1.5; color: var(--dim); max-height: 7em; overflow-y: auto; }

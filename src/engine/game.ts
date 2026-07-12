@@ -151,14 +151,33 @@ const HOLD_CAPACITY_DEFAULT = 4;    // cargo hold slots when a mission doesn't s
 // this fraction (P#23 — heavier = less nimble). Linear in used-slots/capacity.
 const CARGO_TURN_PENALTY = 0.45;
 
-// --- Damage-control crew board (Crew Chief). A fixed roster of crew tokens the
-// chief assigns to shipboard emergencies. Each emergency needs a number of
-// hands for a duration to clear; unattended, it bleeds hull (fire/breach) or
-// threatens systems (boarders). Pure allocation under scarcity — no twitch.
-const CREW_TOKENS_DEFAULT = 4;      // damage-control crew when a mission doesn't set crewTokens
-const EMERGENCY_DPS = 2.4;          // hull/s an unattended fire/breach inflicts (scaled by severity)
-const EMERGENCY_CLEAR_PER_CREW = 0.9; // progress/s toward clearing, per assigned crew hand
-const FIRE_ON_IMPACT_CHANCE = 0.18; // chance a hull-damaging impact ignites a fire (needs the chief)
+// --- Crew Chief deck operations (OPTIONAL console). A roster of crew tokens the
+// chief COMMITS to deploy posts: per-system maintenance (trim out drifting
+// wear), a hull-repair bay, and shipboard emergencies. Committed crew stay on a
+// post until the job is done (add-only — you can't yank a hand mid-job); adding
+// more hands finishes faster but with DIMINISHING RETURNS. When no human chief
+// is aboard, automated systems hold trim and resolve emergencies on their own
+// (no CPU chief in the fiction) — so the chief is pure upside range: a competent
+// one lifts the score, a negligent one drags it, an absent one is neutral.
+const CREW_TOKENS_DEFAULT = 4;      // deck crew when a mission doesn't set crewTokens
+const EMERGENCY_DPS = 2.0;          // hull/s an unattended fire/breach inflicts (scaled by severity)
+const EMERGENCY_CLEAR_PER_CREW = 0.9; // base clear progress/s for one hand (diminishing beyond that)
+const FIRE_ON_IMPACT_CHANCE = 0.16; // chance a hull-damaging impact ignites a fire (automated systems handle it if no chief)
+// System wear (trim). Drifts up slowly ONLY while a human chief is aboard (else
+// automated upkeep holds it at zero); crew on a maintenance post trim it back
+// down. Bounded and gentle — a fully-worn system limps a little, never dies.
+const WEAR_RATE = 0.008;            // wear/s a system accrues untended (chief aboard)
+const WEAR_MAX = 0.6;               // wear cap (bounds the eff penalty)
+const WEAR_EFF_PENALTY = 0.15;      // effective-power loss at wear=1 (so at the 0.6 cap, ~9%)
+const TRIM_PER_CREW = 0.09;         // wear removed/s by one hand on a maintenance post
+const FAULT_EVERY = { min: 22, max: 40 }; // ambient minor-fault cadence (bumps a system out of trim) while a chief is aboard
+const FAULT_WEAR = 0.35;            // wear a minor fault adds to a random system
+const HULL_REPAIR_PER_CREW = 1.1;   // hull/s restored by one hand in the repair bay
+const REPAIR_SHIFT = 12;            // seconds a repair detail works before the crew cycle off
+
+// Diminishing returns for stacking crew on one job: 1 hand = 1.0x, each extra
+// adds 0.55x (so 2 = 1.55x, 3 = 2.1x) — more is faster, but never linearly.
+function dim(n: number): number { return n <= 0 ? 0 : 1 + 0.55 * (n - 1); }
 
 // --- Solar flare / EMP front (P#5). Announced, then strikes: raised systems
 // take stress on impact unless the crew is in a safe posture.
@@ -318,6 +337,7 @@ export type Effect =
   | { kind: 'flare' }         // solar flare strike (ship-wide surge + white-out)
   | { kind: 'fire' }          // shipboard fire ignited (Crew Chief alarm)
   | { kind: 'boarders' }      // boarders detected (Crew Chief alarm)
+  | { kind: 'anomaly' }       // hull breach / instability (main-screen glitch flicker)
   | { kind: 'obstacle'; id: number; hit: boolean } // large obstacle passed (clear) or struck
   | { kind: 'divert' };       // divert objective opened/taken (main-screen ping)
 
@@ -357,7 +377,7 @@ export interface ConsoleMetrics {
   weapons: { hitRate: number; avgAcquireLatency: number; neutralizedPct: number; chargeIdlePct: number };
   engineering: { avgPowerUtil: number; breakerDowntime: number };
   // Crew Chief: how well cargo was recovered and emergencies handled.
-  crewchief: { cargoRecovered: number; podsRescued: number; emergencyDowntime: number };
+  crewchief: { cargoRecovered: number; podsRescued: number; emergencyDowntime: number; hullRepaired: number; upkeep: number; manned: boolean };
   // Captain proxy: coordinationScore is a 0..1 composite of the crew outcomes a
   // good caller drives — defense, gate discipline, and fast target hand-offs.
   captain: { coordinationScore: number; avgAcquireLatency: number; gatePassRate: number; defense: number };
@@ -461,11 +481,23 @@ export class Game {
   private holdCapacity = HOLD_CAPACITY_DEFAULT;
   private nextCargoId = 1;
 
-  // --- Crew Chief: damage-control crew board ---
-  crewTokens = CREW_TOKENS_DEFAULT;      // total crew available to assign
+  // --- Crew Chief: deck operations (posts + emergencies) ---
+  crewTokens = CREW_TOKENS_DEFAULT;      // total crew available to commit
   emergencies: Emergency[] = [];
   private nextEmergencyId = 1;
   private emergencyDowntime = 0;         // emergency-seconds left unattended (crewchief metric)
+  // System wear (trim) 0..1 per system; committed maintenance crew trim it down.
+  wear: Record<SystemId, number> = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+  private maintCrew: Record<SystemId, number> = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+  private repairCrew = 0;                // hands committed to the hull-repair bay
+  private repairShift = 0;              // seconds left on the current repair detail
+  private faultTimer = 0;               // countdown to the next ambient minor fault
+  // Chief scoring: whether a human chief ever crewed the run, and a running
+  // upkeep-quality integral (time-average of how well systems were kept in trim).
+  private chiefManned = false;
+  private chiefUpkeepSum = 0;
+  private chiefActiveTime = 0;
+  private hullRepaired = 0;             // total hull restored by the repair bay (metric)
 
   // --- Cinematic / competing-objective state (P#4) ---
   cinematic: { title: string; lines: string[] } | null = null;
@@ -641,6 +673,15 @@ export class Game {
     this.emergencies = [];
     this.nextEmergencyId = 1;
     this.emergencyDowntime = 0;
+    this.wear = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+    this.maintCrew = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+    this.repairCrew = 0;
+    this.repairShift = 0;
+    this.faultTimer = range(this.rng, FAULT_EVERY);
+    this.chiefManned = false;
+    this.chiefUpkeepSum = 0;
+    this.chiefActiveTime = 0;
+    this.hullRepaired = 0;
     this.savedPreset = null;
     this.cinematic = null;
     this.cinematicRemaining = 0;
@@ -764,8 +805,8 @@ export class Game {
     } else if (seat === 'crewchief') {
       if (a.kind === 'jettison' && typeof a.id === 'number') {
         this.jettison(a.id as number);
-      } else if (a.kind === 'assignCrew' && typeof a.id === 'number' && (a.delta === -1 || a.delta === 1)) {
-        this.assignCrew(a.id as number, a.delta as number);
+      } else if (a.kind === 'assignCrew' && typeof a.post === 'string') {
+        this.assignCrew(a.post as string);
       }
     }
   }
@@ -885,20 +926,26 @@ export class Game {
   }
 
   // Move a crew hand onto/off an emergency (bounded by roster + free hands).
-  private assignCrew(id: number, delta: number) {
-    const e = this.emergencies.find((x) => x.id === id);
-    if (!e) return;
-    if (delta > 0) {
-      if (this.freeCrew() <= 0) return;
-      e.assigned++;
+  // Commit a free hand to a deploy post. ADD-ONLY: once a crew member is on a
+  // job they stay until it's done (no yanking mid-task — commitment is the point).
+  // Posts: 'maint:<system>' (trim wear), 'repair' (hull bay), or an emergency id.
+  private assignCrew(post: string) {
+    if (this.freeCrew() <= 0) return;
+    if (post.startsWith('maint:')) {
+      const s = post.slice(6) as SystemId;
+      if (SYSTEMS.includes(s) && this.wear[s] > 0) this.maintCrew[s]++;
+    } else if (post === 'repair') {
+      if (this.hull < 100) { if (this.repairCrew === 0) this.repairShift = REPAIR_SHIFT; this.repairCrew++; }
     } else {
-      if (e.assigned <= 0) return;
-      e.assigned--;
+      const e = this.emergencies.find((x) => x.id === Number(post));
+      if (e) e.assigned++;
     }
   }
 
   private assignedCrew(): number {
-    return this.emergencies.reduce((sum, e) => sum + e.assigned, 0);
+    const onEmergencies = this.emergencies.reduce((sum, e) => sum + e.assigned, 0);
+    const onMaint = SYSTEMS.reduce((sum, s) => sum + this.maintCrew[s], 0);
+    return onEmergencies + onMaint + this.repairCrew;
   }
   private freeCrew(): number {
     return Math.max(0, this.crewTokens - this.assignedCrew());
@@ -993,7 +1040,10 @@ export class Game {
   // rather than an urgent repair). Fractional eff is fine: every consumer is
   // continuous math (charge rate, turn authority, regen, ranges).
   private eff(system: SystemId): number {
-    return this.power[system] * (this.breakers[system] !== null ? 0.5 : 1);
+    const breaker = this.breakers[system] !== null ? 0.5 : 1;
+    // Wear lightly derates a system (gentle — the Crew Chief keeps it trimmed).
+    const trim = 1 - WEAR_EFF_PENALTY * this.wear[system];
+    return this.power[system] * breaker * trim;
   }
 
   // Turn authority per nudge: rises with engine power, falls with throttle — so
@@ -1256,6 +1306,7 @@ export class Game {
     const deck = 1 + Math.floor(this.rng() * 4);
     const label = kind === 'fire' ? `Fire — Deck ${deck}`
       : kind === 'boarders' ? `Boarders — Deck ${deck}`
+      : kind === 'leak' ? `Coolant leak — Deck ${deck}`
       : `Hull breach — Deck ${deck}`;
     this.emergencies.push({ id, kind, label, severity, progress: 0, assigned: 0 });
     this.pushFx({ kind: kind === 'boarders' ? 'boarders' : 'fire' });
@@ -1445,21 +1496,8 @@ export class Game {
       }
     }
 
-    // Auto Crew Chief: a conservative deckhand — keeps crew on any emergency.
-    // (Tow moved to the weapons emitter; Phase 2 replaces this with the
-    // automated-systems path when the seat is unmanned.)
-    if (this.auto('crewchief')) {
-      // Damage control: put at least one hand on each emergency, then pile the
-      // rest onto the least-resolved one.
-      for (const e of this.emergencies) {
-        if (this.freeCrew() <= 0) break;
-        if (e.assigned === 0) e.assigned++;
-      }
-      while (this.freeCrew() > 0 && this.emergencies.length > 0) {
-        const e = [...this.emergencies].sort((a, b) => a.progress - b.progress)[0];
-        e.assigned++;
-      }
-    }
+    // No auto Crew Chief in the fiction: when the seat is unmanned, automated
+    // systems hold trim and resolve emergencies (handled in updateChief below).
 
     // Scripted set pieces fire on time/progress marks.
     this.runScriptedEvents();
@@ -1584,7 +1622,7 @@ export class Game {
     }
 
     // Crew Chief / topology / flare sim steps.
-    this.updateEmergencies(dt);
+    this.updateChief(dt);
     this.updateFlare();
     this.updateObstacles(dt);
     this.updateDivert();
@@ -1641,6 +1679,9 @@ export class Game {
     if (remaining > 0) {
       const engDiff = this.diff('engineering'); // 0.6 (cruise) / 1 (officer)
       if (this.rng() < Math.min(1, engDiff)) this.tripBreaker();
+      // A hard hull hit can ignite a fire — the Crew Chief's problem if crewed,
+      // otherwise automated suppression handles it (softer, slower) in updateChief.
+      if (this.rng() < FIRE_ON_IMPACT_CHANCE) this.startEmergency('fire', 1);
     }
     this.targetableSince.delete(a.id);
     this.tel.impactLog.push({ t: Math.round(this.missionTime), dmg: a.dmg, hullDmg: Math.round(remaining) });
@@ -1717,29 +1758,104 @@ export class Game {
     else if (c.kind === 'mineral') this.event(`${c.label} drifted past — salvage lost.`, false);
   }
 
-  // Damage control: unattended fires/breaches bleed hull; boarders threaten a
-  // system; assigning crew clears them over time. Cleared emergencies drop off.
-  private updateEmergencies(dt: number) {
+  // Crew Chief deck operations. Runs every tick. With a human chief aboard,
+  // systems drift out of trim (crew trim them back), ambient faults appear, the
+  // repair bay heals hull, and emergencies need committed hands. With NO chief,
+  // automated systems hold trim at spec and resolve emergencies on their own —
+  // no CPU chief in the fiction, just softer outcomes than a good human gets.
+  private updateChief(dt: number) {
+    const chief = this.seats.crewchief.connected;
+    if (chief) {
+      this.chiefManned = true;
+      // Trim: maintained systems recover; untended ones drift up to the cap.
+      for (const s of SYSTEMS) {
+        if (this.maintCrew[s] > 0) {
+          this.wear[s] = Math.max(0, this.wear[s] - TRIM_PER_CREW * dim(this.maintCrew[s]) * dt);
+          if (this.wear[s] === 0) { this.maintCrew[s] = 0; this.event(`${s} trimmed to spec — crew freed.`); }
+        } else {
+          this.wear[s] = Math.min(WEAR_MAX, this.wear[s] + WEAR_RATE * dt);
+        }
+      }
+      // Ambient minor fault: nudges a random system out of trim (steady work,
+      // the answer to "the chief had nothing to do").
+      this.faultTimer -= dt;
+      if (this.faultTimer <= 0) {
+        this.faultTimer = range(this.rng, FAULT_EVERY);
+        const s = SYSTEMS[Math.floor(this.rng() * SYSTEMS.length)];
+        this.wear[s] = Math.min(WEAR_MAX, this.wear[s] + FAULT_WEAR);
+        this.event(`${s} drifting out of trim — Crew Chief, send a hand.`);
+      }
+      // Repair bay: a committed detail restores hull for a shift, then cycles off.
+      if (this.repairCrew > 0) {
+        this.repairShift -= dt;
+        const before = this.hull;
+        this.hull = Math.min(100, this.hull + HULL_REPAIR_PER_CREW * dim(this.repairCrew) * dt);
+        this.hullRepaired += this.hull - before;
+        if (this.hull >= 100 || this.repairShift <= 0) { this.repairCrew = 0; this.event('Repair detail secured.'); }
+      }
+      // Upkeep-quality integral for scoring (1 = perfectly trimmed, 0 = fully worn).
+      const avgWear = SYSTEMS.reduce((sum, k) => sum + this.wear[k], 0) / SYSTEMS.length;
+      this.chiefUpkeepSum += (1 - avgWear / WEAR_MAX) * dt;
+      this.chiefActiveTime += dt;
+    } else {
+      // Automated upkeep: hold trim at spec, no manual posts.
+      for (const s of SYSTEMS) { this.wear[s] = 0; this.maintCrew[s] = 0; }
+      this.repairCrew = 0;
+    }
+    this.updateEmergencies(dt, chief);
+  }
+
+  // Emergencies. A human chief must commit hands (harm accrues while unattended);
+  // with no chief, automated systems resolve them slowly at reduced harm.
+  private updateEmergencies(dt: number, chief: boolean) {
     if (this.emergencies.length === 0) return;
     for (const e of this.emergencies) {
-      if (e.assigned > 0) {
-        e.progress += (EMERGENCY_CLEAR_PER_CREW * e.assigned * dt) / (2 + e.severity);
-      } else {
-        // Unattended harm.
-        if (e.kind === 'fire' || e.kind === 'breach') {
-          const dps = EMERGENCY_DPS * e.severity;
-          this.hull = Math.max(0, this.hull - dps * dt);
-          this.tel.hullDamageTaken += dps * dt;
-        } else if (e.kind === 'boarders') {
-          // Boarders periodically trip a breaker if left unchecked.
-          if (this.rng() < 0.10 * e.severity * dt) this.tripBreaker();
+      if (chief) {
+        if (e.assigned > 0) {
+          e.progress += (EMERGENCY_CLEAR_PER_CREW * dim(e.assigned) * dt) / (2 + e.severity);
+        } else {
+          this.applyEmergencyHarm(e, dt);
+          this.emergencyDowntime += dt;
         }
-        this.emergencyDowntime += dt;
+      } else {
+        // Automated systems: self-resolve at ~0.7 of one hand, softened harm.
+        e.progress += (EMERGENCY_CLEAR_PER_CREW * 0.7 * dt) / (2 + e.severity);
+        this.applyEmergencyHarm(e, dt * 0.5);
       }
     }
     const cleared = this.emergencies.filter((e) => e.progress >= 1);
     this.emergencies = this.emergencies.filter((e) => e.progress < 1);
-    for (const e of cleared) this.event(`${e.label} — handled. Crew freed up.`, true);
+    for (const e of cleared) {
+      this.event(chief ? `${e.label} — handled. Crew freed up.` : `${e.label} — automated systems resolved it.`, true);
+    }
+  }
+
+  // Each emergency KIND maps to a different consequence (kept non-punishing):
+  //  fire   — hull damage over time
+  //  breach — smaller hull DoT + a main-screen instability glitch
+  //  boarders — trips breakers + throws phantom contacts onto sensors
+  //  leak   — coolant loss wobbles a system out of trim (temporary power dip)
+  private applyEmergencyHarm(e: Emergency, dt: number) {
+    if (e.kind === 'fire') {
+      const dps = EMERGENCY_DPS * e.severity;
+      this.hull = Math.max(0, this.hull - dps * dt); this.tel.hullDamageTaken += dps * dt;
+    } else if (e.kind === 'breach') {
+      const dps = EMERGENCY_DPS * 0.6 * e.severity;
+      this.hull = Math.max(0, this.hull - dps * dt); this.tel.hullDamageTaken += dps * dt;
+      if (this.rng() < 0.6 * dt) this.pushFx({ kind: 'anomaly' });
+    } else if (e.kind === 'boarders') {
+      if (this.rng() < 0.10 * e.severity * dt) this.tripBreaker();
+      if (this.rng() < 0.06 * dt) this.spawnPhantom(); // odd blip on sensors
+    } else if (e.kind === 'leak') {
+      const s = SYSTEMS[Math.floor(this.rng() * SYSTEMS.length)];
+      this.wear[s] = Math.min(WEAR_MAX, this.wear[s] + 0.25 * e.severity * dt);
+    }
+  }
+
+  // A short-lived ghost blip thrown up by boarders (sensor spoofing) — reads as
+  // an UNKNOWN contact, resolves to nothing at ID range, then is culled.
+  private spawnPhantom() {
+    this.spawnContact('ghost', { min: 10, max: 16 }, { min: 0, max: 0 });
   }
 
   // Solar flare: when the announced strike time arrives, stress raised systems.
@@ -1857,8 +1973,20 @@ export class Game {
         : score >= 30 ? `You made it, barely. The insurance adjusters would like a word.${shame}`
         : `${ship.charAt(0).toUpperCase() + ship.slice(1)} limps into dock, venting atmosphere. Nobody claps.${shame}`;
     }
-    // Apply the pod-shooting penalty across every outcome, then clamp.
-    score = Math.max(0, Math.min(100, score - podPenalty));
+    // Crew Chief effect (only when a HUMAN chief crewed the run): a competent
+    // chief — systems kept in trim, emergencies handled fast, hull patched —
+    // widens the ceiling; a negligent one drags it down. An ABSENT chief is
+    // neutral (automated baseline), so the console is pure upside range, never a
+    // penalty for the missing seat.
+    let chiefTerm = 0;
+    if (this.chiefManned) {
+      const upkeep = this.chiefActiveTime > 0 ? clamp(this.chiefUpkeepSum / this.chiefActiveTime, 0, 1) : 1;
+      const response = clamp(1 - this.emergencyDowntime / 18, 0, 1);
+      const quality = 0.6 * upkeep + 0.4 * response;
+      chiefTerm = Math.round(12 * quality - 4); // -4 (negligent) .. +8 (excellent)
+    }
+    // Apply the pod-shooting penalty and the chief term across every outcome, clamp.
+    score = Math.max(0, Math.min(100, score - podPenalty + chiefTerm));
     const grade =
       score >= 85 ? 'Legendary Run' :
       score >= 70 ? 'Commendable' :
@@ -1895,7 +2023,12 @@ export class Game {
       helm: { gatePassRate, avgAlignmentError: this.tel.avgAlignment, onCoursePct },
       weapons: { hitRate, avgAcquireLatency, neutralizedPct, chargeIdlePct: this.missionTime > 0 ? round2(this.chargeFullTime / this.missionTime) : 0 },
       engineering: { avgPowerUtil, breakerDowntime: this.tel.breakerDowntime },
-      crewchief: { cargoRecovered: this.cargoRecovered, podsRescued: this.podsRescued, emergencyDowntime: round1(this.emergencyDowntime) },
+      crewchief: {
+        cargoRecovered: this.cargoRecovered, podsRescued: this.podsRescued,
+        emergencyDowntime: round1(this.emergencyDowntime), hullRepaired: round1(this.hullRepaired),
+        upkeep: this.chiefActiveTime > 0 ? round2(clamp(this.chiefUpkeepSum / this.chiefActiveTime, 0, 1)) : 1,
+        manned: this.chiefManned,
+      },
       captain: { coordinationScore, avgAcquireLatency, gatePassRate, defense },
     };
     this.debrief = {
@@ -2083,6 +2216,13 @@ export class Game {
         id: e.id, kind: e.kind, label: e.label, severity: e.severity,
         progress: round2(e.progress), assigned: e.assigned,
       })),
+      // Crew Chief deck ops: per-system trim posts, the hull-repair bay, and
+      // whether a human chief is aboard (the console shows automated status if not).
+      chief: {
+        manned: this.seats.crewchief.connected,
+        maint: SYSTEMS.map((s) => ({ system: s, wear: round2(this.wear[s]), crew: this.maintCrew[s] })),
+        repair: { crew: this.repairCrew, active: this.repairCrew > 0, hull: Math.round(this.hull) },
+      },
       // Large steer-around obstacles (topology).
       obstacles: this.obstacles.map((o) => ({ id: o.id, label: o.label, reachIn: round1(o.reachIn), bearing: Math.round(o.bearing), clearWindow: OBSTACLE_CLEAR_WINDOW })),
       // Competing-objective divert + cinematic + flare/blackout.
@@ -2155,7 +2295,7 @@ function freshTelemetry(): Telemetry {
       helm: { gatePassRate: 0, avgAlignmentError: 0, onCoursePct: 0 },
       weapons: { hitRate: 0, avgAcquireLatency: 0, neutralizedPct: 0, chargeIdlePct: 0 },
       engineering: { avgPowerUtil: 0, breakerDowntime: 0 },
-      crewchief: { cargoRecovered: 0, podsRescued: 0, emergencyDowntime: 0 },
+      crewchief: { cargoRecovered: 0, podsRescued: 0, emergencyDowntime: 0, hullRepaired: 0, upkeep: 1, manned: false },
       captain: { coordinationScore: 0, avgAcquireLatency: 0, gatePassRate: 0, defense: 0 },
     },
   };
