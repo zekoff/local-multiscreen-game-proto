@@ -75,9 +75,8 @@ pass).**
   trips) are both on this pass's fix list.
 - **Sparse, ambient music** — the music bed's phase 3 adds a *driving beat*
   after ~120s. This may exceed "sparse, ambient" — but the playtest called
-  sparse sound a perk and the audio has still never been heard on a real
-  device by design review. **Watch item for the owner's ears** (§5), not a
-  code finding.
+  sparse sound a perk. *(Update 2026-07-12: audio has since been verified on a
+  real device and the mix/feel is good — this watch item is closed.)*
 - **Diegetic SFX** — good coverage: breaker trip/arm/tick/restore (the
   "breaker flipping" the design names), laser, gate chimes, sensor pings,
   warp, hull booms, per-device routing. **Gap (minor, note only): no engine
@@ -113,9 +112,9 @@ non-binary outcomes: all present. Two experience gaps, both already queued:
 
 ## 5. Watch items for the owner (no action taken)
 
-1. **Music phase 3 ("driving beat") vs "sparse, ambient" guidance** — needs a
-   real-device listen; if it fights the guidance, capping the build at phase 2
-   is a one-line change in `public/js/audio.js`.
+1. **Music phase 3 ("driving beat") vs "sparse, ambient" guidance** — RESOLVED
+   (2026-07-12): verified on a real device, the mix is good. (If ever revisited,
+   capping the build at phase 2 is a one-line change in `public/js/audio.js`.)
 2. **Engine hum** — the design's diegetic list includes "engines humming";
    playtest praised sparseness. Add only if the fiction needs it.
 3. **Weapons stress ceiling** — highest-stress seat today; if future playtests

@@ -68,7 +68,7 @@ Third owner-directed pass on the branch. Highlights:
 - **Engine**: target lock drops when a contact falls below sensor
   resolution (checks assert it); 16 total checks green.
 - **Audio**: five tracks (added Halcyon, Meridian); throttle servo, warp
-  engage clunk, trigger click, scope tap tick. STILL not heard on device.
+  engage clunk, trigger click, scope tap tick. Since verified on device — good.
 - **Menu**: docs/design/11-gameplay-expansion-menu.md — 27 numbered
   proposals (challenges/counters, widgets, missions) for owner selection.
 
@@ -90,7 +90,7 @@ Owner-directed follow-up implementing report proposals 1/2/5 + polish:
   panel (per-console telemetry) + full **Captain's Log** written out.
 - **Music**: three tracks (Drift/Ember/Aurora) drawn at random per mission;
   end-phase beat ~halved with breakdown bars; pattern rotation/rest bars
-  kill the loopiness. Still needs a real-device listen.
+  kill the loopiness. Since verified on a real device — good.
 - **Graphics pass**: nebula depth wash (seeded per mission), slipstream
   streaks + 2.4× star rush, shield bow-arc + blue soak shimmer vs red hull
   vignette, ion-storm interference, debris motes, scope blip halos, panel
@@ -165,8 +165,8 @@ error-free under the `/run` headless driver. Committed on branch
 - **Docs:** the optimistic-intent overlay pattern + difficulty assessment is in
   `architecture.md` (answer to "can stations feel instant?": yes for
   selection/toggle controls, no general prediction engine).
-- **Open:** audio is code+render verified but **not heard** (headless is
-  silent — needs a real-device listen). Branch merged to `main` in PR #5
+- **Audio:** since **verified on a real device — the mix/feel is good** (was
+  previously only code+render verified). Branch merged to `main` in PR #5
   after the first human playtests.
 
 ## Where things stand
@@ -220,8 +220,8 @@ error-free under the `/run` headless driver. Committed on branch
 1. **Human playtesting — first rounds DONE (solo + two-human, 2026-07-11).** The
    feedback drove the post-playtest revision pass above; next: playtest the
    revision (esp. first-flight with a fresh crew, CPU feel, optimistic UI).
-2. **Audio is code-verified, not heard.** Headless has no sound output; the
-   mix/feel needs a listen on a real device — check levels and taste.
+2. **Audio — DONE.** Verified on a real device; the mix/feel is good. (Headless
+   is silent, so this could only ever be closed by a human listen — now done.)
 3. **Balance of the new mechanics is first-pass.** Tunable constants are all at
    the top of `src/engine/game.ts` (laser recharge, warp cost, turn authority,
    sensor range/pulse, gate window/bearing, speed-risk, burst chance) and the

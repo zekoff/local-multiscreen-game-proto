@@ -73,6 +73,10 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
 
   function renderPhase(state) {
     latest = state;
+    // The ready-room banner (crew consoles) pins to the top and pushes the
+    // console down via body padding; clear that padding whenever we're NOT in
+    // the crew lobby so the console fills the screen normally.
+    if (!(state.phase === 'lobby' && isCrew)) document.body.style.paddingTop = '';
     // Lobby: show a waiting overlay with a launch button.
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
@@ -101,6 +105,11 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
           launchBtn.textContent = myReady ? '✓ GO — stand down' : 'Report GO';
           launchBtn.classList.toggle('primary', !myReady);
         }
+        // Offset the console by the banner's measured height so no control hides
+        // behind it (the banner wraps to more rows on narrow phones).
+        requestAnimationFrame(() => {
+          if (latest && latest.phase === 'lobby') document.body.style.paddingTop = `${lobbyOverlay.offsetHeight}px`;
+        });
       }
     }
     // Debrief: show outcome summary.
@@ -116,9 +125,14 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
         title.style.color = lost ? 'var(--bad)' : '';
       }
       const grade = document.getElementById('debrief-grade');
-      grade.textContent = `${state.debrief.grade} — ${state.debrief.score}/100`;
-      // Color the grade by score band so a near-failure doesn't read as a win.
-      grade.style.color = scoreColor(state.debrief.score);
+      // Qualitative result on its own line; the numeric score labeled below it.
+      const lost = state.debrief.outcome === 'adrift';
+      grade.innerHTML =
+        `<div>${state.debrief.grade}</div>` +
+        `<div class="label" style="margin-top:0.25rem; font-size:0.95rem;">Score: ${state.debrief.score} / 100</div>`;
+      // Color the qualitative line by score band (red if the ship was lost) so a
+      // near-failure doesn't read as a win.
+      grade.style.color = lost ? 'var(--bad)' : scoreColor(state.debrief.score);
       document.getElementById('debrief-narrative').textContent = state.debrief.narrative;
       // Captain's log for review (populated once per run so a player's scroll
       // position isn't reset by each snapshot).

@@ -61,12 +61,17 @@ const LASER_CHARGE_RATE = 7; // charge points/s per allocated weapon power unit
 // for a weak shot that only kills SMALL rocks — trading firepower for a shorter
 // wait (addresses the "weapons is all waiting" playtest note). Threshold 40%.
 const SNAPSHOT_CHARGE = 40;    // minimum charge to fire a snapshot
-// A snapshot cracks MOST rocks (size ≤ this); only genuinely LARGE rocks shrug
-// it off. Rocks range 0.6–1.6, so ~the top ~30% survive a partial charge and
-// need a full STANDARD shot. Crucially the scope can't show size (all blips
+// A snapshot cracks SMALL rocks but never LARGE ones. Rocks now come in two
+// discrete classes (see spawnContact): small (~0.8) and large (~1.5). This
+// threshold sits cleanly between the bands, so a snapshot always cracks a small
+// rock and never a large one. Crucially the scope can't show size (all blips
 // read the same) — only the captain, watching the viewscreen silhouettes, can
-// call "that one's too big for a snapshot." That's the cooperation.
-const SNAPSHOT_MAX_SIZE = 1.3;
+// call "that one's a big one — full shot." That's the cooperation.
+const SNAPSHOT_MAX_SIZE = 1.2;
+
+// A rock is a LARGE-class hazard once its size exceeds SNAPSHOT_MAX_SIZE. Small
+// rocks are snapshot-killable; large rocks shrug off a snapshot and hit harder.
+function isLargeRock(size: number): boolean { return size > SNAPSHOT_MAX_SIZE; }
 
 // Emergency Warp: a drastic escape that jumps the ship elsewhere, scattering
 // its systems (see doWarp). Long cooldown so it's a last resort, not a rhythm.
@@ -167,6 +172,10 @@ const CARGO_TURN_PENALTY = 0.45;
 const CREW_TOKENS_DEFAULT = 4;      // deck crew when a mission doesn't set crewTokens
 const EMERGENCY_DPS = 2.0;          // hull/s an unattended fire/breach inflicts (scaled by severity)
 const EMERGENCY_CLEAR_PER_CREW = 0.9; // base clear progress/s for one hand (diminishing beyond that)
+// A fire is a bigger job than the others — it should read as a real event the
+// deck crew has to work, not a two-second blip. This lengthens the fire clear
+// (playtest: "fire was reasonable but resolved a little too quickly").
+const FIRE_CLEAR_DIVISOR = 1.8;
 const FIRE_ON_IMPACT_CHANCE = 0.16; // chance a hull-damaging impact ignites a fire (automated systems handle it if no chief)
 // System wear (trim). Drifts up slowly ONLY while a human chief is aboard (else
 // automated upkeep holds it at zero); crew on a maintenance post trim it back
@@ -262,9 +271,23 @@ const SHIP_VOICE_CADENCE = 38; // s — fixed cadence of ship-computer lines (T6
 
 // Each rock spawns with a lateral bearing (like a gate's), port or starboard,
 // so the main screen can place it off-axis and slide it with the helm's
-// steering — then drift it toward the vanishing point as it closes. Purely
-// positional (does not affect damage or time-to-impact).
+// steering. At impact the bearing (vs the helm's alignment) decides whether the
+// rock STRIKES the ship or slides past — see the strike window below.
 const ASTEROID_BEARING = { min: 12, max: 78 };
+
+// Strike geometry: a rock that reaches the ship strikes it UNLESS the helm has
+// steered it out to the screen edge — |alignment - bearing| at or beyond the
+// class's clear window is a clean miss. The windows are wide (bearings only
+// reach ±78, so an un-steered rock at any bearing always hits): the ship is
+// struck across most of the viewscreen, and only a rock pushed to the far side
+// misses. LARGE hazards need to be pushed even further (nearly to the rim), so
+// dodging a big one demands a harder, more committed steer than a small one.
+// This is deliberately a fallback to weapons/shields, not a free out — it costs
+// the helm its course (going off-axis bleeds speed). Tunable; balance via lab.
+const STRIKE_CLEAR_SMALL = 82; // |alignment - bearing| a small rock misses at
+const STRIKE_CLEAR_LARGE = 94; // large hazards must be pushed nearly to the rim
+// (The main screen mirrors STRIKE_CLEAR_LARGE as its screen-edge scale so that
+// "a rock at the viewscreen rim" reads as "a rock that misses.")
 
 // Sensor class prefix, revealed only once a contact is IDENTIFIED (inside the
 // ID ring). Until then a detected contact reads "???-NNN" (number only); at ID
@@ -466,7 +489,21 @@ export class Game {
   // Debug/sim-supervisor controls (opt-in per run via the launch payload).
   debug = false;         // whether debug controls are exposed for this run
   timeScale = 1;         // simulation speed multiplier (0 = paused)
-  crewSkill = 1;         // debug: 0..1 quality of the auto-assist bots (for solo playtesting)
+  // Debug: 0..1 quality of the auto-assist bots (for solo playtesting). 0.6 is
+  // the BASELINE — it reproduces the shipped survival-net bot that smoke/lab are
+  // tuned around (so ordinary empty seats and the lab's `auto` runs sit here).
+  // Turning it up to 1.0 makes the bots play the console OPTIMALLY (no reaction
+  // lag, active gate-chasing, snapshot use) so a solo player can field a strong
+  // crew; below 0.6 they get sloppier. See the `cs`/`overBase` scaling in tick.
+  crewSkill = 0.6;
+  // Rescales the shipped bot handicap formulas so the 0.6 baseline returns 1.0
+  // (identical to the old crewSkill=1 behavior) and higher skill returns >1
+  // (sharper). Keeps smoke/lab balance fixed at the baseline.
+  private get botCs(): number { return this.crewSkill / 0.6; }
+  // 0 at/below the 0.6 baseline, ramping to 1 at full skill. Gates the ACTIVE
+  // optimal behaviors (gate-chasing, throttle-easing, snapshot) so the baseline
+  // bot is byte-for-byte unchanged and only a high-skill bot gains them.
+  private get botOverBase(): number { return Math.max(0, Math.min(1, (this.crewSkill - 0.6) / 0.4)); }
   asteroids: Asteroid[] = [];
   gates: Gate[] = [];
   obstacles: Obstacle[] = [];    // large steer-around hazards (topology)
@@ -667,7 +704,7 @@ export class Game {
     this.runSeed = seed ?? randomSeed();
     this.rng = mulberry32(this.runSeed);
     this.debug = debug;
-    this.crewSkill = 1; // full-quality bots by default; the debug slider tunes it live
+    this.crewSkill = 0.6; // baseline survival-net bots; the debug slider tunes it live (0.6=shipped, 1.0=optimal)
     // The crew's ship name (optional, set at launch): pure fiction, zero
     // mechanics — it flavors the log, the main-screen header, and the debrief.
     this.shipName = shipName.trim().slice(0, 24);
@@ -843,8 +880,9 @@ export class Game {
         // colliding with engineering's "shield power" callout (playtest note).
         this.event(this.shieldRaised ? 'Deflector screen up.' : 'Deflector screen down.');
       } else if (a.kind === 'governor' && (a.mode === 'standard' || a.mode === 'snapshot')) {
+        // Mode cycling is a routine gunner action — no log/toast (it's too
+        // granular for the captain's log; the weapons console shows the mode).
         this.governor = a.mode;
-        this.event(a.mode === 'snapshot' ? 'Weapons: SNAPSHOT — quick shots, small contacts only.' : 'Weapons: STANDARD — full-power shots.');
       } else if (a.kind === 'tractorTarget' && (typeof a.id === 'number' || a.id === null)) {
         // The tractor shares the weapons emitter — the gunner aims and latches
         // it (and forfeits firing while it's engaged). Their call, not a gate.
@@ -960,6 +998,10 @@ export class Game {
     if (this.eff('weapons') < TRACTOR_MIN_POWER) { this.event('Tractor beam has no power — Engineering must feed WEAPONS.'); return; }
     const t = this.tractorTargetId !== null ? this.asteroids.find((a) => a.id === this.tractorTargetId) : null;
     if (!t || !this.targetable(t) || t.impactIn > TRACTOR_RANGE) { this.event('No contact in tractor range.'); return; }
+    // Only latch a contact we've actually classified as towable — no grabbing an
+    // un-identified blip (it might be a rock, or nothing). Matches serialize()'s
+    // `tractorable` flag the tow widget gates its button on.
+    if (!t.identified || (t.kind !== 'pod' && t.kind !== 'mineral')) { this.event('Nothing confirmed to latch — hold for identification.'); return; }
     if (Math.abs(this.alignment - t.bearing) > TRACTOR_ARC) { this.event('Contact is outside the tractor arc — bring the bow around.'); return; }
     this.tractorLatched = true;
     this.pushFx({ kind: 'tractorBeam', targetId: t.id });
@@ -1337,11 +1379,14 @@ export class Game {
     // fast rock hits hardest (but big = easy to spot early; fast = short window).
     const size = kind === 'pod'
       ? range(this.rng, { min: 0.7, max: 1.0 })   // pods read as small, tidy blips
-      // Rocks skew small (snapshot-able ≤1.3) with an occasional genuinely LARGE
-      // one (~15%) that shrugs off a snapshot — the captain's "big one, full
-      // shot" call. Judicious snapshotting is smart; pumped weapons + full shots
-      // still clear everything.
-      : range(this.rng, { min: 0.55, max: 1.5 });
+      // Rocks come in TWO discrete classes: SMALL (snapshot-killable, the common
+      // case) and LARGE (~22%, snapshot-proof, deeper/bigger, hits harder — the
+      // captain's "big one, full shot" call). A little jitter within each band
+      // keeps them from looking identical. Judicious snapshotting is smart;
+      // pumped weapons + full STANDARD shots still clear everything.
+      : this.rng() < 0.22
+        ? range(this.rng, { min: 1.4, max: 1.6 })   // LARGE (> SNAPSHOT_MAX_SIZE)
+        : range(this.rng, { min: 0.7, max: 0.95 }); // SMALL (≤ SNAPSHOT_MAX_SIZE)
     // Wider speed tiers: SLOW rocks crawl in (a strategic amount of time to call
     // and respond — less frantic power juggling), FAST ones bear down hard.
     const speed = range(this.rng, { min: 0.6, max: 1.5 });
@@ -1388,7 +1433,11 @@ export class Game {
       : `Hull breach — Deck ${deck}`;
     this.emergencies.push({ id, kind, label, severity, progress: 0, assigned: 0 });
     this.pushFx({ kind: kind === 'boarders' ? 'boarders' : 'fire' });
-    this.event(`EMERGENCY — ${label}. Crew Chief, assign hands to it!`, true);
+    // Only call on the Crew Chief if one is actually aboard; with no chief in the
+    // fiction, automated systems respond (don't address a seat nobody's in).
+    this.event(this.seats.crewchief.connected
+      ? `EMERGENCY — ${label}. Crew Chief, assign hands to it!`
+      : `EMERGENCY — ${label}. Automated systems responding.`, true);
   }
 
   // Trip a specific breaker (scripted) or a random untripped one (ambient).
@@ -1434,32 +1483,36 @@ export class Game {
     }
     this.alignment = clamp(this.alignment + (this.driftBias + (this.rng() * 2 - 1) * 2.0) * dt, -100, 100);
 
-    // Auto-helm: cruise at an easy throttle and weakly steer back on course. It
-    // never chases nav gates (a human earns those slipstream rewards), so a bot
-    // helm simply plods the straight line and drifts more than a crewed one.
+    // Auto-helm: at the baseline it cruises easy and weakly steers back on
+    // course, barely chasing rings (a human earns those slipstream rewards). A
+    // HIGH-skill bot (debug) actively chases gates — easing the throttle to buy
+    // turn authority and swinging harder onto the bearing, the human technique.
     if (this.auto('helm')) {
-      // The bot helm eases off in a debris field — sluggishly, to 45 (still a
-      // hair above the safe line), so it survives the field but pays a little.
-      this.throttle = this.missionTime < this.debrisUntil ? 45 : AUTO_HELM_THROTTLE;
+      const over = this.botOverBase; // 0 at baseline, 1 at optimal
       const gate = this.gates[0];
       if (gate) {
-        // Poor slipstream attempt: crawl toward the ring's bearing. The step
-        // is small enough that only near-heading rings are catchable — a
-        // human helm still earns the far ones.
         const delta = gate.bearing - this.alignment;
-        const step = Math.min(Math.abs(delta), AUTO_HELM_GATE_STEP * dt);
+        // Baseline: cruise at AUTO_HELM_THROTTLE. Skilled: ease toward 45 when the
+        // ring is off the bow, trading speed for the turn authority to catch it.
+        const chaseEase = over * Math.min(1, Math.abs(delta) / 20) * (AUTO_HELM_THROTTLE - 45);
+        this.throttle = this.missionTime < this.debrisUntil ? 45 : Math.round(AUTO_HELM_THROTTLE - chaseEase);
+        // Baseline step is the shipped weak crawl (×1); skilled multiplies it.
+        const step = Math.min(Math.abs(delta), AUTO_HELM_GATE_STEP * (1 + 1.6 * over) * dt);
         this.alignment += sign(delta) * step;
       } else {
-        // No rings up: ease back onto the course line.
-        const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * (0.4 + 0.6 * this.crewSkill) * dt);
+        // No rings up: ease back onto the course line. In a debris field the bot
+        // eases the throttle (to 45) as before to limit the scouring.
+        this.throttle = this.missionTime < this.debrisUntil ? 45 : AUTO_HELM_THROTTLE;
+        const correction = Math.min(Math.abs(this.alignment), AUTO_HELM_CORRECTION * (0.4 + 0.6 * this.botCs) * dt);
         this.alignment -= sign(this.alignment) * correction;
       }
     } else if (this.courseHold) {
       // Course-hold (P#12): a crewed helm's optional trim. Weak auto-centering
       // (half the bot's authority) so the pilot can look up on a quiet stretch —
       // but it NEVER chases gates/divert bearings (those are the pilot's to earn),
-      // and manual steering disengages it (see the nudge action).
-      const correction = Math.min(Math.abs(this.alignment), (AUTO_HELM_CORRECTION * 0.5) * (0.4 + 0.6 * this.crewSkill) * dt);
+      // and manual steering disengages it (see the nudge action). This is a HUMAN
+      // aid, so it's fixed — independent of the bot-quality (crewSkill) knob.
+      const correction = Math.min(Math.abs(this.alignment), (AUTO_HELM_CORRECTION * 0.5) * dt);
       this.alignment -= sign(this.alignment) * correction;
     }
 
@@ -1500,8 +1553,9 @@ export class Game {
     for (const s of SYSTEMS) {
       if (this.breakers[s] !== null) {
         this.breakers[s]! += dt;
-        // Debug crew-skill widens the reset delay for a sloppier bot engineer.
-        if (this.auto('engineering') && this.breakers[s]! > AUTO_ENG_RESET_AGE * (2 - this.crewSkill)) this.resetBreaker(s);
+        // Debug crew-skill scales the reset delay: baseline (0.6) resets after
+        // AUTO_ENG_RESET_AGE; a skilled bot resets faster, a sloppy one slower.
+        if (this.auto('engineering') && this.breakers[s]! > AUTO_ENG_RESET_AGE * (2 - this.botCs)) this.resetBreaker(s);
       }
     }
 
@@ -1546,16 +1600,24 @@ export class Game {
         // Contacts remain (but no volley): hold the current shield state.
         this.autoShieldClearAt = null;
       }
-      // Deliberate fire: once (charged && target in range) first holds, roll
-      // the pause, then pull the trigger when the clock reaches it. Any break
-      // in the condition (target destroyed/impacted, charge gone) re-arms it.
-      if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && this.charge >= 100) {
+      // A SKILLED bot (debug) snapshots small rocks — firing at partial charge to
+      // clear the sky faster — and switches back to a full STANDARD shot for a
+      // large hazard; the baseline bot never touches the governor and always
+      // waits for a full charge. (fire() reads this.governor.)
+      const skilledGunner = this.botOverBase >= 0.5;
+      const snapSmall = skilledGunner && !!closest && !isLargeRock(closest.size);
+      if (skilledGunner && closest) this.governor = snapSmall ? 'snapshot' : 'standard';
+      const fireReady = this.governor === 'snapshot' ? this.charge >= SNAPSHOT_CHARGE : this.charge >= 100;
+      // Deliberate fire: once (ready && target in range) first holds, roll the
+      // pause, then pull the trigger when the clock reaches it. Any break in the
+      // condition (target destroyed/impacted, charge gone) re-arms it.
+      if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && fireReady) {
         this.targetId = closest.id;
         this.recordAcquire(closest.id);
         if (this.autoFireAt === null) {
           // Debug crew-skill scales the deliberate fire pause (the bot gunner's
-          // main cost is TIME): skill 1 = as-is, skill 0 = twice as slow.
-          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY) * (2 - this.crewSkill);
+          // main cost is TIME): baseline (0.6) = the shipped 1-2s, optimal ≈ 0.
+          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY) * (2 - this.botCs);
         } else if (this.missionTime >= this.autoFireAt) {
           this.fire();
           this.autoFireAt = null;
@@ -1564,14 +1626,17 @@ export class Game {
         this.autoFireAt = null;
       }
       // Opportunistic tow (the tractor shares this emitter now): when there's
-      // nothing to shoot, latch a clearly-identified pod/mineral inside the arc —
-      // and drop the latch the instant a rock needs the laser.
+      // nothing to shoot, auto-latch only a CONFIRMED RESCUE POD inside the arc —
+      // saving lives is unambiguous, so the bot acts on it. Salvage/ore is a
+      // human judgment call (whether it's worth the tow), so the bot leaves ore
+      // alone — it never grabs an un-identified or merely-valuable contact. Drop
+      // the latch the instant a rock needs the laser.
       const rockThreat = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE;
       if (this.tractorLatched && rockThreat) {
         this.setTractorLatch(false); // free the emitter to defend
       } else if (!this.tractorLatched && !rockThreat && this.cargo.length < this.holdCapacity && this.eff('weapons') >= TRACTOR_MIN_POWER) {
         const cand = this.asteroids.find((a) =>
-          (a.kind === 'pod' || a.kind === 'mineral') && a.identified &&
+          a.kind === 'pod' && a.identified &&
           a.impactIn <= TRACTOR_RANGE && Math.abs(this.alignment - a.bearing) <= TRACTOR_ARC);
         if (cand) { this.tractorTargetId = cand.id; this.setTractorLatch(true); }
       }
@@ -1596,21 +1661,23 @@ export class Game {
     // ping engineering. Wording is kind-neutral until identification resolves.
     for (const a of this.asteroids) {
       if (!a.announced && this.targetable(a)) {
+        // Keep the engineering sensor-ping SFX and the acquire-latency clock, but
+        // no log/toast per contact — announcing every detection was too granular.
         a.announced = true;
         this.targetableSince.set(a.id, this.missionTime);
         this.pushFx({ kind: 'sensorContact' });
-        this.event(`Sensor contact ${this.label(a)} — designation unconfirmed.`);
       }
     }
     // Identification edge: the first time sensors resolve a contact's true kind,
-    // flip `identified` and speak the resolution. Ghosts resolve to nothing and
-    // are culled; pods get an explicit DO-NOT-FIRE call.
+    // flip `identified`. Only a RESCUE POD is worth a log line — it's a
+    // do-not-fire call and a rescue objective. Rock/mineral/ghost resolutions are
+    // too granular now (the scope shows the class), so they no longer announce.
     for (const a of this.asteroids) {
       if (!a.identified && this.resolvesId(a)) {
         a.identified = true;
-        if (a.kind === 'pod') this.event(`ID: ${this.label(a)} is a RESCUE POD — do NOT fire. Crew Chief, tractor it aboard.`, true);
-        else if (a.kind === 'mineral') this.event(`ID: ${this.label(a)} is salvage — tractor it if you can.`, false);
-        else if (a.kind === 'ghost') this.event(`${this.label(a)} resolved as a sensor ghost — nothing there.`, false);
+        // The tractor lives on the Weapons console now, so this is a general
+        // call — no Crew Chief mention (there may be no chief aboard at all).
+        if (a.kind === 'pod') this.event(`ID: ${this.label(a)} is a RESCUE POD — do NOT fire. Tractor it aboard.`, true);
       }
     }
     // Cull identified ghosts (false positives that have resolved).
@@ -1625,8 +1692,13 @@ export class Game {
     const arrived = this.asteroids.filter((a) => a.impactIn <= 0);
     this.asteroids = this.asteroids.filter((a) => a.impactIn > 0);
     for (const c of arrived) {
-      if (c.kind === 'rock') this.applyImpact(c);
-      else this.contactLost(c);
+      if (c.kind === 'rock') {
+        // Strike geometry: a rock the helm steered out to the screen edge slides
+        // past clean; otherwise it hits. Large hazards need a wider clearance.
+        const clearWin = isLargeRock(c.size) ? STRIKE_CLEAR_LARGE : STRIKE_CLEAR_SMALL;
+        if (Math.abs(this.alignment - c.bearing) >= clearWin) this.rockDodged(c);
+        else this.applyImpact(c);
+      } else this.contactLost(c);
     }
     if (this.targetId !== null && !this.asteroids.some((a) => a.id === this.targetId)) {
       this.targetId = null;
@@ -1693,8 +1765,9 @@ export class Game {
       const locked = this.asteroids.find((a) => a.id === this.targetId);
       if (!locked) this.targetId = null;
       else if (!this.targetable(locked)) {
+        // Drop the lock silently — the weapons scope already shows it faded; a
+        // per-contact "lock lost" line was too granular for the log.
         this.targetId = null;
-        this.event(`Target lock lost — ${this.label(locked)} faded below sensor resolution.`);
       }
     }
     if (this.debrisUntil > 0 && this.missionTime >= this.debrisUntil) {
@@ -1848,6 +1921,15 @@ export class Game {
     else if (c.kind === 'mineral') this.event(`${this.label(c)} drifted past — salvage lost.`, false);
   }
 
+  // A rock the helm steered clear of: it slides past the ship's flank at the
+  // screen edge instead of striking. No damage, no toast (it's routine good
+  // flying) — just credit toward the defense score. The client fades the
+  // vanished contact from its last (edge) position, reading as a near miss.
+  private rockDodged(c: Asteroid) {
+    this.targetableSince.delete(c.id);
+    this.stats.dodged++;
+  }
+
   // Crew Chief deck operations. Runs every tick. With a human chief aboard,
   // systems drift out of trim (crew trim them back), ambient faults appear, the
   // repair bay heals hull, and emergencies need committed hands. With NO chief,
@@ -1861,7 +1943,9 @@ export class Game {
       for (const s of SYSTEMS) {
         if (this.maintCrew[s] > 0) {
           this.wear[s] = Math.max(0, this.wear[s] - TRIM_PER_CREW * dim(this.maintCrew[s]) * dt);
-          if (this.wear[s] === 0) { this.maintCrew[s] = 0; this.event(`${s} trimmed to spec — crew freed.`); }
+          // Trim completion frees the crew silently — the deck board shows it; no
+          // log line (trim events are too granular for the captain's log).
+          if (this.wear[s] === 0) this.maintCrew[s] = 0;
         } else {
           this.wear[s] = Math.min(WEAR_MAX, this.wear[s] + WEAR_RATE * dt);
         }
@@ -1873,7 +1957,8 @@ export class Game {
         this.faultTimer = range(this.rng, FAULT_EVERY);
         const s = SYSTEMS[Math.floor(this.rng() * SYSTEMS.length)];
         this.wear[s] = Math.min(WEAR_MAX, this.wear[s] + FAULT_WEAR);
-        this.event(`${s} drifting out of trim — Crew Chief, send a hand.`);
+        // No toast — the deck board surfaces the drift (with its impact) for the
+        // chief to act on; trim events don't belong in the captain's log.
       }
       // Repair bay: a committed detail restores hull for a shift, then cycles off.
       if (this.repairCrew > 0) {
@@ -1900,16 +1985,18 @@ export class Game {
   private updateEmergencies(dt: number, chief: boolean) {
     if (this.emergencies.length === 0) return;
     for (const e of this.emergencies) {
+      // A fire takes longer to bring under control than the other emergencies.
+      const clearDiv = (2 + e.severity) * (e.kind === 'fire' ? FIRE_CLEAR_DIVISOR : 1);
       if (chief) {
         if (e.assigned > 0) {
-          e.progress += (EMERGENCY_CLEAR_PER_CREW * dim(e.assigned) * dt) / (2 + e.severity);
+          e.progress += (EMERGENCY_CLEAR_PER_CREW * dim(e.assigned) * dt) / clearDiv;
         } else {
           this.applyEmergencyHarm(e, dt);
           this.emergencyDowntime += dt;
         }
       } else {
         // Automated systems: self-resolve at ~0.7 of one hand, softened harm.
-        e.progress += (EMERGENCY_CLEAR_PER_CREW * 0.7 * dt) / (2 + e.severity);
+        e.progress += (EMERGENCY_CLEAR_PER_CREW * 0.7 * dt) / clearDiv;
         this.applyEmergencyHarm(e, dt * 0.5);
       }
     }
@@ -2033,35 +2120,30 @@ export class Game {
     let score: number;
     let narrative: string;
     const { destroyed, impacts, dodged, gatesPassed, gatesMissed, warpsUsed, pulsesUsed } = this.stats;
-    // Fiction hook: reference the crew's named ship where the story allows.
-    const ship = this.shipName ? `the ${this.shipName}` : 'the ship';
     // Cross-outcome modifiers. Shooting rescue pods is the cardinal sin (heavy
-    // penalty + shame line); recovering pods/salvage pays back. Kept as additive
+    // penalty + a note); recovering pods/salvage pays back. Kept as additive
     // components so scoring stays non-binary across every outcome.
     const podPenalty = this.podsDestroyed * 22;
     const rescueBonus = this.podsRescued * 6;
-    const shame = this.podsDestroyed > 0
-      ? ` ${this.podsDestroyed} rescue pod${this.podsDestroyed > 1 ? 's were' : ' was'} lost to our own guns — that will follow this crew.`
-      : '';
+    // Short, generic narratives for now (owner will do a proper thematic pass
+    // later); the rich per-mission consequence beats move to the persistence
+    // layer. A single terse pod-loss note is the only cross-outcome flourish.
+    const podLost = this.podsDestroyed > 0 ? ' A rescue pod was lost to our own guns.' : '';
     if (outcome === 'adrift') {
       // Even a lost ship gets partial credit for distance covered.
       score = Math.round(this.progress * 0.25) + rescueBonus;
-      narrative = `Hull breach critical. ${ship.charAt(0).toUpperCase() + ship.slice(1)} went dark ${Math.round(this.progress)}% of the way to ${m.arrivalName}; a tow ship recovered the crew two days later.${shame}`;
+      narrative = `Ship lost before reaching ${m.arrivalName}. The crew was recovered.` + podLost;
     } else if (outcome === 'salvaged') {
       // Timed salvage run (P#23): score is what you banked against the goal.
       const banked = this.cargo.reduce((s, c) => s + c.value, 0);
       const goal = Math.max(1, m.salvageGoal ?? 6);
       const salvageScore = clamp(banked / goal, 0, 1.2);
       score = Math.min(100, Math.round(30 * salvageScore + 0.35 * this.hull + rescueBonus));
-      narrative =
-        salvageScore >= 1 ? `The hold is full — ${banked} units banked before the window closed. A clean haul for ${ship}.${shame}`
-        : salvageScore >= 0.6 ? `A decent haul — ${banked} units aboard when time ran out.${shame}`
-        : `Thin pickings: only ${banked} units recovered before the window shut.${shame}`;
+      narrative = `Salvage run complete — ${banked} units banked.` + podLost;
     } else if (outcome === 'expired') {
-      // Failure-clock run (P#21): the window shut before arrival. A distinct
-      // third result — the crew did what they could, but the clock beat them.
+      // Failure-clock run (P#21): the window shut before arrival.
       score = Math.round(this.progress * 0.35) + rescueBonus;
-      narrative = `The clock ran out ${Math.round(this.progress)}% of the way to ${m.arrivalName}. ${this.podsRescued > 0 ? `${this.podsRescued} soul${this.podsRescued > 1 ? 's' : ''} aboard, at least.` : 'What we came for slipped away.'}${shame}`;
+      narrative = `Time ran out at ${Math.round(this.progress)}% of the way to ${m.arrivalName}.` + podLost;
     } else {
       const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
       const shotsAtUs = destroyed + impacts + dodged;
@@ -2072,12 +2154,13 @@ export class Game {
       const base = 0.55 * this.hull + 22 * timeScore + 18 * defense;
       const gateBonus = Math.min(8, gatesPassed * 2);
       score = Math.min(100, Math.round(base + gateBonus + rescueBonus));
-      narrative =
-        score >= 85 ? `A flawless run. ${m.arrivalName} dock crews applaud as ${ship} glides in.${shame}`
-        : score >= 70 ? `Solid work. Some scorch marks, but the cargo is intact and morale is high.${shame}`
-        : score >= 50 ? `Mission accomplished — though ${ship} will spend a week in drydock.${shame}`
-        : score >= 30 ? `You made it, barely. The insurance adjusters would like a word.${shame}`
-        : `${ship.charAt(0).toUpperCase() + ship.slice(1)} limps into dock, venting atmosphere. Nobody claps.${shame}`;
+      narrative = (
+        score >= 85 ? 'An exemplary run — objectives met in top form.'
+        : score >= 70 ? 'Solid work — objectives met, ship in good shape.'
+        : score >= 50 ? 'Mission accomplished.'
+        : score >= 30 ? 'You made it, but the ship took a beating.'
+        : 'A costly arrival — heavy damage sustained.'
+      ) + podLost;
     }
     // Crew Chief effect (only when a HUMAN chief crewed the run): a competent
     // chief — systems kept in trim, emergencies handled fast, hull patched —
@@ -2093,23 +2176,14 @@ export class Game {
     }
     // Apply the pod-shooting penalty and the chief term across every outcome, clamp.
     score = Math.max(0, Math.min(100, score - podPenalty + chiefTerm));
+    // A destroyed ship IS the qualitative result — it overrides the score band
+    // (the one binary the fiction demands). Otherwise a non-binary grade.
     const grade =
+      outcome === 'adrift' ? 'SHIP DESTROYED' :
       score >= 85 ? 'Legendary Run' :
       score >= 70 ? 'Commendable' :
       score >= 50 ? 'Mission Accomplished' :
       score >= 30 ? 'Pyrrhic Success' : 'Barely Survived';
-    // Elite-flagship sign-off + consequence beats (T2/T4). Self-contained in the
-    // debrief record; cross-run memory (a rescued convoy hailing next mission,
-    // salvage funding an upgrade) lands with the persistence layer.
-    const signoff = score >= 85 ? ' Sector Command logs the action with distinction.'
-      : score >= 50 ? ' Sector Command notes a duty well discharged.'
-      : ' Sector Command will want a full report.';
-    let consequence = '';
-    if (this.podsRescued > 0) consequence += ` ${this.podsRescued} soul${this.podsRescued > 1 ? 's' : ''} owe their lives to this crew.`;
-    if (this.podsDestroyed > 0) consequence += ' A pod lost to our own guns will weigh on the record.';
-    const salvageBanked = this.cargo.reduce((s, c) => s + c.value, 0);
-    if (salvageBanked > 0) consequence += ` ${salvageBanked} units of salvage banked to the ship's fund.`;
-    narrative += signoff + consequence;
     // Finalize telemetry averages.
     this.tel.avgAlignment = this.telSamples > 0 ? round1(this.alignAbsSum / this.telSamples) : 0;
     this.tel.avgThrottle = this.telSamples > 0 ? Math.round(this.throttleSum / this.telSamples) : 0;
@@ -2376,6 +2450,11 @@ export class Game {
         identified: a.identified, mass: a.mass,
         tractorable: a.identified && (a.kind === 'pod' || a.kind === 'mineral') && a.impactIn <= TRACTOR_RANGE,
         bearing: Math.round(a.bearing),
+        // A phantom (boarders' sensor spoof) reads as a real blip on the weapons
+        // SCOPE but is nothing physical — the main screen must NOT draw it (there's
+        // nothing out the window). The scope ignores this flag; the main screen
+        // skips any contact carrying it.
+        phantom: a.kind === 'ghost',
       })),
       gates: this.gates.map((g) => ({ id: g.id, label: g.label, reachIn: round1(g.reachIn), bearing: Math.round(g.bearing) })),
       fx: this.fx,

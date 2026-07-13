@@ -15,9 +15,9 @@ Experience-level gaps found were the same ones the playtest surfaced, all
 addressed in Phase 2. Nothing required pausing the run.
 
 **Watch items left for the owner** (no action taken):
-1. **Music phase 3 ("driving beat") vs "sparse, ambient" guidance** — still
-   needs a real-device listen; capping the build at phase 2 is a one-line
-   change if it fights the aesthetic.
+1. **Music phase 3 ("driving beat") vs "sparse, ambient" guidance** — RESOLVED
+   (2026-07-12): verified on a real device, the mix is good. (Capping the build
+   at phase 2 remains a one-line change if ever revisited.)
 2. **Engine hum** — in the design's diegetic list, deliberately not added
    (playtest praised sparseness).
 3. **Weapons stress ceiling** — highest-stress seat; watch whether it

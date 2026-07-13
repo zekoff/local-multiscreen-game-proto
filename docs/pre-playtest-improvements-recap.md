@@ -121,10 +121,9 @@ levers to close it later if you want to.
 
 ## Known limitations / for your review
 
-- **Audio was not heard, only code-verified.** Headless Chromium has no audio
-  output; I confirmed the pages throw no errors and that Web Audio primitives
-  run, but the **actual mix/feel needs a listen on a real device** — please
-  sanity-check levels and taste.
+- **Audio — since verified on a real device (2026-07-12): the mix/feel is
+  good.** (Originally only code-verified — headless Chromium has no audio output
+  — so it needed a human listen, which has now happened.)
 - **Balance of the new mechanics is first-pass.** Cooldown (4s), shield
   drain/regen rates, gate window/frequency, and `SPEED_RISK` are all tunable
   constants near the top of `game.ts`; I tuned for "skilled arrives, auto

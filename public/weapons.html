@@ -159,14 +159,20 @@
         const snapTick = document.getElementById('snap-tick');
         snapTick.style.display = gov === 'snapshot' ? 'block' : 'none';
         snapTick.style.background = charge >= 40 ? 'var(--good)' : 'rgba(255,255,255,0.55)';
+        // The tractor shares the laser emitter — you can't fire while it's
+        // latched. Disable the button outright and say why (clearer than letting
+        // the press through to a rejected action). Enforced server-side too.
+        const tractorEngaged = !!(state.tractor && state.tractor.latched);
         // Never let the gunner fire on a confirmed pod (the don't-shoot invariant
         // is enforced server-side too, but the UI refuses it and says why).
-        fireBtn.disabled = !ready || state.targetId === null || isPod;
-        fireBtn.textContent = isPod
-          ? 'HOLD FIRE — RESCUE POD'
-          : !ready
-            ? (gov === 'snapshot' ? 'CHARGING (40%)…' : 'CHARGING…')
-            : state.targetId === null ? 'FIRE (select a target)' : (gov === 'snapshot' ? 'SNAPSHOT' : 'FIRE');
+        fireBtn.disabled = tractorEngaged || !ready || state.targetId === null || isPod;
+        fireBtn.textContent = tractorEngaged
+          ? 'TRACTOR BEAM ENGAGED'
+          : isPod
+            ? 'HOLD FIRE — RESCUE POD'
+            : !ready
+              ? (gov === 'snapshot' ? 'CHARGING (40%)…' : 'CHARGING…')
+              : state.targetId === null ? 'FIRE (select a target)' : (gov === 'snapshot' ? 'SNAPSHOT' : 'FIRE');
         // Deflector-screen toggle: prefer the just-commanded value (optimistic)
         // over the snapshot; the audio edge detector stays on authoritative state.
         if (state.shields.raised && !prevShieldsRaised) audio.shieldUp();

@@ -198,8 +198,14 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const dot = this.add.circle(0, 0, BLIP_RADIUS, COLOR_DIM).setStrokeStyle(2, COLOR_DIM);
     // Label is the contact NAME only — threat/speed data lives on the main
     // screen so the captain (not the gunner) reads and calls out priorities.
+    // The scope renders at a fixed logical size then FIT-scales UP to the panel,
+    // so raster text (unlike the vector rings) came out soft. Oversample the
+    // label's texture to counter both the device pixel ratio AND the FIT upscale,
+    // which sharpens it markedly. (Vector graphics need no such treatment.)
+    const textRes = Math.min(4, Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)));
     const label = this.add
-      .text(0, 15, '', { fontSize: '10px', color: '#7d8db3', fontFamily: 'monospace' })
+      .text(0, 15, '', { fontSize: '11px', color: '#7d8db3', fontFamily: 'monospace' })
+      .setResolution(textRes)
       .setOrigin(0.5, 0);
     const container = this.add.container(this.ox, this.oy, [halo, dot, label]);
     return { container, halo, dot, label };

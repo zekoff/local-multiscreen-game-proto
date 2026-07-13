@@ -37,7 +37,7 @@ export const lifeboatRun: MissionDef = {
         { type: 'cinematic', title: 'Distress field ahead', seconds: 7, lines: [
           'The Meridian\'s wreckage tumbles across your path — and somewhere in it, her lifeboats.',
           'Sensors will show contacts, but at range a pod looks just like a rock or a sensor ghost.',
-          'Crew Chief on the tractor, Weapons hold fire until a contact is CONFIRMED. Bring them home.',
+          'Weapons on the tractor — hold fire until a contact is CONFIRMED. Bring them home.',
         ] },
       ],
     },

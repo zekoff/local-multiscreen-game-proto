@@ -17,8 +17,8 @@ export function mountDebugPanel(container, net) {
     <div class="debug-row" id="debug-speeds"></div>
     <div class="debug-row">
       <span class="debug-lbl">CPU crew</span>
-      <input type="range" id="debug-skill" min="0" max="100" step="5" value="100" class="debug-slider">
-      <span id="debug-skill-val" class="debug-lbl">100%</span>
+      <input type="range" id="debug-skill" min="0" max="100" step="5" value="60" class="debug-slider">
+      <span id="debug-skill-val" class="debug-lbl">60%</span>
     </div>
     <div class="debug-row">
       <select id="debug-spawn-what" class="debug-select">

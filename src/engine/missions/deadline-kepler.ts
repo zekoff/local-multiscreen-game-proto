@@ -36,7 +36,7 @@ export const deadlineKepler: MissionDef = {
     { id: 'open', at: { time: 1 }, actions: [
       { type: 'cinematic', title: 'Life support: 2:35', seconds: 6, lines: [
         "Kepler's on batteries. Two and a half minutes of air for a hundred and forty souls.",
-        'This is a race. Helm, everything the engines will give you. Crew Chief, grab any survivors you can — if we have the seconds.',
+        'This is a race. Helm, everything the engines will give you. Weapons, tractor any survivors you can — if we have the seconds.',
       ] },
     ] },
     { id: 'ion', at: { progress: 25 }, actions: [

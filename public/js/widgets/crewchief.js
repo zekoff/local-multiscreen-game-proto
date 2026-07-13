@@ -67,8 +67,13 @@ export const cargoHold = defineWidget({
 // mid-job); crew free themselves when the job is done. Stacking is faster but
 // with diminishing returns. When no human chief is aboard, automated systems run
 // the deck (the board shows an automated note instead of posts). ---
-const SYS_ICON = { engines: '🚀', shields: '🛡️', weapons: '🔫', sensors: '📡' };
+const SYS_ICON = { engines: '🚀', shields: '🛡️', weapons: '🎯', sensors: '📡' };
 const SYS_NAME = { engines: 'Engines', shields: 'Shields', weapons: 'Weapons', sensors: 'Sensors' };
+// What a system's drift actually costs (the effective-power derate), phrased in
+// that system's own consumer so the chief sees the concrete impact, not just
+// "drifting". Mirrors the engine WEAR_EFF_PENALTY (0.15 at full wear).
+const SYS_DERATE = { engines: 'thrust', shields: 'regen', weapons: 'recharge', sensors: 'range' };
+const WEAR_EFF_PENALTY = 0.15;
 const EMG_ICON = { fire: '🔥', boarders: '🚨', breach: '💥', leak: '💧' };
 
 export const deckCrew = defineWidget({
@@ -121,7 +126,13 @@ export const deckCrew = defineWidget({
           posts.innerHTML = '';
           for (const p of chief.maint || []) {
             const worn = p.wear > 0.02;
-            const status = p.crew ? `${p.crew} on it` : (worn ? 'drifting' : 'in trim');
+            // The concrete cost of the drift: effective-power loss on this system,
+            // shown in its own consumer (e.g. "-6% recharge") so it's actionable.
+            const impact = Math.round(p.wear * WEAR_EFF_PENALTY * 100);
+            const derate = `−${impact}% ${SYS_DERATE[p.system] || 'output'}`;
+            const status = p.crew
+              ? `${p.crew} on it · ${derate}`
+              : (worn ? `drifting · ${derate}` : 'in trim');
             // wear serialized 0..0.6 (cap); show it as 0..100% of the cap.
             posts.appendChild(postRow(SYS_ICON[p.system] || '', SYS_NAME[p.system] || p.system, status,
               'warn', Math.round((p.wear / 0.6) * 100), 'maint:' + p.system, !canAdd || !worn));

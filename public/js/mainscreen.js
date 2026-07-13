@@ -109,8 +109,9 @@ const net = initStation({
       }
     }
     latest = state;
-    // Feed the alignment interpolator (smooth turning between snapshots).
-    if (state.phase === 'active') onAlignmentSnapshot(state.alignment);
+    // Feed the alignment + gate-depth interpolators (smooth turning AND smooth
+    // ring approach between the 250ms snapshots).
+    if (state.phase === 'active') { onAlignmentSnapshot(state.alignment); onGatesSnapshot(state.gates); }
     // Music follows the phase; the build is driven by *time*, not progress, so
     // the ambient->melody->beat arc lands over ~MUSIC_BUILD_SECONDS and then
     // holds at full for the remainder of a longer mission.
@@ -166,16 +167,30 @@ const net = initStation({
     if (state.phase === 'debrief' && state.debrief && state.debrief.seed !== debriefShownSeed) {
       debriefShownSeed = state.debrief.seed;
       triggerEndFade(state.debrief); // cinematic fade: win→white, loss→black, destroyed→red→black
+      // Title, qualitative result, and narrative for the whole room. Destruction
+      // reads as SHIP LOST (red); otherwise the grade colors by score band.
+      const lost = state.debrief.outcome === 'adrift';
+      const title = document.getElementById('debrief-title');
+      title.textContent = lost ? 'SHIP LOST' : 'Mission Debrief';
+      title.style.color = lost ? '#ff6f6f' : '';
+      const band = state.debrief.score >= 70 ? '#6ad39a' : state.debrief.score >= 40 ? '#ffb347' : '#ff6f6f';
+      const gradeEl = document.getElementById('debrief-grade');
+      // Qualitative on its own line; the numeric score labeled below it.
+      gradeEl.innerHTML =
+        `<div>${state.debrief.grade}</div>` +
+        `<div class="label" style="margin-top:0.25rem; font-size:1rem;">Score: ${state.debrief.score} / 100</div>`;
+      gradeEl.style.color = lost ? '#ff6f6f' : band;
+      document.getElementById('debrief-narrative').textContent = state.debrief.narrative;
       document.getElementById('debrief-mission').textContent =
         `${state.debrief.missionName} (seed ${state.debrief.seed})`;
       const s = state.debrief.stats;
+      // Breakers-tripped intentionally omitted (too granular for the debrief).
       document.getElementById('debrief-stats').innerHTML = `
         <div class="label">Mission time</div><div>${fmtTime(s.time)}</div>
         <div class="label">Hull remaining</div><div>${s.hull}%</div>
         <div class="label">Asteroids destroyed</div><div>${s.destroyed}</div>
         <div class="label">Impacts taken</div><div>${s.impacts}</div>
-        <div class="label">Nav gates cleared</div><div>${s.gatesPassed}/${s.gatesPassed + s.gatesMissed}</div>
-        <div class="label">Breakers tripped</div><div>${s.breakersTripped}</div>`;
+        <div class="label">Nav gates cleared</div><div>${s.gatesPassed}/${s.gatesPassed + s.gatesMissed}</div>`;
       // Crew performance: per-console telemetry so the table talk can be
       // about what each station did, not just the ship total.
       const pc = state.debrief.telemetry?.perConsole;
@@ -318,7 +333,8 @@ let warpFlash = 0;      // white full-screen flash on an Emergency Warp
 let pulseFlash = 0;     // cyan flash on an active sensor pulse
 let shieldFlash = 0;    // cool blue edge shimmer when the shields soak a hit
 let stormFlash = 0;     // brief wash when an ion storm front arrives
-let collisionBanner = 0;// brief centered COLLISION banner on a hull strike
+let collisionBanner = 0;// brief centered COLLISION banner on a heavy strike
+let hullFlash = 0;      // brief red edge flash on any unabsorbed hull hit (incl. debris)
 let glitch = 0;         // main-screen instability flicker (hull breach anomaly)
 let endFade = 0;        // mission-end transition progress (0..1), see endTransition
 let endKind = '';       // 'win' | 'loss' | 'destroyed'
@@ -338,9 +354,13 @@ function consumeFx(state) {
         // A soaked hit shimmers blue at the edges — the shield doing its job.
         shieldFlash = 0.5;
       } else {
-        // A real hull strike hits harder and longer, with a center COLLISION call.
-        shake = Math.min(40, shake + 16 + e.hullDmg * 0.7);
-        collisionBanner = 1;
+        // Any unabsorbed hit flashes the hull red (scaled by damage) so even a
+        // small debris-scour tick reads as "we're taking hull damage."
+        shake = Math.min(40, shake + 8 + e.hullDmg * 0.7);
+        hullFlash = Math.min(1, hullFlash + 0.35 + e.hullDmg * 0.03);
+        // Reserve the big centered COLLISION banner for a genuinely heavy strike
+        // (an obstacle / large rock), not the steady small debris ticks.
+        if (e.hullDmg >= 10) collisionBanner = 1;
       }
     }
     else if (e.kind === 'gate') { gateFx.push({ passed: e.passed, life: 0.5 }); if (e.passed) shake = Math.min(shake + 3, 40); }
@@ -402,7 +422,7 @@ function nebulaFor(missionId) {
 
 // --- Debris-field specks: brown motes streaming past while inside a field,
 // faster when the ship runs hot (the visual argument for easing off).
-const debrisSpecks = Array.from({ length: 42 }, () => ({ x: 0, y: 0, z: 0 }));
+const debrisSpecks = Array.from({ length: 80 }, () => ({ x: 0, y: 0, z: 0, a: 0, sp: 0, m: 1 }));
 let debrisInit = false;
 
 // Deterministic screen position for an asteroid id (stable so it doesn't jump),
@@ -439,27 +459,31 @@ function astShapeFor(id) {
   return s;
 }
 
-// Where an asteroid sits on screen this frame: it starts off-axis at its
-// port/starboard bearing and drifts toward the vanishing point (the ship, dead
-// ahead) as it closes — and the whole field slides with the helm's steering
-// (yawPx), so rocks honor how the ship is aligned.
-function asteroidScreenPos(a, w, h, yawPx) {
+// Screen-edge scale for the strike geometry: mirrors the engine's
+// STRIKE_CLEAR_LARGE so a rock at |bearing - alignment| = this sits at the
+// viewscreen rim — i.e. "at the edge" reads as "misses the ship."
+const STRIKE_VIS_EDGE = 94;
+
+// Where an asteroid sits on screen this frame. Its lateral position tracks
+// (bearing - the helm's alignment) throughout the approach — NOT a funnel to
+// dead center — so rocks strike across most of the viewscreen and a rock the
+// helm steers to the rim visibly slides off the flank (a clean miss), matching
+// the server's strike geometry. It only foreshortens toward center at range
+// (the depth of the lane), spreading to its true strike point as it closes.
+function asteroidScreenPos(a, w, h, _yawPx) {
   const closeness = Math.max(0, Math.min(1, 1 - a.impactIn / 25));
-  const bx = (a.bearing ?? 0) / 100;       // -1..1 port/starboard
-  const idH = (a.id * 0.377) % 1;          // stable vertical spread per rock
+  // Separation from the bow in engine bearing units, normalized so ±1 = the rim.
+  const rel = ((a.bearing ?? 0) - displayAlignment()) / STRIKE_VIS_EDGE;
+  const idH = (a.id * 0.377) % 1;           // stable vertical spread per rock
   const idOff = ((a.id * 0.618) % 1) - 0.5; // -0.5..0.5 stable per rock
-  // Strike point is NOT dead center — each rock funnels to a slightly different
-  // spot, so they hit the ship at offset angles instead of all one point.
-  const strikeX = w / 2 + yawPx + idOff * w * 0.16;
+  // Far rocks read a bit more central (foreshortened into the lane); as a rock
+  // closes it spreads out to its full lateral strike point at the ship's plane.
+  const spread = 0.5 * (0.55 + 0.45 * closeness); // ~0.275w far -> 0.5w at impact
+  const x = w / 2 + rel * spread * w + idOff * w * 0.04;
+  const farY = h * (0.30 + idH * 0.4);
   const strikeY = h / 2 + (idH - 0.5) * h * 0.14;
-  const farX = w / 2 + bx * w * 0.42 + yawPx;
-  const farY = h * (0.22 + idH * 0.5);
-  const t = closeness * closeness;          // accelerate convergence near impact
-  return {
-    x: farX + (strikeX - farX) * t,
-    y: farY + (strikeY - farY) * t,
-    closeness,
-  };
+  const t = closeness * closeness;          // accelerate vertical convergence near impact
+  return { x, y: farY + (strikeY - farY) * t, closeness };
 }
 
 // Screen position for an id that may already be gone from the state (laser /
@@ -487,6 +511,28 @@ function onAlignmentSnapshot(v) {
 function displayAlignment() {
   const t = Math.max(0, Math.min(1, (performance.now() - alignAt) / 280));
   return alignPrev + (alignCurr - alignPrev) * t;
+}
+
+// Per-gate reachIn (ring DEPTH) interpolation. The server steps reachIn once per
+// 250ms tick, so the ring radius popped each tick even though its x already
+// glided via displayAlignment. Ease each gate's depth from its last displayed
+// value toward the new snapshot over one tick, keyed by gate id.
+const gateReach = new Map(); // id -> { prev, curr, at }
+function onGatesSnapshot(gates) {
+  const now = performance.now();
+  const seen = new Set();
+  for (const g of gates || []) {
+    seen.add(g.id);
+    const prev = gateReach.has(g.id) ? displayGateReach(g.id, g.reachIn) : g.reachIn;
+    gateReach.set(g.id, { prev, curr: g.reachIn, at: now });
+  }
+  for (const id of [...gateReach.keys()]) if (!seen.has(id)) gateReach.delete(id);
+}
+function displayGateReach(id, fallback) {
+  const e = gateReach.get(id);
+  if (!e) return fallback;
+  const t = Math.max(0, Math.min(1, (performance.now() - e.at) / 280));
+  return e.prev + (e.curr - e.prev) * t;
 }
 
 let yaw = 0; // smoothed course bank, -1..1
@@ -584,6 +630,7 @@ function frame(ts) {
     drawReticle(w, h, dpr);
     drawShieldArc(w, h, dpr);
     drawHullVignette(w, h);
+    drawDamageOverlay(w, h, dt);
     // Off-screen objective arrow (helm turned hard / diverted): the fallback to
     // get back on track. Skip while fully blacked out (nothing to point at).
     if (!latest.viewImpaired) drawOffscreenChevron(w, h, dpr);
@@ -666,7 +713,14 @@ function drawNotifications(w, h, dpr) {
   const notices = activeNotices(latest);
   if (!notices.length) return;
   ctx.textAlign = 'center';
-  let y = h * 0.12;
+  ctx.textBaseline = 'top';
+  // Start the banner stack BELOW the captain HUD (a DOM overlay pinned to the
+  // top of the viewscreen) so ongoing environmental notices aren't hidden behind
+  // it. Track the HUD's measured height; fall back to 12% down before layout.
+  const hudBottom = captainHud && !captainHud.classList.contains('hidden') && captainHud.offsetHeight
+    ? (captainHud.offsetTop + captainHud.offsetHeight + 14) * dpr
+    : h * 0.12;
+  let y = Math.max(h * 0.12, hudBottom);
   for (const nt of notices) {
     const pulse = nt.tone === 'alert' ? 0.55 + 0.45 * Math.sin(performance.now() / 250) : 0.75;
     const size = (nt.big ? 34 : 17) * dpr;
@@ -675,6 +729,7 @@ function drawNotifications(w, h, dpr) {
     ctx.fillText(nt.text, w / 2, y);
     y += size * 1.3;
   }
+  ctx.textBaseline = 'alphabetic';
   // Pulsing red edge bars reinforce a red-alert state.
   if (notices.some((n) => n.tone === 'alert')) {
     const p = 0.10 + 0.10 * Math.sin(performance.now() / 250);
@@ -776,6 +831,30 @@ function drawHullVignette(w, h) {
   ctx.fillRect(0, 0, w, h);
 }
 
+// Damage feedback: a brief red edge flash on each unabsorbed hull hit, and a
+// sustained red pulse while the ship is scoured by a debris field at speed —
+// both make "we're taking hull damage" unmistakable through the visuals alone.
+function drawDamageOverlay(w, h, dt) {
+  if (hullFlash > 0.001) {
+    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.34, w / 2, h / 2, Math.max(w, h) * 0.72);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, `rgba(255, 45, 45, ${hullFlash * 0.4})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    hullFlash = Math.max(0, hullFlash - dt * 1.8);
+  }
+  // Sustained debris scour: running hot (throttle above the safe line) inside a
+  // field bleeds the hull, so the edges pulse red — "ease off the throttle."
+  if (latest && latest.debrisIn > 0 && (latest.throttle || 0) > 40) {
+    const pulse = 0.09 + 0.06 * Math.sin(performance.now() / 170);
+    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.40, w / 2, h / 2, Math.max(w, h) * 0.74);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, `rgba(210, 70, 40, ${pulse})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
 // Slipstream open: long additive streak lines radiating from the vanishing
 // point — the gate reward made visible to the whole room.
 function drawSlipstream(w, h, cx, cy, dpr) {
@@ -801,32 +880,52 @@ function drawSlipstream(w, h, cx, cy, dpr) {
   ctx.restore();
 }
 
-// Inside a debris field: brown motes rushing past, faster when the throttle is
-// hot — the picture tells the helm why the hull is complaining.
+// Inside a debris field: a dense cloud of small tumbling rocks rushing past,
+// faster when the throttle is hot, with occasional bright "pings" as fragments
+// glance off the hull — the picture tells the helm why the hull is complaining
+// (kept in the same visual language as the ion-storm / blackout effects).
+function resetDebrisSpeck(s, deep) {
+  s.x = (Math.random() - 0.5) * 2.6;
+  s.y = (Math.random() - 0.5) * 2.6;
+  s.z = deep ? STAR_NEAR_Z + Math.random() * (STAR_FAR_Z - STAR_NEAR_Z) : STAR_FAR_Z;
+  s.a = Math.random() * Math.PI * 2;        // tumble angle
+  s.sp = (Math.random() - 0.5) * 6;         // tumble speed
+  s.m = 0.7 + Math.random() * 1.1;          // size multiplier
+}
 function drawDebris(w, h, cx, cy, projScale, dt, dpr) {
   if (!debrisInit) {
-    for (const s of debrisSpecks) {
-      s.x = (Math.random() - 0.5) * 2.4;
-      s.y = (Math.random() - 0.5) * 2.4;
-      s.z = STAR_NEAR_Z + Math.random() * (STAR_FAR_Z - STAR_NEAR_Z);
-    }
+    for (const s of debrisSpecks) resetDebrisSpeck(s, true);
     debrisInit = true;
   }
-  const hot = 0.4 + ((latest.throttle || 0) / 100) * 1.6;
+  // Faster stream than the ambient mote field, and faster still at speed.
+  const hot = 0.7 + ((latest.throttle || 0) / 100) * 2.0;
+  const scouring = (latest.throttle || 0) > 40; // taking hull damage right now
   for (const s of debrisSpecks) {
-    s.z -= 0.22 * hot * dt;
-    if (s.z <= STAR_NEAR_Z) {
-      s.x = (Math.random() - 0.5) * 2.4;
-      s.y = (Math.random() - 0.5) * 2.4;
-      s.z = STAR_FAR_Z;
-    }
+    s.z -= 0.30 * hot * dt;
+    s.a += s.sp * dt;
+    if (s.z <= STAR_NEAR_Z) resetDebrisSpeck(s, false);
     const px = cx + (s.x / s.z) * projScale;
     const py = cy + (s.y / s.z) * projScale;
-    if (px < 0 || px > w || py < 0 || py > h) continue;
+    if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
     const closeness = 1 - (s.z - STAR_NEAR_Z) / (STAR_FAR_Z - STAR_NEAR_Z);
-    const size = (0.8 + closeness * 3) * dpr;
-    ctx.fillStyle = `rgba(150, 132, 108, ${0.25 + closeness * 0.5})`;
-    ctx.fillRect(px, py, size, size * 0.7);
+    const size = (0.9 + closeness * 3.6) * s.m * dpr;
+    // A little tumbling rock: a rotated quad rather than a flat square.
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(s.a);
+    ctx.fillStyle = `rgba(150, 132, 108, ${0.22 + closeness * 0.55})`;
+    ctx.fillRect(-size / 2, -size / 2, size, size * 0.72);
+    ctx.restore();
+    // Near, fast-moving fragments occasionally spark as they glance off — brighter
+    // and more frequent while actually scouring the hull.
+    if (closeness > 0.72 && Math.random() < (scouring ? 0.05 : 0.015)) {
+      ctx.strokeStyle = `rgba(255, 224, 190, ${0.4 + closeness * 0.4})`;
+      ctx.lineWidth = 1.2 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px - (s.x / s.z) * projScale * 0.05, py - (s.y / s.z) * projScale * 0.05);
+      ctx.stroke();
+    }
   }
 }
 
@@ -939,7 +1038,9 @@ function drawGates(w, h, cy, dpr) {
   // jumping once per server tick.
   const align = displayAlignment();
   for (const gate of latest.gates || []) {
-    const t = Math.max(0, Math.min(1, 1 - gate.reachIn / GATE_MAX_REACH)); // 0 far .. 1 here
+    // Interpolated depth: the ring closes smoothly between ticks, no per-tick pop.
+    const reach = displayGateReach(gate.id, gate.reachIn);
+    const t = Math.max(0, Math.min(1, 1 - reach / GATE_MAX_REACH)); // 0 far .. 1 here
     const r = (14 + t * t * Math.min(w, h) * 0.7);
     // Screen x from how far the ship's alignment is off the gate's bearing.
     const cx = w / 2 + ((gate.bearing - align) / 100) * (w * 0.5);
@@ -969,35 +1070,43 @@ function drawGates(w, h, cy, dpr) {
 function drawAsteroids(w, h, yawPx, dpr) {
   if (astPos.size > 400) astPos.clear();
   for (const a of latest.asteroids) {
+    // A phantom (boarders' sensor spoof) is a scope-only blip — nothing is out
+    // the window, so the main screen never draws it. The weapons scope still does.
+    if (a.phantom) continue;
     const { x: px, y: py, closeness } = asteroidScreenPos(a, w, h, yawPx);
     astPos.set(a.id, { x: px, y: py });
     const size = a.size ?? 1;
-    // Star-sized while beyond max sensor reach (16s), then growing as it bears
-    // down: growth keys off impactIn vs the 16s sensor ceiling, NOT the
-    // position-drift closeness, so a fresh spawn (18-26s out) is a bare dot
-    // indistinguishable from the far starfield — the captain has to SPOT it.
-    // Colour is a flat, low-saturation grey-brown rock (no red warming);
-    // threat is communicated by the ring, not the body.
+    // Two classes: LARGE rocks (snapshot-proof) resolve MUCH bigger and a deeper
+    // brown; SMALL rocks stay modest. Both start dot-sized while far (the growth
+    // curve keeps a fresh spawn a bare dot the captain has to SPOT), then diverge
+    // as they close — only the growth term scales with class, so the far dot is
+    // the same tiny size for both.
+    const big = size > 1.2; // mirrors engine SNAPSHOT_MAX_SIZE
     const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
     // Objects about to strike loom larger (they fill more of the window).
     const nearBoost = 1 + Math.max(0, 5 - a.impactIn) * 0.14;
-    const r = (0.7 + Math.pow(growth, 1.25) * 26) * (0.7 + 0.5 * size) * nearBoost * dpr;
-    // Shrinking range ring: a faint circle that starts wide and closes onto the
-    // body exactly at contact — a distance cue independent of body size, so the
-    // captain can tell a small-near object from a large-far one (size alone is
-    // ambiguous). Drawn for every contact, under the body.
-    const ringR = r + (34 * dpr + r * 0.8) * Math.min(1, a.impactIn / 16);
-    ctx.strokeStyle = 'rgba(160,180,220,0.16)';
-    ctx.lineWidth = 1 * dpr;
-    ctx.beginPath(); ctx.arc(px, py, ringR, 0, Math.PI * 2); ctx.stroke();
+    const bloom = 26 * (big ? 2.0 : 1.0); // large hazards bloom ~2x on approach
+    const r = (0.7 + Math.pow(growth, 1.25) * bloom) * (0.82 + 0.18 * size) * nearBoost * dpr;
+    // Range ring: a faint distance cue that closes onto the body at contact.
+    // Only drawn once the contact is ACQUIRED (targetable) — before that it's an
+    // unresolved dot the captain must spot with the naked eye, no HUD.
+    if (a.targetable) {
+      const ringR = r + (34 * dpr + r * 0.8) * Math.min(1, a.impactIn / 16);
+      ctx.strokeStyle = 'rgba(160,180,220,0.16)';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath(); ctx.arc(px, py, ringR, 0, Math.PI * 2); ctx.stroke();
+    }
     // visualKind reveals a pod/mineral up close (captain's naked eye) even while
     // the weapons scope still reads UNKNOWN — the don't-shoot cooperation hook.
     const vk = a.visualKind || 'unknown';
     if (vk === 'pod') { drawPodContact(px, py, r, a, dpr); continue; }
     if (vk === 'mineral') { drawMineralContact(px, py, r, a, dpr); continue; }
-    if ((a.kind === 'ghost')) { /* identified ghost is culled server-side; nothing to draw */ }
+    // Body colour: large rocks are a deeper, darker brown; small a lighter
+    // grey-brown. Threat is communicated by the ring, not the body.
+    const bodyFill = big ? 'rgba(112, 92, 74, 0.94)' : 'rgba(150, 140, 122, 0.92)';
+    const glowRgb = big ? '120, 96, 74' : '150, 140, 120';
     const glow = ctx.createRadialGradient(px, py, r * 0.2, px, py, r * 1.7);
-    glow.addColorStop(0, `rgba(150, 140, 120, ${0.05 + growth * 0.15})`);
+    glow.addColorStop(0, `rgba(${glowRgb}, ${0.05 + growth * 0.15})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(px, py, r * 1.7, 0, Math.PI * 2); ctx.fill();
@@ -1012,17 +1121,15 @@ function drawAsteroids(w, h, yawPx, dpr) {
       i === 0 ? ctx.moveTo(vx, vy) : ctx.lineTo(vx, vy);
     });
     ctx.closePath();
-    ctx.fillStyle = 'rgba(150, 140, 122, 0.92)';
+    ctx.fillStyle = bodyFill;
     ctx.fill();
 
-    // Unresolved contacts stay an unlabeled grey rock — the captain must spot
-    // them and call for more sensor power. Once targetable (target-acquired by
-    // sensors), ring it in its threat colour; the currently-locked target gets a
-    // brighter, thicker ring. Only rocks get a threat ring.
+    // Unresolved contacts stay an unlabeled rock — the captain must spot them and
+    // call for more sensor power. Once targetable, ring it in its threat colour;
+    // the currently-locked target gets a brighter, thicker ring. Rocks only.
     if (!a.targetable || (a.kind !== 'rock' && a.kind !== 'unknown')) continue;
     const spd = a.speed ?? 1;
-    const speedTag = spd >= 1.15 ? 'FAST' : spd >= 0.95 ? 'MED' : 'SLOW';
-    // Threat: fast or imminent = red, moderate = amber, else yellow-green.
+    // Threat colour: fast or imminent = red, moderate = amber, else yellow-green.
     const threat = (spd >= 1.15 || a.impactIn < 6) ? '#ff5c5c'
       : (spd >= 0.95 || a.impactIn < 12) ? '#ffb347' : '#e0d24c';
     const targeted = a.id === latest.targetId;
@@ -1034,7 +1141,9 @@ function drawAsteroids(w, h, yawPx, dpr) {
     ctx.fillStyle = threat;
     ctx.font = `${12 * dpr}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(`${a.label} ${speedTag} ${Math.ceil(a.impactIn)}s`, px, py - r - 8 * dpr);
+    // No speed text — the range ring conveys closing rate for the captain to
+    // synthesize. Label + the seconds-to-impact countdown only.
+    ctx.fillText(`${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - 8 * dpr);
   }
   // A tractor beam from the ship to the latched contact (Crew Chief towing).
   drawTractorBeam(w, h, dpr);
