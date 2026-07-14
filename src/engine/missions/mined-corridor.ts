@@ -16,7 +16,7 @@ export const minedCorridor: MissionDef = {
   kind: 'authored',
   ...pacingFor(260),                       // a longer, wave-structured haul
   spawnEvery: { min: 14, max: 22 },       // quiet between the waves
-  impactIn: { min: 18, max: 26 }, // ambient rocks spawn beyond max sensor range (16s): seen dim on screen before sensors resolve them
+  impactIn: { min: 18, max: 26 }, // ambient rocks spawn near the detection edge (~21s at the default 2 sensor power): a low-sensor crew sees dim dots before sensors resolve them
   asteroidDmg: { min: 8, max: 14 },       // mines are numerous but small
   maxAsteroids: 6,                        // waves need headroom over ambient
   breakerEvery: { min: 30, max: 48 }, // widened +50%: impacts now trip breakers, ambient trips are the exception

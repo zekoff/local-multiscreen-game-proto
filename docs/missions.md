@@ -26,20 +26,34 @@ A `MissionDef` has three layers:
    so a clean crew arrives near `targetSeconds`. Ambient pacing is deliberately
    *not* length-scaled, so a longer mission keeps the same per-minute intensity
    and simply runs longer. Authored baselines: supply-run 180s (3 min),
-   kepler-rescue 150s, mined-corridor 260s; gen presets 180/240/300s.
-   `asteroidDmg` is a *base* magnitude — each rock rolls a size (0.6-1.6) and
-   speed (0.75-1.35) that scale its actual damage and closing rate, and ~1/3 of
-   ambient spawns arrive as a 2-3 rock cluster.
+   mined-corridor 260s; gen presets 180/240/300s; Europa Salvage Loop 300s.
+   `asteroidDmg` is a *base* magnitude — each rock rolls a **discrete class**,
+   small (~0.8, snapshot-killable) or large (~1.5, snapshot-proof, ~22% of rocks),
+   plus a speed (0.75-1.35) that scales its damage and closing rate.
 3. **Scripted events** — an authored timeline of one-shot set pieces that fire
    at a mission-time or progress mark:
    - `log` — narrative beat in the ship's log + station toasts
-   - `spawnAsteroids` — a burst on top of ambient spawning
+   - `spawnAsteroids` — a burst of rocks on top of ambient spawning
+   - `spawnContact` — a **typed** contact (`rock`/`pod`/`mineral`/`ghost`): pods
+     are rescue (don't-shoot, tow for score), minerals are inert salvage, ghosts
+     are sensor false-positives. The workhorse for salvage/rescue/first-contact.
    - `tripBreaker` — engineering crisis (specific system or random)
-   - `spawnRate` — change ambient spawn pressure from this point on
-   - `calm` — suppress ambient spawns for a stretch (quiet-before-the-storm)
+   - `spawnRate` / `calm` / `setMaxAsteroids` — reshape ambient spawn pressure
+   - `spawnGate` — a scripted nav gate (slipstream) on top of `gateEvery`
+   - `ionStorm` (halves sensor range), `debrisField` (running hot scours the
+     hull), `setViewImpaired` (black out the forward view), `solarFlare`
+     (announced, then strikes raised systems) — environmental pressure
+   - `spawnObstacle` — a large steer-*around* hazard (topology)
+   - `spawnDivert` / `cinematic` — a competing-objective fork / a soft-pause
+     dialogue beat on the main screen
+   - `startEmergency` — a Crew-Chief damage-control task (fire/boarders/breach/leak)
 
-New event action types are added in `mission.ts` (the `EventAction` union)
-and `game.ts` (`applyEventAction`) — two places, type-checked.
+Optional MissionDef knobs for the salvage/rescue/Crew-Chief layer: `holdCapacity`,
+`crewTokens`, `salvageGoal`, `failOnCountdown`, `readout` (distance vs countdown),
+and `scoreModel: 'salvage'` (a distance-arrival run scored on hull + time +
+salvage banked, e.g. Europa Salvage Loop). New event action types are added in
+`mission.ts` (the `EventAction` union) and `game.ts` (`applyEventAction`) — two
+places, type-checked.
 
 ## Authoring a mission
 
@@ -52,10 +66,12 @@ and `game.ts` (`applyEventAction`) — two places, type-checked.
 4. `npm run typecheck && npm run smoke` — the schema is type-checked, and the
    smoke test confirms nothing regressed.
 
-The three shipped missions are deliberately different shapes:
+The authored missions are deliberately different shapes: `first-flight` (intro),
 `supply-run` (pure ambient baseline — also the calibration reference),
-`mined-corridor` (wave-structured, event-driven), `kepler-rescue` (short,
-hot, engineering-crisis midpoint).
+`mined-corridor` (wave-structured combat), plus the Crew-Chief-era set
+(`lifeboat-run`, `deadline-kepler`, `salvage-claim`, `blackout-approach`,
+`first-contact`) and `free-flight` (a debug sandbox). All are registered in
+`mission-registry.ts` (`AUTHORED`).
 
 ## Procedural missions
 
@@ -63,8 +79,12 @@ hot, engineering-crisis midpoint).
 `GenParams` — `length` (short/standard/long), `intensity` (0..1), and `seed`.
 Same params + seed = the identical mission (name, destination, set pieces,
 pacing), so generated missions are shareable and testable like authored ones.
-The lobby exposes three presets (`gen:short`, `gen:standard`, `gen:long`);
-a fuller mission-setup UI can expose `GenParams` directly later.
+The lobby exposes `gen:short` / `gen:standard` / `gen:long`, plus **Europa
+Salvage Loop** (`gen:europa`) — a fixed-shape procedural *type* with its own
+generator (`generateEuropaSalvageLoop`, resolved specially in
+`resolveMissionStart`): slipstreams, heavy rock batches, drifting salvage, a slow
+lifeboat, ghosts, and one ion storm / debris field / blackout, scored on
+time / salvage / hull.
 
 ## Reproducibility: (missionId, seed)
 
@@ -95,24 +115,25 @@ in the debrief and consumed raw by the mission lab:
   discipline, and how fast contacts get handed to weapons). Surfaced as a second
   table in `npm run lab`.
 
-Note: **sensors** (a fourth engineering-powered system) gate when a contact
-becomes *targetable* on the weapons scope — low sensor power means contacts
-resolve late and the shoot window shrinks. Nav **gates** sit off the direct
-course (a bearing the helm must swing onto). **Emergency Warp** (helm) clears
-all threats but scatters the ship's systems. See the wave-2 section of
-`docs/pre-playtest-improvements-recap.md` for the full mechanics.
+Note: **sensors** (an engineering-powered system) gate a contact in two stages —
+*detection* (targetable on the weapons scope) and *identification* (its true kind
+resolves); low sensor power means contacts resolve late and the shoot window
+shrinks. The tractor beam shares the **weapons** emitter (tow salvage/pods; no
+firing while latched). Nav **gates** sit off the direct course (a bearing the helm
+swings onto for a slipstream). **Emergency Warp** (helm) clears all threats but
+scatters the ship's systems.
 
 ## The mission lab (`npm run lab`)
 
 In-process balance harness: runs every mission (or `LAB_MISSIONS=id,id`)
-against six crew scenarios across fixed seeds (`LAB_RUNS`, default 10),
+against a set of crew scenarios across fixed seeds (`LAB_RUNS`, default 10),
 driving the engine directly — a full sweep takes seconds. The scenarios are the
-three baselines (`skilled` / `novice` / `auto`) plus three single-human mixes
-(`1h-helm` / `1h-eng` / `1h-weap` — one skilled operator, the rest on
-auto-assist) that verify the bot-balance target: an all-`auto` crew loses, and
-one human can carry a bot crew. Bot policies live in `scripts/lib/policies.mjs`
-and are shared with the network smoke tests, so lab results and wire-level
-tests can't drift apart.
+baselines (`skilled` / `novice` / `auto` / `full4`) plus single- and two-human
+mixes (`1h-helm` / `1h-eng` / `1h-weap` / `1h-chief` / `2h-helm-eng` — the named
+seats are skilled operators, the rest on auto-assist) that verify the bot-balance
+target: an all-`auto` crew loses, and a single human can carry a bot crew. Bot
+policies live in `scripts/lib/policies.mjs` and are shared with the network smoke
+tests, so lab results and wire-level tests can't drift apart.
 
 Crew baselines:
 - **skilled** — coordinated-crew ceiling
@@ -120,11 +141,9 @@ Crew baselines:
 - **auto** — no humans at all; the engine's auto-assist plays
 
 Reading the output: a well-tuned mission should be comfortably winnable for
-`skilled`, survivable-but-scarred for `novice`, and rough for `auto`. As of the
-pre-playtest pass this is the actual shape (auto now fails 30-50% on hard
-missions) — `docs/design/08-mission-balance-baseline.md` records the earlier
-"everything's too easy" problem and how it was closed;
-`docs/console-complexity-analysis.md` has the current numbers.
+`skilled`, survivable-but-scarred for `novice`, and rough for `auto`, with any
+single human able to carry a bot crew. `docs/console-complexity-analysis.md` has
+the current per-console load, interplay map, and known balance issues.
 
 Raw per-run records (debrief + full telemetry) land in `reports/`
 (gitignored); the printed table is the summary view.

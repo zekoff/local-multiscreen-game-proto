@@ -12,6 +12,7 @@
 
 import { Game, type SystemId } from '../src/engine/game.js';
 import { pacingFor, type MissionDef } from '../src/engine/mission.js';
+import { generateEuropaSalvageLoop } from '../src/engine/mission-gen.js';
 
 const TICK = 0.25; // matches the live server tick
 
@@ -64,13 +65,13 @@ function measureRecharge(game: Game, secs: number): number {
   return game.serialize().charge as number;
 }
 
-// --- 1. The 7-point pool is fully spent by the default split, engines lead ---
+// --- 1. The 7-point pool is fully spent by the default split (E2 S1 W2 Sen2) ---
 {
   const game = freshGame();
   const power = game.serialize().power as Record<SystemId, number>;
   const total = power.engines + power.shields + power.weapons + power.sensors;
   check('default power split spends the full 7-point pool', total === 7, `total=${total}`);
-  check('default split leads with engines=3', power.engines === 3, `engines=${power.engines}`);
+  check('default split funds sensors=2 (earlier detection)', power.sensors === 2, `sensors=${power.sensors}`);
   check('default split funds weapons=2 (laser + tractor share it)', power.weapons === 2, `weapons=${power.weapons}`);
 }
 
@@ -191,15 +192,15 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
 // point: range shrinks under the contact and the lock must clear.
 {
   const game = freshGame() as any;
-  // Default sensors=1 -> detection range 10+2 = 12s. Hand-place a rock at 11.5s
-  // (targetable now, but only just — dropping a sensor point pulls range under it).
+  // Default sensors=2 -> detection range 15+3*2 = 21s. Hand-place a rock at 19.5s
+  // (targetable now, but only just — dropping a sensor point pulls range to 18s).
   game.asteroids.push({
-    id: 501, designation: 501, kind: 'rock', impactIn: 11.5, dmg: 5, size: 1, speed: 1, mass: 0,
+    id: 501, designation: 501, kind: 'rock', impactIn: 19.5, dmg: 5, size: 1, speed: 1, mass: 0,
     revealed: false, identified: true, announced: true, bearing: 0,
   });
   game.action('weapons', { kind: 'target', id: 501 });
-  check('edge contact locks at sensors=1 (range 12s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
-  // Drop sensors 1 -> 0: range 10s < 11.5s, the contact fades, lock must drop.
+  check('edge contact locks at sensors=2 (range 21s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
+  // Drop sensors 2 -> 1: range 18s < 19.5s, the contact fades, lock must drop.
   game.action('engineering', { kind: 'power', system: 'sensors', delta: -1 });
   game.tick(0.25);
   const after = game.serialize();
@@ -242,12 +243,12 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
 // reads UNKNOWN; a pulse resolves it. ---
 {
   const game = freshGame() as any;
-  // sensors=1: detection range 12s, ID range 5+3 = 8s. Place a pod at 10s:
-  // detected (blip) but NOT identified.
-  game.spawnContact('pod', { min: 10, max: 10 }, { min: 0, max: 0 });
+  // sensors=2: detection range 21s, ID range 7.5+4.5*2 = 16.5s. Place a pod at
+  // 18.5s: detected (blip) but beyond ID range, so NOT identified.
+  game.spawnContact('pod', { min: 18.5, max: 18.5 }, { min: 0, max: 0 });
   game.tick(0.25);
   const s1 = game.serialize();
-  const blip = s1.asteroids.find((a: any) => a.impactIn >= 9);
+  const blip = s1.asteroids.find((a: any) => a.impactIn >= 17);
   check('pod detected but UNKNOWN at low sensor power', !!blip && blip.targetable === true && blip.kind === 'unknown', `blip=${JSON.stringify(blip)}`);
   game.action('engineering', { kind: 'sensorPulse' });
   game.tick(0.25);
@@ -387,6 +388,27 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
   game.action('main', { kind: 'setCrewSkill', value: -0.5 });
   const lo = game.crewSkill;
   check('debug crew-skill clamps to [0,1]', hi === 1 && lo === 0, `hi=${hi} lo=${lo}`);
+}
+
+// --- 22. Europa Salvage Loop: fixed-shape procedural mission ---
+{
+  const def = generateEuropaSalvageLoop(7);
+  const kinds = def.events.flatMap((e) => e.actions.map((a) => a.type));
+  const has = (t: string) => kinds.includes(t);
+  const contactKinds = def.events.flatMap((e) => e.actions.filter((a: any) => a.type === 'spawnContact').map((a: any) => a.kind));
+  check('europa is a 5-min salvage-scored run', def.targetSeconds === 300 && def.scoreModel === 'salvage' && (def.salvageGoal ?? 0) > 0, `t=${def.targetSeconds} model=${def.scoreModel}`);
+  check('europa has no obstacles / emergencies / flares', !has('spawnObstacle') && !has('startEmergency') && !has('solarFlare'), `kinds=${[...new Set(kinds)].join(',')}`);
+  check('europa mixes pod + ghost + mineral + hazards',
+    contactKinds.includes('pod') && contactKinds.includes('ghost') && contactKinds.includes('mineral') && has('ionStorm') && has('debrisField') && has('setViewImpaired'),
+    `contacts=${[...new Set(contactKinds)].join(',')} kinds=${[...new Set(kinds)].join(',')}`);
+  // Sim advances without throwing (all-auto crew): either it made real progress
+  // or it resolved to a debrief — both prove the run executed end to end.
+  const game = new Game();
+  game.onEvent = () => {};
+  game.start(def, 7);
+  for (let i = 0; i < Math.round(150 / TICK); i++) game.tick(TICK);
+  const s = game.serialize() as any;
+  check('europa sim runs end to end', (s.phase === 'active' && s.missionTime > 120) || s.phase === 'debrief', `phase=${s.phase} t=${s.missionTime}`);
 }
 
 if (failures > 0) {

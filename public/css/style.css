@@ -34,6 +34,13 @@ input, textarea {
   user-select: text;
 }
 
+/* ...and the main-screen join URL, so it can be highlighted to copy/paste. */
+#join-url {
+  -webkit-user-select: all;
+  user-select: all;
+  cursor: text;
+}
+
 body { display: flex; flex-direction: column; }
 
 /* --- Header bar shown on every station --- */

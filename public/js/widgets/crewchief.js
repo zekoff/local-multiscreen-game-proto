@@ -4,7 +4,7 @@
 
 import { defineWidget, el } from '../widget.js';
 
-const KIND_ICON = { pod: '🛟', mineral: '⛏', rock: '☄', ghost: '❓', unknown: '·' };
+const KIND_ICON = { pod: 'POD', mineral: 'ORE', rock: 'ROCK', ghost: '?', unknown: '·' };
 
 // (The tractor/tow control moved to the Weapons console — see widgets/tow.js.
 // The Crew Chief keeps the cargo hold and the damage-control board below.)
@@ -67,18 +67,16 @@ export const cargoHold = defineWidget({
 // mid-job); crew free themselves when the job is done. Stacking is faster but
 // with diminishing returns. When no human chief is aboard, automated systems run
 // the deck (the board shows an automated note instead of posts). ---
-const SYS_ICON = { engines: '🚀', shields: '🛡️', weapons: '🎯', sensors: '📡' };
 const SYS_NAME = { engines: 'Engines', shields: 'Shields', weapons: 'Weapons', sensors: 'Sensors' };
 // What a system's drift actually costs (the effective-power derate), phrased in
 // that system's own consumer so the chief sees the concrete impact, not just
 // "drifting". Mirrors the engine WEAR_EFF_PENALTY (0.15 at full wear).
 const SYS_DERATE = { engines: 'thrust', shields: 'regen', weapons: 'recharge', sensors: 'range' };
 const WEAR_EFF_PENALTY = 0.15;
-const EMG_ICON = { fire: '🔥', boarders: '🚨', breach: '💥', leak: '💧' };
 
 export const deckCrew = defineWidget({
   id: 'deck-crew',
-  label: '👷 Deck Crew',
+  label: 'Deck Crew',
   hint: 'Commit hands to trim systems, patch the hull, and fight emergencies — they stay until the job is done. More hands = faster (diminishing returns).',
   mount({ root, net }) {
     const roster = el('div', 'crew-roster');
@@ -115,10 +113,10 @@ export const deckCrew = defineWidget({
         // Roster dots.
         const dots = Array.from({ length: crew.total }, (_, i) =>
           `<span class="crew-dot${i < crew.free ? ' free' : ''}"></span>`).join('');
-        roster.innerHTML = `<span class="label">👷 Crew</span> ${dots} <span class="label">${crew.free} free</span>`;
+        roster.innerHTML = `<span class="label">Crew</span> ${dots} <span class="label">${crew.free} free</span>`;
 
         // Automated note vs live posts.
-        auto.textContent = chief.manned ? '' : '⚙️ Automated systems are maintaining the ship — a Crew Chief would do it better.';
+        auto.textContent = chief.manned ? '' : 'Automated systems are maintaining the ship — a Crew Chief would do it better.';
         auto.style.display = chief.manned ? 'none' : '';
         posts.style.display = chief.manned ? '' : 'none';
 
@@ -134,12 +132,12 @@ export const deckCrew = defineWidget({
               ? `${p.crew} on it · ${derate}`
               : (worn ? `drifting · ${derate}` : 'in trim');
             // wear serialized 0..0.6 (cap); show it as 0..100% of the cap.
-            posts.appendChild(postRow(SYS_ICON[p.system] || '', SYS_NAME[p.system] || p.system, status,
+            posts.appendChild(postRow('', SYS_NAME[p.system] || p.system, status,
               'warn', Math.round((p.wear / 0.6) * 100), 'maint:' + p.system, !canAdd || !worn));
           }
           const rep = chief.repair || { crew: 0, hull: 100 };
           const repStatus = rep.crew ? `${rep.crew} on it` : (rep.hull < 100 ? 'hull damaged' : 'hull full');
-          posts.appendChild(postRow('🔧', 'Hull Repair', repStatus, 'cool', rep.hull, 'repair', !canAdd || rep.hull >= 100));
+          posts.appendChild(postRow('', 'Hull Repair', repStatus, 'cool', rep.hull, 'repair', !canAdd || rep.hull >= 100));
         }
 
         // Emergencies (add-only; crew free themselves on resolve).
@@ -153,7 +151,7 @@ export const deckCrew = defineWidget({
             const card = el('div', 'emergency');
             card.dataset.id = e.id;
             card.innerHTML =
-              `<div class="spread"><span class="emg-label">${EMG_ICON[e.kind] || '⚠️'} ${e.label}</span><span class="emg-assigned"></span></div>` +
+              `<div class="spread"><span class="emg-label">${e.label}</span><span class="emg-assigned"></span></div>` +
               `<div class="meter cool" style="margin:0.3rem 0"><div class="emg-bar"></div></div>`;
             const b = el('button', 'deck-add', '+ crew');
             b.dataset.post = String(e.id);

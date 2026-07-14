@@ -15,6 +15,12 @@ export type Phase = 'lobby' | 'active' | 'debrief';
 // 'supervisor' is the debug/sim-control role. Crew seats are the other four
 // (helm/engineering/weapons/crewchief).
 export type SeatId = 'helm' | 'engineering' | 'weapons' | 'crewchief' | 'main' | 'supervisor';
+
+// Who a log event is addressed to. 'crew' = the shared main screen (crew-wide
+// awareness); a crew seat = only that console's operator sees the toast. This is
+// what lets console chatter stay on its console while the main screen carries
+// only crew-wide notices.
+export type Audience = 'crew' | 'helm' | 'engineering' | 'weapons' | 'crewchief';
 // Two engagement settings. 'officer' is the default and the balance target
 // (formerly 'normal'); 'cruise' is the lighter workload (formerly 'chill').
 // The old three-state chill/normal/intense collapsed to these two — Cruise may
@@ -122,11 +128,8 @@ const AUTO_ENG_RESET_AGE = 4;        // seconds a breaker stays tripped before a
 // Sensors: detection range in seconds-to-impact. An asteroid is only targetable
 // on the weapons scope once its impactIn drops to within this range, which
 // grows with sensor power. A pulse (below) overrides it for a one-shot reveal.
-// Nerfed from 10/4: the complaint was that each sensor point added too much
-// reach (2 power hit ~18s, nearly the scope edge, since the scope maps
-// impactIn/20 to the rim). Halving the per-point value to 2 puts 2 power at
-// ~12s (~60% radius) — a clear investment curve — while a slightly lower base
-// keeps the field readable enough for the (now 2x slower) laser to work.
+// The weapons scope's outer rim is MAX_RANGE_S (28s), sized to the max detection
+// range so the sensor/ID rings and inbound contacts scale across the full arc.
 // Detection vs identification split (post-playtest sensor rework): sensors now
 // do two jobs at two ranges. DETECTION (a blip appears on the scope, targetable)
 // reaches a little further than before even at low power — so the field is
@@ -135,10 +138,14 @@ const AUTO_ENG_RESET_AGE = 4;        // seconds a breaker stays tripped before a
 // with sensor power. Low power => you see UNKNOWN blips but can't tell a rescue
 // pod from a rock; a pulse forces a full ID. This is the interplay the
 // don't-shoot / salvage missions are built on.
-const SENSOR_BASE = 10;         // detection range (s) at zero sensor power (was 8: a touch more reach low)
-const SENSOR_PER_POWER = 2;     // extra detection range (s) per effective sensor power unit
-const SENSOR_ID_BASE = 5;       // identification range (s) at zero sensor power (well inside detection)
-const SENSOR_ID_PER_POWER = 3;  // extra ID range (s) per sensor power — ID scales harder than detection
+// Ranges bumped +50% across the board (playtest: acquire contacts further out
+// for more reaction time). Detection at max sensor power is now 15 + 3*4 = 27s
+// (was 18s); ID at max is 7.5 + 4.5*4 = 25.5s (was 17s). Uniform ×1.5 keeps the
+// detect-before-ID gap and the low-vs-high-power investment curve intact.
+const SENSOR_BASE = 15;         // detection range (s) at zero sensor power
+const SENSOR_PER_POWER = 3;     // extra detection range (s) per effective sensor power unit
+const SENSOR_ID_BASE = 7.5;     // identification range (s) at zero sensor power (well inside detection)
+const SENSOR_ID_PER_POWER = 4.5; // extra ID range (s) per sensor power — ID scales harder than detection
 const SENSOR_PULSE_COOLDOWN = 80; // long cooldown => ~1-2 pulses per mission
 
 // --- Tractor beam / cargo hold. The tractor shares the WEAPONS emitter: the
@@ -209,6 +216,12 @@ const OBSTACLE_DMG_DEFAULT = 26;    // hull damage for plowing straight into one
 // is what lets the captain visually spot a rescue pod's beacon before sensors
 // classify it (drives serialize().asteroids[].visualKind, not the weapons scope).
 const VISUAL_RANGE = 7;
+// Rescue pods actively beacon, so the captain's naked eye picks them out on the
+// main screen well before a rock resolves — and, crucially, before sensors ID
+// them. A dedicated (longer) pod reveal range means pods never masquerade as
+// asteroids on the viewscreen; the weapons SCOPE still reads UNKNOWN until sensor
+// ID, so the captain's call ("that's a pod — hold fire") still matters.
+const POD_VISUAL_RANGE = 22;
 
 // Raised shields draw off the drive: a real power-triage tradeoff instead of
 // a free defensive toggle.
@@ -446,6 +459,7 @@ export interface Debrief {
     warpsUsed: number;
     pulsesUsed: number;
     cargoRecovered: number; // cargo units reeled aboard (salvage + rescue)
+    salvageBanked: number;  // total VALUE of banked cargo (drives salvage-model scoring)
     podsRescued: number;    // rescue pods recovered
     podsDestroyed: number;  // rescue pods shot (the shame stat)
   };
@@ -463,7 +477,7 @@ export class Game {
   phase: Phase = 'lobby';
   seats: Record<SeatId, SeatState>;
   // Called whenever a human-readable event happens (impacts, breakers, etc.).
-  onEvent: (text: string) => void = () => {};
+  onEvent: (text: string, to: Audience) => void = () => {};
 
   // --- Mission definition & run randomness (set by start()) ---
   mission: MissionDef | null = null;
@@ -729,7 +743,7 @@ export class Game {
     this.hull = 100;
     this.shieldRaised = false;
     this.shieldStrength = SHIELD_MAX;
-    this.power = { engines: 3, shields: 1, weapons: 2, sensors: 1 }; // default split spends the full pool (7)
+    this.power = { engines: 2, shields: 1, weapons: 2, sensors: 2 }; // default split spends the full pool (7): more sensors for earlier detection
     this.breakers = { engines: null, shields: null, weapons: null, sensors: null };
     this.throttle = 0;
     this.alignment = 0;
@@ -849,7 +863,7 @@ export class Game {
         this.doWarp();
       } else if (a.kind === 'hold' && typeof a.on === 'boolean') {
         this.courseHold = a.on;
-        this.event(this.courseHold ? 'Course-hold engaged.' : 'Course-hold released.');
+        this.consoleEvent('helm', this.courseHold ? 'Course-hold engaged.' : 'Course-hold released.');
       }
     } else if (seat === 'engineering') {
       if (a.kind === 'power' && SYSTEMS.includes(a.system as SystemId) && (a.delta === -1 || a.delta === 1)) {
@@ -860,7 +874,7 @@ export class Game {
         this.doSensorPulse();
       } else if (a.kind === 'savePreset') {
         this.savedPreset = { ...this.power };
-        this.event('Power preset saved.');
+        this.consoleEvent('engineering', 'Power preset saved.');
       } else if (a.kind === 'loadPreset') {
         this.loadPreset();
       }
@@ -878,7 +892,7 @@ export class Game {
         this.shieldRaised = a.raised;
         // Renamed the crew-facing verb to "deflector screen" so it stops
         // colliding with engineering's "shield power" callout (playtest note).
-        this.event(this.shieldRaised ? 'Deflector screen up.' : 'Deflector screen down.');
+        this.consoleEvent('weapons', this.shieldRaised ? 'Deflector screen up.' : 'Deflector screen down.');
       } else if (a.kind === 'governor' && (a.mode === 'standard' || a.mode === 'snapshot')) {
         // Mode cycling is a routine gunner action — no log/toast (it's too
         // granular for the captain's log; the weapons console shows the mode).
@@ -911,7 +925,7 @@ export class Game {
   private resetBreaker(system: SystemId) {
     if (this.breakers[system] !== null) {
       this.breakers[system] = null;
-      this.event(`Engineering reset the ${system} breaker.`);
+      this.consoleEvent('engineering', `Engineering reset the ${system} breaker.`);
     }
   }
 
@@ -956,17 +970,17 @@ export class Game {
     this.sensorPulseCd = SENSOR_PULSE_COOLDOWN;
     this.stats.pulsesUsed++;
     this.pushFx({ kind: 'sensorPulse' });
-    this.event('Active sensor pulse — all contacts lit up.');
+    this.consoleEvent('engineering', 'Active sensor pulse — all contacts lit up.');
   }
 
   // Re-apply the saved power preset (P#11), respecting the pool + per-system cap.
   private loadPreset() {
-    if (!this.savedPreset) { this.event('No power preset saved yet.'); return; }
+    if (!this.savedPreset) { this.consoleEvent('engineering', 'No power preset saved yet.'); return; }
     const total = SYSTEMS.reduce((sum, s) => sum + clamp(this.savedPreset![s] ?? 0, 0, POWER_MAX), 0);
     if (total > POWER_TOTAL) return; // saved split no longer fits the pool (defensive)
     for (const s of SYSTEMS) this.power[s] = clamp(this.savedPreset[s] ?? 0, 0, POWER_MAX);
     this.tel.powerChanges++;
-    this.event('Power preset loaded.');
+    this.consoleEvent('engineering', 'Power preset loaded.');
   }
 
   // --- Crew Chief: tractor beam + cargo hold ---
@@ -990,22 +1004,22 @@ export class Game {
   // swings fully outside the arc or the contact drifts out of range).
   private setTractorLatch(on: boolean) {
     if (!on) {
-      if (this.tractorLatched) this.event('Tractor beam released — hold the pull, we can re-latch.');
+      if (this.tractorLatched) this.consoleEvent('weapons', 'Tractor beam released — hold the pull, we can re-latch.');
       this.tractorLatched = false;
       return;
     }
-    if (this.cargo.length >= this.holdCapacity) { this.event('Cargo hold full — jettison to make room.'); return; }
-    if (this.eff('weapons') < TRACTOR_MIN_POWER) { this.event('Tractor beam has no power — Engineering must feed WEAPONS.'); return; }
+    if (this.cargo.length >= this.holdCapacity) { this.consoleEvent('weapons', 'Cargo hold full — jettison to make room.'); return; }
+    if (this.eff('weapons') < TRACTOR_MIN_POWER) { this.consoleEvent('weapons', 'Tractor beam has no power — Engineering must feed WEAPONS.'); return; }
     const t = this.tractorTargetId !== null ? this.asteroids.find((a) => a.id === this.tractorTargetId) : null;
-    if (!t || !this.targetable(t) || t.impactIn > TRACTOR_RANGE) { this.event('No contact in tractor range.'); return; }
+    if (!t || !this.targetable(t) || t.impactIn > TRACTOR_RANGE) { this.consoleEvent('weapons', 'No contact in tractor range.'); return; }
     // Only latch a contact we've actually classified as towable — no grabbing an
     // un-identified blip (it might be a rock, or nothing). Matches serialize()'s
     // `tractorable` flag the tow widget gates its button on.
-    if (!t.identified || (t.kind !== 'pod' && t.kind !== 'mineral')) { this.event('Nothing confirmed to latch — hold for identification.'); return; }
-    if (Math.abs(this.alignment - t.bearing) > TRACTOR_ARC) { this.event('Contact is outside the tractor arc — bring the bow around.'); return; }
+    if (!t.identified || (t.kind !== 'pod' && t.kind !== 'mineral')) { this.consoleEvent('weapons', 'Nothing confirmed to latch — hold for identification.'); return; }
+    if (Math.abs(this.alignment - t.bearing) > TRACTOR_ARC) { this.consoleEvent('weapons', 'Contact is outside the tractor arc — bring the bow around.'); return; }
     this.tractorLatched = true;
     this.pushFx({ kind: 'tractorBeam', targetId: t.id });
-    this.event(`Tractor beam latched onto ${this.label(t)} — reeling it in. Helm, hold this line.`);
+    this.consoleEvent('weapons', `Tractor beam latched onto ${this.label(t)} — reeling it in. Helm, hold this line.`);
   }
 
   // Dump one item from the hold (recovers maneuverability; forfeits its value).
@@ -1014,7 +1028,7 @@ export class Game {
     if (!item) return;
     this.cargo = this.cargo.filter((c) => c.id !== id);
     this.pushFx({ kind: 'jettison' });
-    this.event(`Jettisoned ${item.label} — hold lightened.`);
+    this.consoleEvent('weapons', `Jettisoned ${item.label} — hold lightened.`);
   }
 
   // Move a crew hand onto/off an emergency (bounded by roster + free hands).
@@ -1085,7 +1099,7 @@ export class Game {
     // The laser and the tractor share an emitter: you can't fire while the beam
     // is latched (the weapons↔crewchief negotiation — "drop the pod or hold?").
     if (this.tractorLatched) {
-      this.event('Cannot fire — tractor beam engaged. Release the latch to free the emitter.', false);
+      this.consoleEvent('weapons', 'Cannot fire — tractor beam engaged. Release the latch to free the emitter.');
       return;
     }
     // Charge gate depends on the governor: STANDARD needs a full meter for a
@@ -1102,7 +1116,7 @@ export class Game {
     // lands, the charge is spent, the contact survives — the governor tradeoff).
     if (snapshot && target.size > SNAPSHOT_MAX_SIZE) {
       this.pushFx({ kind: 'laser', targetId: target.id, hit: false });
-      this.event(`Snapshot glanced off ${this.label(target)} — too big for a partial charge.`);
+      this.consoleEvent('weapons', `Snapshot glanced off ${this.label(target)} — too big for a partial charge.`);
       return;
     }
     // Ghosts are sensor false-positives: the shot passes through empty space.
@@ -1111,7 +1125,7 @@ export class Game {
       this.targetId = null;
       this.targetableSince.delete(target.id);
       this.pushFx({ kind: 'laser', targetId: target.id, hit: false });
-      this.event(`Fired on ${this.label(target)} — nothing there. Sensor ghost.`);
+      this.consoleEvent('weapons', `Fired on ${this.label(target)} — nothing there. Sensor ghost.`);
       return;
     }
     // Destroy the contact.
@@ -1128,14 +1142,14 @@ export class Game {
     }
     if (target.kind === 'mineral') {
       // Blasting salvage just wastes it (no score) — a soft mistake.
-      this.event(`Vaporized ${this.label(target)} — that was salvage, not a threat.`);
+      this.consoleEvent('weapons', `Vaporized ${this.label(target)} — that was salvage, not a threat.`);
       return;
     }
     // A rock killed before it reached us: a neutralized threat + kill-cluster feed.
     this.stats.destroyed++;
     this.killTimes.push(this.missionTime);
     this.threatsNeutralized++;
-    this.event(`Direct hit! ${this.label(target)} destroyed.`);
+    this.consoleEvent('weapons', `Direct hit! ${this.label(target)} destroyed.`);
   }
 
   // Bounded effect buffer: cleared by the transport after each broadcast, but
@@ -1241,7 +1255,7 @@ export class Game {
     const bearing = sign(this.rng() - 0.5) * range(this.rng, GATE_BEARING);
     const g: Gate = { id, label: `NAV-${String(id).padStart(2, '0')}`, reachIn: range(this.rng, GATE_REACH), bearing };
     this.gates.push(g);
-    this.event(`Nav gate ${g.label} ahead, bearing ${bearing > 0 ? 'starboard' : 'port'} — swing onto the approach.`);
+    this.consoleEvent('helm', `Nav gate ${g.label} ahead, bearing ${bearing > 0 ? 'starboard' : 'port'} — swing onto the approach.`);
   }
 
   // A gate is reached: passing needs alignment near the gate's bearing, within a
@@ -1255,10 +1269,10 @@ export class Game {
       // Open the slipstream: a few seconds of multiplied speed (applied in the
       // tick speed calc), worth more ground than staying on the straight line.
       this.gateBoostTimer = GATE_SLIPSTREAM_SECS;
-      this.event(`Clean pass through ${g.label} — slipstream boost!`);
+      this.consoleEvent('helm', `Clean pass through ${g.label} — slipstream boost!`);
     } else {
       this.stats.gatesMissed++;
-      this.event(`Missed ${g.label} — off the approach line.`);
+      this.consoleEvent('helm', `Missed ${g.label} — off the approach line.`);
     }
     this.pushFx({ kind: 'gate', id: g.id, passed });
   }
@@ -1449,7 +1463,7 @@ export class Game {
     const victim = candidates[Math.floor(this.rng() * candidates.length)];
     this.breakers[victim] = 0;
     this.stats.breakersTripped++;
-    this.event(`Breaker tripped: ${victim} at half power!`);
+    this.consoleEvent('engineering', `Breaker tripped: ${victim} at half power!`);
   }
 
   // --- Simulation tick (dt in seconds) ---
@@ -1489,8 +1503,17 @@ export class Game {
     // turn authority and swinging harder onto the bearing, the human technique.
     if (this.auto('helm')) {
       const over = this.botOverBase; // 0 at baseline, 1 at optimal
+      // Towing takes priority over slipstream. When the beam is latched, the bot
+      // helm holds the bow on the tractored contact's bearing so the tow line
+      // stays inside the tractor arc — chasing a gate here would break the latch.
+      const towed = this.tractorLatched ? this.asteroids.find((a) => a.id === this.tractorTargetId) : undefined;
       const gate = this.gates[0];
-      if (gate) {
+      if (towed) {
+        const delta = towed.bearing - this.alignment;
+        this.throttle = this.missionTime < this.debrisUntil ? 45 : AUTO_HELM_THROTTLE;
+        const step = Math.min(Math.abs(delta), AUTO_HELM_GATE_STEP * (1 + 1.6 * over) * dt);
+        this.alignment += sign(delta) * step;
+      } else if (gate) {
         const delta = gate.bearing - this.alignment;
         // Baseline: cruise at AUTO_HELM_THROTTLE. Skilled: ease toward 45 when the
         // ring is off the bow, trading speed for the turn authority to catch it.
@@ -1563,7 +1586,7 @@ export class Game {
     // Emergency Warp zeroes it) toward a sensible default, so an unmanned
     // engineer can't leave the ship dead in the water.
     if (this.auto('engineering')) {
-      const target: Record<SystemId, number> = { engines: 3, weapons: 2, shields: 1, sensors: 1 }; // mirrors the default split (sums to 7)
+      const target: Record<SystemId, number> = { engines: 2, weapons: 2, shields: 1, sensors: 2 }; // mirrors the default split (sums to 7)
       let spare = POWER_TOTAL - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
       for (const s of SYSTEMS) {
         while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
@@ -1765,8 +1788,10 @@ export class Game {
       const locked = this.asteroids.find((a) => a.id === this.targetId);
       if (!locked) this.targetId = null;
       else if (!this.targetable(locked)) {
-        // Drop the lock silently — the weapons scope already shows it faded; a
-        // per-contact "lock lost" line was too granular for the log.
+        // Lock lost: the contact slipped below sensor resolution. Now that this
+        // is a WEAPONS-only toast (not the shared captain's log), it's useful
+        // feedback for the gunner without cluttering the main screen.
+        this.consoleEvent('weapons', `Lock lost on ${this.label(locked)} — contact dropped below sensor resolution.`);
         this.targetId = null;
       }
     }
@@ -2144,6 +2169,18 @@ export class Game {
       // Failure-clock run (P#21): the window shut before arrival.
       score = Math.round(this.progress * 0.35) + rescueBonus;
       narrative = `Time ran out at ${Math.round(this.progress)}% of the way to ${m.arrivalName}.` + podLost;
+    } else if (outcome === 'arrived' && m.scoreModel === 'salvage') {
+      // Salvage-loop arrival (Europa): the run is scored on what you brought home,
+      // on time, in one piece — hull + time + salvage banked (defensive shooting
+      // is a means, not the metric). The debrief reports all three.
+      const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
+      const banked = this.cargo.reduce((s, c) => s + c.value, 0);
+      const goal = Math.max(1, m.salvageGoal ?? 6);
+      const salvageScore = clamp(banked / goal, 0, 1.2);
+      const gateBonus = Math.min(8, gatesPassed * 2);
+      score = Math.min(100, Math.round(0.5 * this.hull + 20 * timeScore + 24 * salvageScore + gateBonus + rescueBonus));
+      const mm = Math.floor(this.missionTime / 60), ss = Math.round(this.missionTime % 60);
+      narrative = `Loop complete in ${mm}:${String(ss).padStart(2, '0')} — ${banked} salvage banked, hull at ${Math.round(this.hull)}%.` + podLost;
     } else {
       const timeScore = clamp(1.4 - this.missionTime / m.parTime, 0, 1);
       const shotsAtUs = destroyed + impacts + dodged;
@@ -2245,6 +2282,7 @@ export class Game {
         warpsUsed,
         pulsesUsed,
         cargoRecovered: this.cargoRecovered,
+        salvageBanked: this.cargo.reduce((s, c) => s + c.value, 0),
         podsRescued: this.podsRescued,
         podsDestroyed: this.podsDestroyed,
       },
@@ -2267,10 +2305,10 @@ export class Game {
     this.event(closer);
   }
 
-  // Log an event. It always enters the ship's rolling log (serialized, shown in
-  // the main-screen HUD). `toast` controls whether it *also* fires onEvent — the
-  // transient station toast. Ambient narrative beats pass toast:false so the
-  // captain's log reads as a story without spamming crew screens with popups.
+  // Log a CREW-WIDE event. It enters the ship's rolling log (serialized, shown in
+  // the main-screen HUD) and the full captain's log, and — when `toast` — fires a
+  // toast addressed to 'crew', which only the main screen shows. Ambient narrative
+  // beats pass toast:false so the captain's log reads as a story without popups.
   private event(text: string, toast = true) {
     this.log.push({ t: Math.round(this.missionTime), text });
     if (this.log.length > 10) this.log.shift();
@@ -2278,7 +2316,15 @@ export class Game {
     // 10-line window; this keeps the whole story, sanely capped).
     this.fullLog.push({ t: Math.round(this.missionTime), text });
     if (this.fullLog.length > 250) this.fullLog.shift();
-    if (toast) this.onEvent(text);
+    if (toast) this.onEvent(text, 'crew');
+  }
+
+  // Log a CONSOLE-SCOPED event: a live toast on ONE console only (the operator
+  // whose job it concerns). Deliberately kept OUT of the shared captain's log
+  // (this.log / fullLog) so the main-screen HUD log and the debrief stay the
+  // crew-wide narrative — these are ephemeral per-station operational notes.
+  private consoleEvent(seat: Audience, text: string) {
+    this.onEvent(text, seat);
   }
 
   // Narrative captain's log: watches rolling windows and comments on the run as
@@ -2446,7 +2492,9 @@ export class Game {
         // beacon up close even while the scope still reads UNKNOWN. That's the
         // don't-shoot cooperation: the captain's eyes OR engineering's sensors.
         kind: a.identified ? a.kind : 'unknown',
-        visualKind: a.impactIn <= VISUAL_RANGE ? a.kind : 'unknown',
+        // Pods reveal their beacon farther out than rocks/minerals (see
+        // POD_VISUAL_RANGE) so the captain can spot and call them before sensor ID.
+        visualKind: a.impactIn <= (a.kind === 'pod' ? POD_VISUAL_RANGE : VISUAL_RANGE) ? a.kind : 'unknown',
         identified: a.identified, mass: a.mass,
         tractorable: a.identified && (a.kind === 'pod' || a.kind === 'mineral') && a.impactIn <= TRACTOR_RANGE,
         bearing: Math.round(a.bearing),

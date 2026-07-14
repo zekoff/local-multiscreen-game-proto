@@ -59,7 +59,7 @@ export const powerStatus = defineWidget({
         const breakers = state.breakers || {};
         for (const sys of Object.keys(rows)) {
           const n = power[sys] ?? 0;
-          rows[sys].textContent = breakers[sys] ? `${n}⚠` : String(n);
+          rows[sys].textContent = breakers[sys] ? `${n}½` : String(n);
           rows[sys].style.color = breakers[sys] ? 'var(--bad)' : 'var(--accent)';
         }
       },

@@ -14,11 +14,13 @@ own lifecycle).
 
 ---
 
-## Implementation status (Crew Chief expansion pass, 2026-07-12)
+## Implementation status (Crew Chief expansion pass)
 
-Built on branch `expansion-crew-chief` (see
-`docs/design/12-expansion-session-debrief.md` for full detail). This branch is
-exploratory — committed/pushed/deployed but **not merged**.
+Built on branch `worktree-expansion-crew-chief` (PR #7 + the commit log are the
+narrative of record; the one-off session debriefs were pruned). The pass added
+the Crew Chief console, tractor/typed-contacts/salvage, and five missions, then a
+merge-prep tidy-up (log routing, sensor tuning, Europa Salvage Loop, Crew Chief
+frozen as WIP). See `docs/status.md` for the current state.
 
 **DONE this pass:**
 - **P#1 Tractor beam** → built into the new **Crew Chief** console; pulls into a

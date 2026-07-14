@@ -21,7 +21,7 @@ export const firstFlight: MissionDef = {
   kind: 'authored',
   ...pacingFor(150), // short: a first crew should taste the whole loop quickly
   spawnEvery: { min: 18, max: 28 },  // sparse ambient traffic, one thing at a time
-  impactIn: { min: 18, max: 26 },    // ambient rocks spawn beyond max sensor range (16s)
+  impactIn: { min: 18, max: 26 },    // ambient rocks spawn near the detection edge (~21s at the default 2 sensor power)
   asteroidDmg: { min: 6, max: 12 },  // training rocks: they sting, they don't maul
   maxAsteroids: 3,                   // absolute ceiling; the ramp below climbs up to it
   breakerEvery: { min: 40, max: 60 },// ambient trips are rare — impacts teach that lesson

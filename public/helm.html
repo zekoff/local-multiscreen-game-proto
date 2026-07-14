@@ -130,7 +130,7 @@
         // Inline engine-power readout (no separate power panel on this console).
         const ep = state.power.engines, eTrip = state.breakers.engines;
         document.getElementById('eng-power').innerHTML = ep > 0
-          ? `🚀 Engine power <b style="color:var(--accent)">${ep}</b>${eTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — speed + turn authority`
+          ? `Engine power <b style="color:var(--accent)">${ep}</b>${eTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — speed + turn authority`
           : '<b style="color:var(--bad)">NO ENGINE POWER</b> — ask Engineering';
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;

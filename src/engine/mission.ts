@@ -75,6 +75,10 @@ export interface MissionDef {
   // cargo units by the deadline is a clean run. Presence flips scoring to the
   // salvage model in finish().
   salvageGoal?: number;
+  // Scoring emphasis for a distance-ARRIVAL run. Default weights hull + time +
+  // defensive shooting. 'salvage' (Europa Salvage Loop) instead scores hull +
+  // time + salvage banked, so the debrief reports time / salvage / hull.
+  scoreModel?: 'salvage';
   // Mission fails (non-binary 'expired' outcome) if the countdown readout hits
   // zero before arrival — pairs with readout.kind 'countdown' (P#21 clock).
   failOnCountdown?: boolean;

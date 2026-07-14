@@ -46,7 +46,7 @@ export class RoomObject {
 
   private freshGame(): Game {
     const game = new Game();
-    game.onEvent = (text) => this.broadcast({ type: 'event', text });
+    game.onEvent = (text, to) => this.broadcast({ type: 'event', text, to });
     return game;
   }
 

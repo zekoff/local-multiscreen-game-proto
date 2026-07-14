@@ -80,13 +80,13 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     // Lobby: show a waiting overlay with a launch button.
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
-      // Roster with GO-poll ticks: ✅ ready, ⏳ standing by, 🤖 auto (unmanned).
+      // Roster with GO-poll status: GO ready, STBY standing by, AUTO (unmanned).
       const crewed = CREW
         .map((s) => {
           const seatS = state.seats[s];
           const diff = seatS.difficulty && seatS.difficulty !== 'officer' ? ` (${seatS.difficulty})` : '';
-          const tick = seatS.connected ? (seatS.ready ? '✅' : '⏳') : '🤖';
-          return `${tick} ${s}: ${seatS.connected ? seatS.name : 'auto'}${diff}`;
+          const tick = seatS.connected ? (seatS.ready ? 'GO' : 'STBY') : 'AUTO';
+          return `[${tick}] ${s}: ${seatS.connected ? seatS.name : 'auto'}${diff}`;
         })
         .join(' · ');
       document.getElementById('lobby-crew').innerHTML = crewed;
@@ -99,7 +99,7 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
         if (title) title.textContent = 'Systems Checkout';
         const myReady = state.seats[seat]?.ready;
         if (state.allReady) {
-          launchBtn.textContent = '🚀 LAUNCH MISSION';
+          launchBtn.textContent = 'LAUNCH MISSION';
           launchBtn.classList.add('primary');
         } else {
           launchBtn.textContent = myReady ? '✓ GO — stand down' : 'Report GO';
@@ -161,7 +161,11 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
         render(state);
       },
       onJoined: (msg) => onJoined?.(msg),
-      onEvent: toast,
+      // Route toasts by audience: a crew console shows only notices addressed to
+      // ITS seat; a view seat (main screen / supervisor) shows the crew-wide
+      // ('crew') notices. This keeps console chatter on its console and the shared
+      // awareness on the shared screen. (Older servers send no `to` → 'crew'.)
+      onEvent: (text, to) => { if (isCrew ? to === seat : to === 'crew') toast(text); },
       onError: (message) => {
         alert(message);
         location.href = '/';

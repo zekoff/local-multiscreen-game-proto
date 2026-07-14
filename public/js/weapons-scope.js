@@ -10,7 +10,7 @@
 
 import Phaser from '/js/vendor/phaser.esm.min.js';
 
-const MAX_RANGE_S = 20;   // impactIn (seconds) mapped to the outer edge of the arc
+const MAX_RANGE_S = 28;   // impactIn (seconds) mapped to the outer edge of the arc (tracks max sensor detection, ~27s at full sensor power)
 const URGENT_S = 6;       // close-contact threshold (threat color)
 const TAP_RADIUS = 40;    // scene px: how far a tap can land from a blip and still select it
 const BLIP_RADIUS = 10;   // base blip dot size
@@ -243,7 +243,7 @@ export class WeaponsScopeScene extends Phaser.Scene {
     blip.halo.setRadius(BLIP_RADIUS * (targeted ? 2.4 : 2));
     blip.dot.setRadius(targeted ? BLIP_RADIUS + 2 : BLIP_RADIUS);
     // Label shows the name, plus a "POD"/"?" tag once the kind matters.
-    const tag = kind === 'pod' ? ' ⛑' : kind === 'mineral' ? ' ⛏' : kind === 'unknown' ? ' ?' : '';
+    const tag = kind === 'pod' ? ' POD' : kind === 'mineral' ? ' ORE' : kind === 'unknown' ? ' ?' : '';
     blip.label.setText(a.label + tag);
     blip.label.setColor(kind === 'pod' ? '#4cd97b' : urgent ? '#ff5c5c' : '#7d8db3');
   }

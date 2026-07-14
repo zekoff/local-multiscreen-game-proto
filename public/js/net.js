@@ -52,7 +52,9 @@ export class Net {
       } else if (msg.type === 'state') {
         this.handlers.onState?.(msg.state);
       } else if (msg.type === 'event') {
-        this.handlers.onEvent?.(msg.text);
+        // `to` is the audience: 'crew' (main screen) or a crew seat (that console).
+        // Defaults to 'crew' for older servers that don't send it.
+        this.handlers.onEvent?.(msg.text, msg.to ?? 'crew');
       } else if (msg.type === 'error') {
         this.handlers.onError?.(msg.message);
       }

@@ -8,9 +8,8 @@ The codebase is **one runtime-agnostic engine behind two interchangeable
 transports**: a Node/Express/ws server for LAN mode, and a Cloudflare
 Workers transport (one Durable Object per room) for the cloud deployment.
 Both speak the identical wire protocol and share every line of game and
-mission logic; only the transport layer forks. See
-[`cloud-migration.md`](cloud-migration.md) for the full migration design and
-scaling rationale.
+mission logic; only the transport layer forks. (The standalone cloud-migration
+design doc has been pruned; the dual-transport rationale is folded in below.)
 
 ## Runtime topology
 
@@ -218,9 +217,8 @@ time or progress mark. The engine itself knows nothing about where a
   one occupant; `main` is view-only and unlimited (TV + a laptop both work).
 - **Heartbeat** — server pings every 30s and terminates unresponsive sockets
   so a dead phone's seat flips to auto-assist instead of hanging.
-- **Abuse guards** — room/client/message-rate caps (see
-  `cloud-migration.md` Phase 1); the per-IP room-creation limit is Node-only
-  since it needs shared in-process memory.
+- **Abuse guards** — room/client/message-rate caps; the per-IP room-creation
+  limit is Node-only since it needs shared in-process memory.
 - **Time scaling** — `GAME_SPEED` multiplies the per-tick `dt`; the smoke
   test uses this to play a full mission in seconds instead of minutes.
 - **`/healthz`** and graceful `SIGTERM` (broadcast a restart event, close
@@ -241,15 +239,15 @@ time or progress mark. The engine itself knows nothing about where a
   Owns one `Game` instance, its WebSockets, and its tick loop (`setInterval`
   equivalent via the DO alarm/timer); mirrors the Node transport's protocol
   and abuse caps exactly. The room *code* is persisted in DO storage (so it
-  survives eviction); mission *state* is not yet (Phase 3 in
-  `cloud-migration.md` — a deploy or eviction currently restarts a room to a
-  fresh lobby, a known and accepted prototype-stage gap).
+  survives eviction); mission *state* is not yet persisted — a deploy or
+  eviction currently restarts an in-progress room to a fresh lobby, a known and
+  accepted prototype-stage gap.
 - **Dev loop** — `wrangler dev` (script: `npm run dev:cf`), deploy via
   `npm run deploy` (needs `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`).
 - **Why this and not a multi-instance Node fleet** — a Durable Object *is*
   the room-affinity primitive Jackbox-style games need; Path B (Node +
   Redis room directory) was considered and rejected as plumbing the platform
-  already provides. Full tradeoff writeup in `cloud-migration.md`.
+  already provides.
 
 ## Clients (`public/`)
 
@@ -262,8 +260,10 @@ step.
   `playerId` in `sessionStorage` (per-tab, so one device can hold multiple
   seats in multiple tabs while a reload in a tab resumes its seat).
 - **`js/station.js`** — `initStation({seat, render})`: shared shell for the
-  three crew pages. Owns URL-param parsing, the connection dot, lobby and
-  debrief overlays (with score-colored grade), event toasts (corner-anchored,
+  crew consoles (`helm`/`engineering`/`weapons`/`crewchief`) and the view seats.
+  Owns URL-param parsing, the connection dot, lobby and debrief overlays (with
+  score-colored grade), **audience-filtered** event toasts (a crew console shows
+  only toasts addressed to its seat; view seats show crew-wide ones; corner-
   capped, suppressed under overlays), launch/return buttons, and shared
   meter-coloring helpers (`setHealthBar`/`setChargeBar`). Each station page
   supplies only its `render(state)` and its control wiring.
@@ -312,11 +312,11 @@ must pass before a change is considered done (plus `npm run typecheck`):
   `wrangler dev` (local workerd), verifying the Workers transport produces
   identical mission behavior over the identical wire protocol.
 - **`npm run lab`** (`scripts/mission-lab.ts`) — in-process balance harness:
-  sweeps every mission × three crew profiles (skilled/novice/auto bots) ×
-  seeded runs, no server or sockets involved, drives the engine directly.
-  Prints an aggregate table and writes raw per-run records (debrief +
-  telemetry) to `reports/` for balance analysis (see
-  `docs/design/08-mission-balance-baseline.md`).
+  sweeps every mission × several crew profiles (skilled/novice/auto plus single-
+  and two-human mixes) × seeded runs, no server or sockets involved, drives the
+  engine directly. Prints an aggregate table and writes raw per-run records
+  (debrief + telemetry) to `reports/` for balance analysis (current numbers +
+  known issues in `docs/console-complexity-analysis.md`).
 
 Because `runBotCrew()` (`scripts/lib/crew.mjs`) only needs a base URL, the
 same harness can also point at a live deployment for a one-off cloud

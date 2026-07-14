@@ -7,22 +7,23 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     :root { --accent: #ffb347; }
-    /* Two-step breaker restore: drag the slider fully right to ARM, then tap
-       the button three times to re-power. A tripped system runs at half power.
-       Each breaker is an OUTLINED box with a fixed height — you can see where
-       the restore controls will appear even while it's healthy, and the panel
-       never reflows. Healthy = the status line centered in the box. */
-    .breaker {
-      border: 1px solid var(--panel-edge); border-radius: 8px;
-      padding: 0.6rem 0.7rem; margin-bottom: 0.6rem;
-      min-height: 9.6rem;
-      display: flex; flex-direction: column; justify-content: center; gap: 0.45rem;
+    /* Power rows own their own breaker restore. A healthy system shows its pips
+       and −/+ buttons; when its breaker TRIPS, the restore controls (arm slider +
+       3-tap) replace that row's controls in place, so the fix lives right on the
+       system it fixes. Two-step restore: slide fully right to ARM, then tap the
+       button three times to re-power. A tripped system runs at half power until
+       restored. */
+    .pwr-row { margin-bottom: 0.6rem; min-height: 3.2rem; display: flex; align-items: center; }
+    .pwr-controls { display: flex; align-items: center; gap: 0.5rem; width: 100%; }
+    .pwr-controls .pwr-mid { flex: 1.2; }
+    .pwr-controls .pwr-btn { flex: 0.5; }
+    .pwr-row.tripped .pwr-controls { display: none; }
+    .brk-restore { display: none; }
+    .pwr-row.tripped .brk-restore {
+      display: flex; flex-direction: column; gap: 0.4rem; width: 100%;
+      border: 1px solid #ff6f6f66; border-radius: 8px; padding: 0.5rem 0.6rem;
     }
-    .breaker.tripped { justify-content: flex-start; border-color: #ff6f6f66; }
-    .brk-label { font-weight: 600; }
-    .breaker.tripped .brk-label { color: #ff6f6f; }
-    .brk-restore { display: flex; flex-direction: column; gap: 0.4rem; }
-    .brk-restore.idle { display: none; }
+    .brk-label { font-weight: 600; color: #ff6f6f; }
     .brk-slider { width: 100%; accent-color: var(--accent); }
     .brk-tap { width: 100%; }
     .brk-tap:disabled { opacity: 0.5; }
@@ -37,7 +38,8 @@
   <div id="toasts"></div>
 
   <main>
-    <!-- Power budget: 7 units across four systems, max 4 each -->
+    <!-- Power budget: 7 units across four systems, max 4 each. Each row also
+         holds its breaker restore, shown in place when that system trips. -->
     <div class="panel">
       <h2>Power Distribution <span id="power-free" style="color:var(--accent)"></span></h2>
       <div id="power-systems"></div>
@@ -57,13 +59,8 @@
       <button id="pulse-btn" style="width:100%">Sensor Pulse</button>
     </div>
 
-    <!-- Breakers: trip (on hull impacts, occasionally at random) and halve a
-         system's power until restored -->
-    <div class="panel">
-      <h2>Breakers</h2>
-      <div id="breakers"></div>
-    </div>
-    <!-- (Hull/shield vitals live on the main screen now — no duplicate here.) -->
+    <!-- (Breakers now live inline on each power row above; hull/shield vitals
+         live on the main screen — no duplicates here.) -->
   </main>
 
   <!-- Phase overlays (shared shell fills these in) -->
@@ -104,33 +101,28 @@
     const POWER_MAX = 4;
     const POWER_TOTAL = 7; // keep in sync with POWER_TOTAL in src/engine/game.ts
 
-    // Build the power rows and breaker widgets once; render() updates state.
+    // Build each power row once; render() updates state. The row holds BOTH the
+    // pip controls (− on the LEFT, then label+pips, then +) and its breaker
+    // restore (hidden until this system trips, then shown in place).
     const systemsEl = document.getElementById('power-systems');
-    const breakersEl = document.getElementById('breakers');
     for (const sys of SYSTEMS) {
       const row = document.createElement('div');
-      row.className = 'row';
-      row.style.marginBottom = '0.6rem';
+      row.className = 'pwr-row';
+      row.id = `row-${sys}`;
       row.innerHTML = `
-        <div style="flex:1.2"><div class="label">${sys}</div><div class="pips" id="pips-${sys}">
-          ${Array.from({ length: POWER_MAX }, () => '<div class="pip"></div>').join('')}
-        </div></div>
-        <button data-sys="${sys}" data-delta="-1" style="flex:0.5">&minus;</button>
-        <button data-sys="${sys}" data-delta="1" style="flex:0.5">+</button>`;
-      systemsEl.appendChild(row);
-
-      // Breaker widget: an OK label that, when tripped, reveals a slider (arm)
-      // and a 3-tap restore button.
-      const brk = document.createElement('div');
-      brk.className = 'breaker';
-      brk.id = `brk-${sys}`;
-      brk.innerHTML = `
-        <div class="brk-label">${sys}: OK</div>
-        <div class="brk-restore idle">
+        <div class="pwr-controls">
+          <button class="pwr-btn" data-sys="${sys}" data-delta="-1">&minus;</button>
+          <div class="pwr-mid"><div class="label">${sys}</div><div class="pips" id="pips-${sys}">
+            ${Array.from({ length: POWER_MAX }, () => '<div class="pip"></div>').join('')}
+          </div></div>
+          <button class="pwr-btn" data-sys="${sys}" data-delta="1">+</button>
+        </div>
+        <div class="brk-restore" id="brk-${sys}">
+          <div class="brk-label">${sys}: TRIPPED — HALF POWER</div>
           <input type="range" class="brk-slider" min="0" max="100" value="0" aria-label="Slide to arm ${sys} breaker">
           <button class="brk-tap" disabled>Slide to arm</button>
         </div>`;
-      breakersEl.appendChild(brk);
+      systemsEl.appendChild(row);
     }
 
     // Reset a breaker's restore gesture back to the start (slider left, no taps).
@@ -181,17 +173,13 @@
           // optimistic breaker-restore intent paints it healthy immediately.
           paintPips(sys);
           const tripped = intents.has(`brk-${sys}`) ? false : !!state.breakers[sys];
-          const brk = document.getElementById(`brk-${sys}`);
-          const label = brk.querySelector('.brk-label');
-          const restoreEl = brk.querySelector('.brk-restore');
           // Sound the transition (trip vs re-power) once, off the state edge, and
           // reset the restore gesture when a breaker newly trips or finally clears.
           if (tripped && !prevBreakers[sys]) { audio.breakerTrip(); resetGesture(sys); }
           else if (!tripped && prevBreakers[sys]) { audio.breakerReset(); resetGesture(sys); }
           prevBreakers[sys] = tripped;
-          brk.classList.toggle('tripped', tripped);
-          label.textContent = tripped ? `${sys}: TRIPPED — HALF POWER` : `${sys}: OK`;
-          restoreEl.classList.toggle('idle', !tripped); // reserve space either way (no reflow)
+          // The row shows its breaker restore (in place of the pip controls) while tripped.
+          document.getElementById(`row-${sys}`).classList.toggle('tripped', tripped);
         }
         // Sensors: current detection range + pulse cooldown. An ion storm
         // halves the range — flag it loudly, this console owns the response.
@@ -222,12 +210,12 @@
       diagram: `
         <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="8.5">
           <!-- power pips: four systems, moveable points -->
-          ${['ENGINES', 'SHIELDS', 'WEAPONS', 'SENSORS', 'TRACTOR'].map((n, row) => `
+          ${['ENGINES', 'SHIELDS', 'WEAPONS', 'SENSORS'].map((n, row) => `
             <text x="14" y="${18 + row * 20}" fill="#7d8db3">${n}</text>
             ${[0, 1, 2, 3].map((i) => `<rect x="${70 + i * 18}" y="${9 + row * 20}" width="13" height="13" rx="3"
-                fill="${i < [3, 1, 2, 1, 1][row] ? 'currentColor' : 'none'}" stroke="${i < [3, 1, 2, 1, 1][row] ? 'currentColor' : '#39456b'}"/>`).join('')}
+                fill="${i < [2, 1, 2, 2][row] ? 'currentColor' : 'none'}" stroke="${i < [2, 1, 2, 2][row] ? 'currentColor' : '#39456b'}"/>`).join('')}
             <text x="150" y="${19 + row * 20}" fill="#7d8db3">−  +</text>`).join('')}
-          <text x="96" y="126" fill="#7d8db3" text-anchor="middle">8 POINTS — MOVE THEM WHERE NEEDED</text>
+          <text x="96" y="120" fill="#7d8db3" text-anchor="middle">7 POINTS — MOVE THEM WHERE NEEDED</text>
           <!-- breaker restore: slide then tap -->
           <rect x="200" y="12" width="128" height="80" rx="8" fill="none" stroke="#39456b"/>
           <text x="264" y="28" fill="#ff6f6f" text-anchor="middle">BREAKER TRIPPED</text>
@@ -238,8 +226,8 @@
         </svg>`,
       lines: [
         'You have <b>7 power points</b> across four systems (max 4 each). Moving them is your main job.',
-        '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate. <b>Sensors</b> = how early contacts are detected AND identified. <b>Shields</b> = shield recharge (only while lowered). <b>Tractor</b> = the Crew Chief\'s beam — feed it when they\'re towing.',
-        '<b>Breakers</b> trip when rocks hit the hull. A tripped system runs at half power until you slide to arm and tap 3 times.',
+        '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate (and it feeds the tractor beam). <b>Sensors</b> = how early contacts are detected AND identified. <b>Shields</b> = shield recharge (only while lowered).',
+        '<b>Breakers</b> trip when rocks hit the hull. When a system trips, its power row turns into the restore control — slide to arm, then tap 3 times. A tripped system runs at half power until restored.',
         'The <b>Sensor Pulse</b> reveals AND identifies every contact at once and cuts through ion storms (long cooldown).',
         '<b>Save/Load Preset</b> stashes a power split (e.g. a combat setup) so you can snap back to it in one tap.',
         'Give power to whoever needs it right now — listen to helm, weapons, and the chief.',
@@ -254,6 +242,12 @@
       if (!btn) return;
       const sys = btn.dataset.sys;
       const delta = Number(btn.dataset.delta);
+      // Client-side pool guard: adding power when the pool is already fully
+      // spent must not light a pip or flash "-1 spare" before the server rejects
+      // it. Block the +tap entirely when there's no spare (per-system cap is
+      // checked below). The server stays authoritative; this is purely UI.
+      const used = SYSTEMS.reduce((sum, s) => sum + shownPower(s), 0);
+      if (delta > 0 && used >= POWER_TOTAL) return;
       net.action({ kind: 'power', system: sys, delta });
       audio.powerClick();
       const next = shownPower(sys) + delta;
@@ -264,10 +258,10 @@
     });
 
     // Two-step breaker restore. Step 1: drag the slider fully right to ARM.
-    breakersEl.addEventListener('input', (ev) => {
+    systemsEl.addEventListener('input', (ev) => {
       const slider = ev.target.closest('.brk-slider');
       if (!slider) return;
-      const brk = slider.closest('.breaker');
+      const brk = slider.closest('.brk-restore');
       const sys = brk.id.slice(4);
       const g = restore[sys];
       if (!g || g.armed) return;
@@ -281,10 +275,10 @@
     });
     // Step 2: tap three times to re-power. The final tap sends resetBreaker; the
     // widget waits on the server to actually clear the breaker (render resets it).
-    breakersEl.addEventListener('click', (ev) => {
+    systemsEl.addEventListener('click', (ev) => {
       const tap = ev.target.closest('.brk-tap');
       if (!tap || tap.disabled) return;
-      const brk = tap.closest('.breaker');
+      const brk = tap.closest('.brk-restore');
       const sys = brk.id.slice(4);
       const g = restore[sys];
       if (!g || !g.armed) return;

@@ -187,11 +187,11 @@
         // a NO-POWER call — no separate power panel needed on this console.
         const wp = state.power.weapons, wTrip = state.breakers.weapons;
         document.getElementById('wpn-power').innerHTML = wp > 0
-          ? `⚡ Weapon power <b style="color:var(--accent)">${wp}</b>${wTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — drives recharge + tractor`
+          ? `Weapon power <b style="color:var(--accent)">${wp}</b>${wTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — drives recharge + tractor`
           : '<b style="color:var(--bad)">NO WEAPON POWER</b> — ask Engineering';
         const sp = state.power.shields, sTrip = state.breakers.shields;
         document.getElementById('shd-power').innerHTML = sp > 0
-          ? `🛡️ Shield power <b style="color:var(--accent)">${sp}</b>${sTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — regen rate`
+          ? `Shield power <b style="color:var(--accent)">${sp}</b>${sTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — regen rate`
           : '<b style="color:var(--bad)">NO SHIELD POWER</b> — regen stalled';
       },
     });

@@ -158,12 +158,120 @@ export function generateMission(params: GenParams): MissionDef {
     targetSeconds: pacing.targetSeconds,
     parTime: pacing.parTime,
     spawnEvery: { min: spawnMid * 0.75, max: spawnMid * 1.35 },
-    impactIn: { min: lerp(20, 18, t), max: lerp(28, 24, t) }, // ambient spawns stay beyond max sensor range (16s)
+    impactIn: { min: lerp(20, 18, t), max: lerp(28, 24, t) }, // ambient spawns near the detection edge (~21s at default sensor power)
     asteroidDmg: { min: dmgLo, max: dmgHi },
     maxAsteroids: 4 + Math.round(t * 2),
     breakerEvery: { min: breakerMid * 0.75, max: breakerMid * 1.35 },
     driftScale: lerp(0.8, 1.35, t),
     speedScale: pacing.speedScale,
+    events,
+  };
+}
+
+// Europa Salvage Loop (gen:europa): a distinct procedural TYPE that mixes the
+// branch's new content into one 5-minute standard-difficulty run. Every seed
+// re-jitters the timing, but the SHAPE is fixed by design:
+//   - slipstreams roll in ~every 45s (gateEvery);
+//   - NO large steer-around obstacles and NO Crew-Chief emergencies;
+//   - the field is single rocks + the odd double-tap, punctuated by 1-2 HEAVY
+//     batches of 4-5 rocks fed in ~1.5s apart;
+//   - salvage (minerals) drifts by in the quiet stretches, never during a batch;
+//   - one slow lifeboat (pod) appears in the thick of a heavy batch;
+//   - ghosts sprinkle in at ~1 per 8 rock spawns;
+//   - exactly one ion storm, one debris field, and one forward-view blackout;
+//   - scoring reports time-to-complete, salvage banked, and remaining hull.
+export function generateEuropaSalvageLoop(seed: number): MissionDef {
+  const rng = mulberry32(seed);
+  const pacing = pacingFor(300); // 5 minutes, well-executed
+  const jit = (base: number, j = 4) => Math.max(4, base + int(rng, -j, j));
+  const events: ScriptedEvent[] = [];
+
+  // A heavy batch: 4-5 rocks fed in one at a time, ~1.5s apart, arriving as a
+  // tight cluster the gunner has to work through.
+  const heavyBatch = (id: string, startAt: number) => {
+    const n = int(rng, 4, 5);
+    for (let k = 0; k < n; k++) {
+      events.push({
+        id: `${id}-${k}`,
+        at: { time: startAt + k * 1.5 },
+        actions: [{ type: 'spawnAsteroids', count: 1, impactIn: { min: 14, max: 20 }, dmg: { min: 10, max: 16 } }],
+      });
+    }
+  };
+  const doubleTap = (id: string, at: number) => events.push({
+    id, at: { time: jit(at) },
+    actions: [{ type: 'spawnAsteroids', count: 2, impactIn: { min: 16, max: 24 }, dmg: { min: 9, max: 15 } }],
+  });
+  const salvage = (id: string, at: number) => events.push({
+    id, at: { time: jit(at) },
+    actions: [
+      { type: 'log', text: 'Salvage drifting in the lane — Weapons, tractor it in when the sky is clear.' },
+      { type: 'spawnContact', kind: 'mineral', count: int(rng, 1, 2) },
+    ],
+  });
+  const ghost = (id: string, at: number) => events.push({
+    id, at: { time: jit(at) }, actions: [{ type: 'spawnContact', kind: 'ghost' }],
+  });
+
+  // --- The scripted timeline (base times; jit() spreads them per seed). ---
+  events.push({ id: 'europa-start', at: { time: 1 }, actions: [{ type: 'log', text: 'On the Europa salvage loop. Clear the lane, grab what drifts by, bring it home in one piece.' }] });
+  doubleTap('europa-dt-1', 25);
+  salvage('europa-salv-1', 45);
+  ghost('europa-ghost-1', 66);
+
+  // Heavy batch #1 with the slow lifeboat in the middle of it.
+  const batch1 = jit(90, 6);
+  events.push({ id: 'europa-batch1-call', at: { time: batch1 - 2 }, actions: [{ type: 'log', text: 'Cluster inbound — multiple contacts, stand by to work the field!' }] });
+  heavyBatch('europa-batch1', batch1);
+  events.push({
+    id: 'europa-lifeboat', at: { time: batch1 + 3 },
+    actions: [
+      { type: 'log', text: 'A lifeboat is adrift in that mess — survivors aboard. Confirm it and tow it out, do NOT fire on it.' },
+      { type: 'spawnContact', kind: 'pod', impactIn: { min: 30, max: 38 } }, // slow drift: plenty of time to tow
+    ],
+  });
+
+  events.push({ id: 'europa-ion', at: { time: jit(122, 5) }, actions: [{ type: 'log', text: 'Charged particle front across the lane — sensors hazing. More sensor power or a pulse cuts through.' }, { type: 'ionStorm', seconds: int(rng, 18, 24) }] });
+  doubleTap('europa-dt-2', 145);
+  salvage('europa-salv-2', 158);
+  ghost('europa-ghost-2', 172);
+  events.push({ id: 'europa-debris', at: { time: jit(186, 5) }, actions: [{ type: 'log', text: 'Pulverized rock haze ahead — ease the throttle through it or it scours the hull.' }, { type: 'debrisField', seconds: int(rng, 16, 22) }] });
+
+  // Heavy batch #2.
+  const batch2 = jit(214, 6);
+  events.push({ id: 'europa-batch2-call', at: { time: batch2 - 2 }, actions: [{ type: 'log', text: 'Second cluster inbound — here we go again!' }] });
+  heavyBatch('europa-batch2', batch2);
+  ghost('europa-ghost-3', 232);
+
+  // A blackout: fly on sensors for a stretch, then the view returns.
+  const blackoutAt = jit(240, 5);
+  events.push({ id: 'europa-blackout-on', at: { time: blackoutAt }, actions: [{ type: 'log', text: 'Forward view lost — fly on the scope until it clears.' }, { type: 'setViewImpaired', on: true }] });
+  events.push({ id: 'europa-blackout-off', at: { time: blackoutAt + int(rng, 14, 18) }, actions: [{ type: 'setViewImpaired', on: false }] });
+  salvage('europa-salv-3', 262);
+  ghost('europa-ghost-4', 275);
+
+  return {
+    id: `gen:europa:${seed}`,
+    name: 'Europa Salvage Loop',
+    briefing: 'A standing salvage run along the Europa lane: clear the rocks, tractor in what drifts by, and answer the odd distress beacon. Five minutes, no heroics — just bring the haul home intact.',
+    arrivalName: 'Europa Relay',
+    rating: 'standard',
+    destination: { kind: 'station', color: '#7fd4ff' },
+    kind: 'generated',
+    targetSeconds: pacing.targetSeconds,
+    parTime: pacing.parTime,
+    // Steady single-rock cadence; heavy batches come from the scripted beats.
+    spawnEvery: { min: 9, max: 15 },
+    impactIn: { min: 18, max: 26 }, // near the detection edge at default sensor power
+    asteroidDmg: { min: 9, max: 15 },
+    maxAsteroids: 4,
+    breakerEvery: { min: 30, max: 45 },
+    gateEvery: { min: 40, max: 50 }, // ~1 slipstream / 45s
+    driftScale: 1.0,
+    speedScale: pacing.speedScale,
+    holdCapacity: 6,
+    salvageGoal: 8,
+    scoreModel: 'salvage', // debrief reports time / salvage / hull
     events,
   };
 }

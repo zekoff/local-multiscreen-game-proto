@@ -55,8 +55,9 @@ function createRoom(): Room {
   const code = makeCode();
   const game = new Game();
   const room: Room = { code, game, clients: new Set(), emptySince: Date.now(), interval: null };
-  // Events are broadcast immediately so clients can toast/log them.
-  game.onEvent = (text) => broadcast(room, { type: 'event', text });
+  // Events are broadcast immediately so clients can toast/log them. `to` carries
+  // the audience ('crew' = main screen only; a crew seat = that console only).
+  game.onEvent = (text, to) => broadcast(room, { type: 'event', text, to });
   rooms.set(code, room);
   return room;
 }
@@ -331,7 +332,7 @@ wss.on('close', () => clearInterval(heartbeat));
 // a deploy/restart reads as "reconnecting..." rather than a silent hang.
 process.on('SIGTERM', () => {
   for (const room of rooms.values()) {
-    broadcast(room, { type: 'event', text: 'Server restarting — reconnecting shortly...' });
+    broadcast(room, { type: 'event', text: 'Server restarting — reconnecting shortly...', to: 'crew' });
     stopTicking(room);
     for (const ws of room.clients) ws.close(1012, 'server restarting');
   }

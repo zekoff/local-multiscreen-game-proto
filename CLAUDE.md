@@ -40,7 +40,8 @@ Env knobs: `PORT`, `TICK_MS` (tick, default 250ms), `GAME_SPEED`
 ## Architecture (the short version)
 
 Authoritative-server, thin-client, **two interchangeable transports over one
-engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
+engine**. Full detail in `docs/architecture.md` (which folds in the dual-transport
+cloud-migration design; the standalone migration doc was pruned).
 
 - **All game state lives in a `Game` instance** (`src/engine/game.ts`);
   browser clients are stateless renderers. Clients send small `action`
@@ -79,11 +80,18 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   `js/weapons-scope.js` is the Phaser radar scope mounted via
   `js/phaser-station.js`. `supervisor.html` is the optional "Sim Supervisor"
   debug role and `js/debug-panel.js` its shared controls.
-- Seats: crew (`helm`/`engineering`/`weapons`) are exclusive; `main` and
-  `supervisor` are view-only, non-exclusive (multiple allowed, no game seat
-  reserved). Debug actions (pause/speed/spawn) come only from `main`/
-  `supervisor` and only when the run was launched with `debug` enabled — see
-  `debugAction()` in `game.ts` and the `VIEW_SEATS` list in both transports.
+- Seats: crew (`helm`/`engineering`/`weapons`/`crewchief`) are exclusive; `main`
+  and `supervisor` are view-only, non-exclusive (multiple allowed, no game seat
+  reserved). **Crew Chief is currently frozen (WIP)** — disabled in the lobby
+  (`public/index.html`), re-enabled with a `?debug` landing-page param; its page
+  and engine paths stay intact. Debug actions (pause/speed/spawn/crew-skill) come
+  only from `main`/`supervisor` and only when the run was launched with `debug`
+  enabled — see `debugAction()` in `game.ts` and the `VIEW_SEATS` list in both
+  transports.
+- Log events carry an **audience** (`onEvent(text, to)` where `to` is `'crew'` or
+  a crew seat): crew-wide notices show on the **main screen only**, console-scoped
+  chatter shows on **that console only**. The `to` field is part of the wire
+  protocol — keep both transports and `js/net.js`/`js/station.js` in sync.
 - Rooms are fully independent by design — no cross-room state, ever. That
   invariant is what lets Durable Objects scale rooms horizontally.
 
@@ -109,7 +117,8 @@ engine**. Full detail in `docs/architecture.md` and `docs/cloud-migration.md`.
   composition, stats, telemetry) — it is the future persistent career-history
   row (`docs/design/07-persistence.md`).
 - Balance changes should be justified with `npm run lab` output; the current
-  baseline and known issues live in `docs/design/08-mission-balance-baseline.md`.
+  per-console load, interplay map, and known balance issues live in
+  `docs/console-complexity-analysis.md`.
 - Keep gameplay randomness on the seeded per-run RNG (`this.rng` in game.ts),
   never `Math.random` — reproducibility from (missionId, seed) is a feature.
 - Reconnection is a first-class requirement: any new client page must go

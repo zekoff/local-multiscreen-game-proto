@@ -103,9 +103,12 @@ const net = initStation({
         if (nowIds.has(a.id) || exploded.has(a.id)) continue; // still here, or blew up (own fx)
         const p = astPos.get(a.id);
         if (!p) continue;
-        const salvage = a.kind === 'pod' || a.kind === 'mineral' || a.visualKind === 'pod' || a.visualKind === 'mineral';
-        if (stowed && salvage) fadeCargo.push({ x: p.x, y: p.y, t: 0, kind: a.visualKind === 'pod' || a.kind === 'pod' ? 'pod' : 'mineral' });
-        else fadeAway.push({ x: p.x, y: p.y, t: 0 });
+        const isPod = a.kind === 'pod' || a.visualKind === 'pod';
+        const isMineral = a.kind === 'mineral' || a.visualKind === 'mineral';
+        if (stowed && (isPod || isMineral)) fadeCargo.push({ x: p.x, y: p.y, t: 0, kind: isPod ? 'pod' : 'mineral' });
+        // Drifted past: fade its real silhouette in place (see drawFades) — a rock
+        // polygon, or the pod/mineral body — instead of an expanding puff.
+        else fadeAway.push({ x: p.x, y: p.y, r: p.r, id: a.id, kind: isPod ? 'pod' : isMineral ? 'mineral' : 'rock', t: 0 });
       }
     }
     latest = state;
@@ -700,13 +703,13 @@ function triggerEndFade(debrief) {
 // in Ns), and a pulsing RED ALERT. One place feeds off the serialized flags. ---
 function activeNotices(s) {
   const n = [];
-  if (s.hull !== undefined && s.hull < 25) n.push({ text: '⚠ RED ALERT', tone: 'alert', big: true });
-  if (s.flareIn > 0) n.push({ text: `☀ SOLAR FLARE IN ${Math.ceil(s.flareIn)}s — SAFE POSTURE`, tone: 'warn' });
-  if (s.viewImpaired) n.push({ text: '◇ FORWARD VIEW LOST — FLY ON SENSORS', tone: 'warn' });
-  if (s.ionStormIn > 0) n.push({ text: '≈ ION STORM — SENSORS DEGRADED', tone: 'warn' });
-  if (s.debrisIn > 0) n.push({ text: '⋯ DEBRIS FIELD — EASE THROTTLE', tone: 'warn' });
+  if (s.hull !== undefined && s.hull < 25) n.push({ text: 'RED ALERT', tone: 'alert', big: true });
+  if (s.flareIn > 0) n.push({ text: `SOLAR FLARE IN ${Math.ceil(s.flareIn)}s — SAFE POSTURE`, tone: 'warn' });
+  if (s.viewImpaired) n.push({ text: 'FORWARD VIEW LOST — FLY ON SENSORS', tone: 'warn' });
+  if (s.ionStormIn > 0) n.push({ text: 'ION STORM — SENSORS DEGRADED', tone: 'warn' });
+  if (s.debrisIn > 0) n.push({ text: 'DEBRIS FIELD — EASE THROTTLE', tone: 'warn' });
   const inbound = (s.asteroids || []).filter((a) => a.targetable && (a.kind === 'rock' || a.kind === 'unknown')).length;
-  if (inbound >= 3) n.push({ text: '☄ ASTEROID FIELD', tone: 'warn' });
+  if (inbound >= 3) n.push({ text: 'ASTEROID FIELD', tone: 'warn' });
   return n;
 }
 function drawNotifications(w, h, dpr) {
@@ -756,9 +759,26 @@ function drawFades(w, h, dt, dpr) {
     const f = fadeAway[i];
     f.t += dt / 0.6;
     if (f.t >= 1) { fadeAway.splice(i, 1); continue; }
-    ctx.globalAlpha = (1 - f.t) * 0.5;
-    ctx.fillStyle = 'rgba(150,140,122,1)';
-    ctx.beginPath(); ctx.arc(f.x, f.y, (6 + f.t * 10) * dpr, 0, Math.PI * 2); ctx.fill();
+    // Fade the contact's actual silhouette out IN PLACE (no expanding puff):
+    // alpha eases 1 -> 0 at its last size, then it's quietly gone.
+    ctx.globalAlpha = 1 - f.t;
+    const r = f.r || 8 * dpr;
+    if (f.kind === 'rock') {
+      const shape = astShapeFor(f.id);
+      const rot = (performance.now() / 1000) * shape.spin;
+      ctx.beginPath();
+      shape.pts.forEach((p, k) => {
+        const vx = f.x + Math.cos(p.a + rot) * r * p.m;
+        const vy = f.y + Math.sin(p.a + rot) * r * p.m;
+        k === 0 ? ctx.moveTo(vx, vy) : ctx.lineTo(vx, vy);
+      });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(150, 140, 122, 0.92)';
+      ctx.fill();
+    } else {
+      ctx.fillStyle = f.kind === 'pod' ? '#4cd97b' : '#ffb347';
+      ctx.beginPath(); ctx.arc(f.x, f.y, r, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.globalAlpha = 1;
   }
   const bayX = w / 2, bayY = h * 0.985;
@@ -1074,7 +1094,6 @@ function drawAsteroids(w, h, yawPx, dpr) {
     // the window, so the main screen never draws it. The weapons scope still does.
     if (a.phantom) continue;
     const { x: px, y: py, closeness } = asteroidScreenPos(a, w, h, yawPx);
-    astPos.set(a.id, { x: px, y: py });
     const size = a.size ?? 1;
     // Two classes: LARGE rocks (snapshot-proof) resolve MUCH bigger and a deeper
     // brown; SMALL rocks stay modest. Both start dot-sized while far (the growth
@@ -1087,6 +1106,9 @@ function drawAsteroids(w, h, yawPx, dpr) {
     const nearBoost = 1 + Math.max(0, 5 - a.impactIn) * 0.14;
     const bloom = 26 * (big ? 2.0 : 1.0); // large hazards bloom ~2x on approach
     const r = (0.7 + Math.pow(growth, 1.25) * bloom) * (0.82 + 0.18 * size) * nearBoost * dpr;
+    // Remember where/how big this contact drew, so a laser/explosion can point at
+    // it and — if it drifts past — drawFades can fade its actual silhouette out.
+    astPos.set(a.id, { x: px, y: py, r });
     // Range ring: a faint distance cue that closes onto the body at contact.
     // Only drawn once the contact is ACQUIRED (targetable) — before that it's an
     // unresolved dot the captain must spot with the naked eye, no HUD.
@@ -1249,7 +1271,7 @@ function drawObstacles(w, h, cy, dpr) {
     // only legible on the helm console) — call the collision AND which way to
     // steer to clear it, or confirm CLEAR when the bow is off it.
     const steer = ob.bearing > align ? 'STEER PORT ◀' : '▶ STEER STARBOARD';
-    ctx.fillText(onCourseInto ? `⚠ ${ob.label} — COLLISION · ${steer}` : `${ob.label} — CLEAR`, cx, cy - r - 8 * dpr);
+    ctx.fillText(onCourseInto ? `${ob.label} — COLLISION · ${steer}` : `${ob.label} — CLEAR`, cx, cy - r - 8 * dpr);
   }
 }
 

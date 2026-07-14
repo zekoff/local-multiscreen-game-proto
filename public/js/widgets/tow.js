@@ -7,11 +7,11 @@
 
 import { defineWidget, el } from '../widget.js';
 
-const KIND_ICON = { pod: '🛟', mineral: '⛏', rock: '☄', ghost: '❓', unknown: '·' };
+const KIND_ICON = { pod: 'POD', mineral: 'ORE', rock: 'ROCK', ghost: '?', unknown: '·' };
 
 export const towBeam = defineWidget({
   id: 'tow-beam',
-  label: '🧲 Tractor Beam',
+  label: 'Tractor Beam',
   hint: 'Latch a pod/salvage and hold it in the arc — your laser is offline while latched.',
   mount({ root, net, intents, audio }) {
     const status = el('div', 'tractor-status');
