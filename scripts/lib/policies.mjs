@@ -46,6 +46,7 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
 
     engineering(state) {
       if (state.phase !== 'active' || rng() > knobs.react) return [];
+      // Four systems now — tractor folded back into WEAPONS power (shared emitter).
       const sys = ['engines', 'shields', 'weapons', 'sensors'];
       const actions = [];
       // Clear tripped breakers first — a tripped system runs at half power.
@@ -57,18 +58,17 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
       if ((state.ionStormIn || 0) > 0 && state.sensorPulseReadyIn <= 0) {
         actions.push({ kind: 'sensorPulse' });
       }
-      // Threat-aware power triage over the 7-point pool: shift weight toward
-      // weapons when a rock is genuinely close, keep the engines fed the rest
-      // of the time (starving engines stretches the mission and multiplies
-      // total spawns — the old always-in-combat split lost to the bot crew).
-      // Novice barely re-triages (sticks near the default split).
+      // Threat-aware power triage over the 7-point pool: shift toward weapons in
+      // combat OR while towing (the tractor draws weapons power now), else keep
+      // engines fed. Novice barely re-triages (sticks near the default split).
       const nearest = state.asteroids.length
         ? Math.min(...state.asteroids.map((a) => a.impactIn))
         : Infinity;
       const combat = nearest <= 14;
+      const towing = !!(state.tractor && state.tractor.latched);
       const target = profile === 'novice'
         ? { engines: 3, weapons: 2, shields: 1, sensors: 1 }
-        : combat
+        : (combat || towing)
           ? { engines: 2, weapons: 3, shields: 1, sensors: 1 }
           : { engines: 3, weapons: 2, shields: 1, sensors: 1 };
       // Nudge one point toward the target split: free an over-allocated system,
@@ -84,24 +84,78 @@ export function makeCrew(profile = 'skilled', rng = Math.random) {
     weapons(state) {
       if (state.phase !== 'active') return [];
       const actions = [];
-      // Shields react to ANY inbound rock (even one sensors haven't resolved);
-      // hysteresis avoids flip-flopping, act only on a change of intent.
-      const nearest = state.asteroids.length > 0
-        ? Math.min(...state.asteroids.map((a) => a.impactIn))
-        : Infinity;
+      // Shields react only to inbound ROCKS (pods/minerals aren't threats).
+      const rocks = state.asteroids.filter((a) => a.kind === 'rock' || a.kind === 'unknown');
+      const nearest = rocks.length > 0 ? Math.min(...rocks.map((a) => a.impactIn)) : Infinity;
       const wantShields = state.shields.raised ? nearest <= 14 : nearest <= 10;
       if (wantShields !== state.shields.raised && rng() <= knobs.react) {
         actions.push({ kind: 'shields', raised: wantShields });
       }
       if (rng() > knobs.react) return actions;
-      // Firing needs a sensor-resolved (targetable) contact and a full recharge.
-      const acquirable = state.asteroids.filter((a) => a.targetable);
-      if (acquirable.length > 0) {
-        const urgent = [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0];
-        if (state.targetId !== urgent.id) actions.push({ kind: 'target', id: urgent.id });
-        if (state.charge >= 100 && state.targetId !== null) actions.push({ kind: 'fire' });
+
+      const t = state.tractor || {};
+      // Don't-shoot discipline: NEVER target a pod/mineral/ghost. The urgent
+      // detected non-pod contact is the shoot candidate.
+      const acquirable = state.asteroids.filter((a) => a.targetable && a.kind !== 'pod' && a.kind !== 'mineral' && a.kind !== 'ghost');
+      const urgentRock = acquirable.length ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0] : null;
+      const rockThreat = !!urgentRock && urgentRock.impactIn <= 12;
+
+      // Tow: the tractor shares this emitter now. When nothing urgent needs the
+      // laser, latch an identified pod/mineral inside the arc; drop the latch the
+      // moment a rock closes (the emitter can't do both).
+      const holdFree = (state.cargo ? state.cargo.length : 0) < (state.holdCapacity || 4);
+      if (t.latched) {
+        if (rockThreat) actions.push({ kind: 'tractorLatch', on: false });
+      } else if (!rockThreat && holdFree && (t.power || 0) >= 1) {
+        const cand = (state.asteroids || []).find((a) => a.tractorable && Math.abs(state.alignment - a.bearing) <= 55);
+        if (cand) {
+          if (t.targetId !== cand.id) actions.push({ kind: 'tractorTarget', id: cand.id });
+          else actions.push({ kind: 'tractorLatch', on: true });
+        }
+      }
+
+      // Fire only when the emitter is free (not latched) and there's a CONFIRMED
+      // rock locked — holds fire on UNKNOWN blips (confirm before shooting).
+      if (!t.latched && urgentRock) {
+        if (state.targetId !== urgentRock.id) actions.push({ kind: 'target', id: urgentRock.id });
+        const tgt = state.asteroids.find((a) => a.id === state.targetId);
+        const confirmedRock = tgt && tgt.kind === 'rock';
+        // Governor (skilled only): snapshot a small, close rock to clear it fast.
+        if (profile !== 'novice' && tgt && confirmedRock && tgt.size <= 1.0 && tgt.impactIn < 7) {
+          if (state.governor !== 'snapshot') actions.push({ kind: 'governor', mode: 'snapshot' });
+        } else if (state.governor === 'snapshot') {
+          actions.push({ kind: 'governor', mode: 'standard' });
+        }
+        const needed = state.governor === 'snapshot' ? 40 : 100;
+        if (state.charge >= needed && confirmedRock) actions.push({ kind: 'fire' });
       }
       return actions;
+    },
+
+    // Crew Chief: deck operations — trim wear, patch hull, fight emergencies
+    // (tow moved to the weapons emitter). Commit is add-only; crew free
+    // themselves on completion. One post per tick, priority-ordered. Skilled
+    // works every tick (react 1.0); novice is slow (react 0.35).
+    crewchief(state) {
+      if (state.phase !== 'active' || rng() > knobs.react) return [];
+      const free = state.crew ? state.crew.free : 0;
+      if (free <= 0) return [];
+      const chief = state.chief || { maint: [], repair: { hull: 100, crew: 0 } };
+      const emg = state.emergencies || [];
+      // 1. Staff any unmanned emergency first.
+      const unmanned = emg.find((e) => e.assigned === 0);
+      if (unmanned) return [{ kind: 'assignCrew', post: String(unmanned.id) }];
+      // 2. Patch the hull when it's hurt and no detail is on it yet.
+      const rep = chief.repair || { hull: 100, crew: 0 };
+      if (rep.hull < 70 && rep.crew === 0) return [{ kind: 'assignCrew', post: 'repair' }];
+      // 3. Trim the most-worn system that has no hand on it.
+      const worst = (chief.maint || [])
+        .filter((p) => p.wear > 0.15 && p.crew === 0)
+        .sort((a, b) => b.wear - a.wear)[0];
+      if (worst) return [{ kind: 'assignCrew', post: 'maint:' + worst.system }];
+      // 4. Pile a spare hand onto an active emergency (diminishing returns).
+      if (emg.length) return [{ kind: 'assignCrew', post: String(emg[0].id) }];
+      return [];
     },
   };
 }

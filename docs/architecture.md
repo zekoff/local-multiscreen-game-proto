@@ -8,9 +8,8 @@ The codebase is **one runtime-agnostic engine behind two interchangeable
 transports**: a Node/Express/ws server for LAN mode, and a Cloudflare
 Workers transport (one Durable Object per room) for the cloud deployment.
 Both speak the identical wire protocol and share every line of game and
-mission logic; only the transport layer forks. See
-[`cloud-migration.md`](cloud-migration.md) for the full migration design and
-scaling rationale.
+mission logic; only the transport layer forks. (The standalone cloud-migration
+design doc has been pruned; the dual-transport rationale is folded in below.)
 
 ## Runtime topology
 
@@ -218,9 +217,8 @@ time or progress mark. The engine itself knows nothing about where a
   one occupant; `main` is view-only and unlimited (TV + a laptop both work).
 - **Heartbeat** — server pings every 30s and terminates unresponsive sockets
   so a dead phone's seat flips to auto-assist instead of hanging.
-- **Abuse guards** — room/client/message-rate caps (see
-  `cloud-migration.md` Phase 1); the per-IP room-creation limit is Node-only
-  since it needs shared in-process memory.
+- **Abuse guards** — room/client/message-rate caps; the per-IP room-creation
+  limit is Node-only since it needs shared in-process memory.
 - **Time scaling** — `GAME_SPEED` multiplies the per-tick `dt`; the smoke
   test uses this to play a full mission in seconds instead of minutes.
 - **`/healthz`** and graceful `SIGTERM` (broadcast a restart event, close
@@ -241,15 +239,15 @@ time or progress mark. The engine itself knows nothing about where a
   Owns one `Game` instance, its WebSockets, and its tick loop (`setInterval`
   equivalent via the DO alarm/timer); mirrors the Node transport's protocol
   and abuse caps exactly. The room *code* is persisted in DO storage (so it
-  survives eviction); mission *state* is not yet (Phase 3 in
-  `cloud-migration.md` — a deploy or eviction currently restarts a room to a
-  fresh lobby, a known and accepted prototype-stage gap).
+  survives eviction); mission *state* is not yet persisted — a deploy or
+  eviction currently restarts an in-progress room to a fresh lobby, a known and
+  accepted prototype-stage gap.
 - **Dev loop** — `wrangler dev` (script: `npm run dev:cf`), deploy via
   `npm run deploy` (needs `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`).
 - **Why this and not a multi-instance Node fleet** — a Durable Object *is*
   the room-affinity primitive Jackbox-style games need; Path B (Node +
   Redis room directory) was considered and rejected as plumbing the platform
-  already provides. Full tradeoff writeup in `cloud-migration.md`.
+  already provides.
 
 ## Clients (`public/`)
 
@@ -262,8 +260,10 @@ step.
   `playerId` in `sessionStorage` (per-tab, so one device can hold multiple
   seats in multiple tabs while a reload in a tab resumes its seat).
 - **`js/station.js`** — `initStation({seat, render})`: shared shell for the
-  three crew pages. Owns URL-param parsing, the connection dot, lobby and
-  debrief overlays (with score-colored grade), event toasts (corner-anchored,
+  crew consoles (`helm`/`engineering`/`weapons`/`crewchief`) and the view seats.
+  Owns URL-param parsing, the connection dot, lobby and debrief overlays (with
+  score-colored grade), **audience-filtered** event toasts (a crew console shows
+  only toasts addressed to its seat; view seats show crew-wide ones; corner-
   capped, suppressed under overlays), launch/return buttons, and shared
   meter-coloring helpers (`setHealthBar`/`setChargeBar`). Each station page
   supplies only its `render(state)` and its control wiring.
@@ -312,11 +312,11 @@ must pass before a change is considered done (plus `npm run typecheck`):
   `wrangler dev` (local workerd), verifying the Workers transport produces
   identical mission behavior over the identical wire protocol.
 - **`npm run lab`** (`scripts/mission-lab.ts`) — in-process balance harness:
-  sweeps every mission × three crew profiles (skilled/novice/auto bots) ×
-  seeded runs, no server or sockets involved, drives the engine directly.
-  Prints an aggregate table and writes raw per-run records (debrief +
-  telemetry) to `reports/` for balance analysis (see
-  `docs/design/08-mission-balance-baseline.md`).
+  sweeps every mission × several crew profiles (skilled/novice/auto plus single-
+  and two-human mixes) × seeded runs, no server or sockets involved, drives the
+  engine directly. Prints an aggregate table and writes raw per-run records
+  (debrief + telemetry) to `reports/` for balance analysis (current numbers +
+  known issues in `docs/console-complexity-analysis.md`).
 
 Because `runBotCrew()` (`scripts/lib/crew.mjs`) only needs a base URL, the
 same harness can also point at a live deployment for a one-off cloud
@@ -340,3 +340,62 @@ than only `wrangler dev`.
   and register it in `mission-registry.ts` (see `docs/missions.md`), or add a
   new generator preset. Re-run `npm run lab` and compare against the
   baseline before calling it tuned.
+
+## Portable widgets (Crew Chief expansion pass)
+
+A standing architecture principle established in the Crew Chief pass: **console
+functions are self-contained, portable widgets** so a station's controls can be
+re-arranged between consoles later without re-architecting.
+
+- A widget is defined with `defineWidget({ id, label?, hint?, mount(ctx) })`
+  (`public/js/widget.js`); `mount(ctx)` builds its own DOM into `ctx.root` and
+  returns `{ render(state), destroy?() }`. It owns its DOM (no shared element
+  ids), its render slice, its event wiring, its edge-state, and its own
+  travelling `label`. `mountWidgets(container, [...], ctx)` lays a list of
+  widgets into a page and returns a host with `render(state)`.
+- `ctx = { net, intents, audio, root, card, seat }`. A widget sends actions via
+  `net.action(...)` and opts into optimistic paint via the shared `intents`
+  store — exactly the same primitives the hand-written consoles use.
+- **Why this is portable:** the server broadcasts the *complete* serialized
+  state to every seat, so a display widget runs on any console with zero server
+  change. An *action* widget additionally needs its host seat authorized for
+  its action kind in `game.ts` `action()` — that server-side seat gate is the
+  one coupling a widget carries with it. Relax it (allow two seats to send the
+  same kind) for true free rearrangement of an action widget.
+- **Reference:** `public/crewchief.html` is built entirely as a layout list of
+  widgets (`public/js/widgets/crewchief.js` for tractor/cargo/damage-control,
+  `public/js/widgets/common.js` for the portable ship-vitals / power-grid
+  display widgets it shares). The existing helm/engineering/weapons pages were
+  intentionally left hand-wired this pass (migrate-lightly): the abstraction is
+  proven by the new console + the shared display widgets, and older widgets can
+  be ported incrementally.
+
+## Graphics approach (expanded for the Crew Chief pass)
+
+The viewscreen stays stylized and low-clutter (design pillar), rendered on one
+2D canvas from the interpolated `latest` snapshot (`public/js/mainscreen.js`).
+New complexity is layered onto the existing draw pipeline rather than replacing
+it:
+
+- **Typed contacts.** Contacts carry two visibility fields. `kind` is the
+  SENSOR-resolved classification (`UNKNOWN` until identified) — the weapons
+  scope uses it. `visualKind` reveals the true kind once a contact is within
+  `VISUAL_RANGE` seconds (proximity, not sensors) — the MAIN SCREEN uses it, so
+  the captain can spot a rescue pod's blinking beacon out the window before the
+  scope classifies it. That split is the visual half of the don't-shoot
+  cooperation. Rocks render as tumbling grey polygons (unchanged); pods as green
+  beacons with a DO-NOT-FIRE call; minerals as amber angular chunks.
+- **Tractor beam** draws a shimmering line from the ship's bow to the latched
+  contact with a reel-progress ring (`drawTractorBeam`).
+- **Topology.** Large obstacles (`drawObstacles`) loom at a bearing like an
+  inverted gate — red and pulsing while the ship is still aligned *into* one.
+  When the destination or an open divert slides off the edge (hard turn / warp),
+  an edge chevron points back to it (`drawOffscreenChevron`) — the crew's
+  fallback to get back on track.
+- **Blackout.** `viewImpaired` washes the world to near-black with faint static
+  ("fly on sensors"); the reticle + HUD stay legible on top.
+- **Cinematic.** A DOM overlay (`#cinematic-overlay`) composites dialogue over
+  the frozen scene while the sim is soft-paused server-side (`state.cinematic`).
+- **Colour discipline:** kinds have fixed semantic colours reused across the
+  scope and the viewscreen (pod green, mineral amber, ghost faint purple, rock
+  grey/threat-red). Threat is still communicated by rings, not body colour.

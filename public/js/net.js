@@ -7,7 +7,7 @@ export class Net {
     this.room = room;
     this.seat = seat;
     this.name = name || '';
-    this.difficulty = difficulty || 'normal';
+    this.difficulty = difficulty || 'officer';
     this.handlers = handlers; // { onState, onEvent, onJoined, onError, onStatus }
     this.retryMs = 1000;
     this.closedByUser = false;
@@ -52,7 +52,9 @@ export class Net {
       } else if (msg.type === 'state') {
         this.handlers.onState?.(msg.state);
       } else if (msg.type === 'event') {
-        this.handlers.onEvent?.(msg.text);
+        // `to` is the audience: 'crew' (main screen) or a crew seat (that console).
+        // Defaults to 'crew' for older servers that don't send it.
+        this.handlers.onEvent?.(msg.text, msg.to ?? 'crew');
       } else if (msg.type === 'error') {
         this.handlers.onError?.(msg.message);
       }

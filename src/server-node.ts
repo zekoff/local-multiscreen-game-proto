@@ -55,8 +55,9 @@ function createRoom(): Room {
   const code = makeCode();
   const game = new Game();
   const room: Room = { code, game, clients: new Set(), emptySince: Date.now(), interval: null };
-  // Events are broadcast immediately so clients can toast/log them.
-  game.onEvent = (text) => broadcast(room, { type: 'event', text });
+  // Events are broadcast immediately so clients can toast/log them. `to` carries
+  // the audience ('crew' = main screen only; a crew seat = that console only).
+  game.onEvent = (text, to) => broadcast(room, { type: 'event', text, to });
   rooms.set(code, room);
   return room;
 }
@@ -160,7 +161,16 @@ app.get('/api/room-info', (req, res) => {
     res.status(404).json({ error: 'no such room' });
     return;
   }
-  res.json({ code, joinUrl: `${requestOrigin(req)}/?room=${code}` });
+  // Include which crew seats are already claimed so the landing page can grey
+  // out taken consoles. phase lets it hint "mission in progress" too.
+  const state = rooms.get(code)!.game.serialize() as { phase: string; seats: Record<string, { claimed: boolean; name: string }> };
+  const claimed: Record<string, boolean> = {};
+  const names: Record<string, string> = {};
+  for (const s of ['helm', 'engineering', 'weapons', 'crewchief']) {
+    claimed[s] = !!state.seats[s]?.claimed;
+    names[s] = state.seats[s]?.name || '';
+  }
+  res.json({ code, joinUrl: `${requestOrigin(req)}/?room=${code}`, phase: state.phase, claimed, names });
 });
 
 // Liveness endpoint for hosting platforms' health checks.
@@ -180,7 +190,7 @@ interface ClientMeta {
 }
 const meta = new Map<WebSocket, ClientMeta>();
 
-const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'main', 'supervisor'];
+const VALID_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief', 'main', 'supervisor'];
 // View-only seats: not exclusive crew, don't reserve a game seat, multiple ok.
 const VIEW_SEATS: SeatId[] = ['main', 'supervisor'];
 
@@ -278,6 +288,12 @@ wss.on('connection', (ws) => {
       }
     } else if (msg.type === 'restart') {
       m.room.game.restartToLobby();
+    } else if (msg.type === 'setReady' && typeof msg.on === 'boolean') {
+      // GO-poll: a crew seat signals ready (lobby only; view seats have none).
+      if (!VIEW_SEATS.includes(m.seat)) m.room.game.setReady(m.seat, m.playerId, msg.on);
+    } else if (msg.type === 'leaveSeat') {
+      // Back out to role-select: release the seat lock (lobby only).
+      if (!VIEW_SEATS.includes(m.seat)) m.room.game.leaveSeat(m.seat, m.playerId);
     } else if (msg.type === 'action' && msg.action && typeof msg.action.kind === 'string') {
       m.room.game.action(m.seat, msg.action);
     }
@@ -316,7 +332,7 @@ wss.on('close', () => clearInterval(heartbeat));
 // a deploy/restart reads as "reconnecting..." rather than a silent hang.
 process.on('SIGTERM', () => {
   for (const room of rooms.values()) {
-    broadcast(room, { type: 'event', text: 'Server restarting — reconnecting shortly...' });
+    broadcast(room, { type: 'event', text: 'Server restarting — reconnecting shortly...', to: 'crew' });
     stopTicking(room);
     for (const ws of room.clients) ws.close(1012, 'server restarting');
   }

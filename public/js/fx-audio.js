@@ -4,6 +4,19 @@
 // is main-screen-only; the laser is heard at weapons; sensor pings at
 // engineering; gate chimes at helm; ship-wide booms at the main screen). Pass
 // the set of kinds this page owns — everything else is ignored here.
+// Ready-room ambient: start a soft lobby bed while phase === 'lobby', stop it
+// otherwise. Idempotent (safe to call every snapshot). Consoles call this in
+// their render so the bridge has atmosphere while the crew waits to launch.
+export function readyRoomAmbient(audio, phase) {
+  if (!audio) return;
+  if (phase === 'lobby') {
+    audio.startAmbient?.();
+    // Soft, occasional beeps/boops so the bridge feels alive while the crew
+    // stands by (called every ~250ms snapshot, so keep the chance low).
+    if (Math.random() < 0.02) audio.readyBeep?.();
+  } else audio.stopAmbient?.();
+}
+
 export function playFxAudio(fx, audio, kinds) {
   if (!fx) return;
   for (const e of fx) {
@@ -18,6 +31,12 @@ export function playFxAudio(fx, audio, kinds) {
       case 'sensorContact': audio.sensorContact(); break;
       case 'ionStorm': audio.ionStorm?.(); break; // static wash (engineering + main screen)
       case 'debris': audio.debris?.(); break;     // low gravel rumble (helm + main screen)
+      case 'tractorBeam': audio.tractorBeam?.(); break; // tractor latch hum (crew chief)
+      case 'stow': audio.stow?.(); break;         // cargo clunk into the hold (crew chief)
+      case 'jettison': audio.jettison?.(); break; // cargo whoosh out (crew chief)
+      case 'fire': audio.fireAlarm?.(); break;    // shipboard fire alarm (crew chief)
+      case 'boarders': audio.boardersAlarm?.(); break; // boarders alarm (crew chief)
+      case 'flare': audio.flare?.(); break;       // solar flare surge (ship-wide / main screen)
     }
   }
 }

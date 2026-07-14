@@ -8,6 +8,19 @@ import type { Range } from './rng.js';
 
 export type SystemId = 'engines' | 'shields' | 'weapons' | 'sensors';
 
+// Contact classification. Sensors resolve a contact's true kind only at
+// sufficient power/range (see identification split in game.ts); until then a
+// contact reads as UNKNOWN. Kinds are mission-scriptable via 'spawnContact'.
+//   rock    — the classic hazard: shoot it or eat the impact.
+//   pod     — a civilian/rescue contact: DO NOT FIRE (penalty). Tractorable.
+//   mineral — inert salvage: no threat, tractor it aboard for score.
+//   ghost   — a sensor false-positive: vanishes once correctly identified.
+export type ContactKind = 'rock' | 'pod' | 'mineral' | 'ghost';
+
+// A shipboard emergency the Crew Chief resolves by assigning crew (damage
+// control). Purely allocation under scarcity — see the crew-assignment board.
+export type EmergencyKind = 'fire' | 'boarders' | 'breach' | 'leak';
+
 // What the progress readout shows the crew: a decreasing physical distance
 // (docks at 0) or a countdown toward mission failure (an escape pod losing
 // power, a convoy window closing). Distance-in-parsecs is the default,
@@ -53,6 +66,22 @@ export interface MissionDef {
   // Global scales relative to the baseline mission (1 = baseline).
   driftScale: number;      // helm course-drift pressure
   speedScale: number;      // ship velocity (lower = effectively longer trip)
+
+  // --- Crew Chief / cargo / damage-control knobs (all optional; sensible
+  // defaults let existing missions ignore them entirely). ---
+  holdCapacity?: number;   // cargo hold slots (default 4); 0 disables the tractor console fiction
+  crewTokens?: number;     // damage-control crew available to assign (default 4)
+  // Salvage target for a 'salvaged'-outcome mission (P#23): banking this many
+  // cargo units by the deadline is a clean run. Presence flips scoring to the
+  // salvage model in finish().
+  salvageGoal?: number;
+  // Scoring emphasis for a distance-ARRIVAL run. Default weights hull + time +
+  // defensive shooting. 'salvage' (Europa Salvage Loop) instead scores hull +
+  // time + salvage banked, so the debrief reports time / salvage / hull.
+  scoreModel?: 'salvage';
+  // Mission fails (non-binary 'expired' outcome) if the countdown readout hits
+  // zero before arrival — pairs with readout.kind 'countdown' (P#21 clock).
+  failOnCountdown?: boolean;
 
   // Authored timeline: set pieces that fire once at a time or progress mark.
   events: ScriptedEvent[];
@@ -109,7 +138,32 @@ export type EventAction =
   | { type: 'ionStorm'; seconds: number }
   // Debris field: running hot scours the hull for the duration — helm
   // pressure (ease the throttle through it; a slow crawl is free).
-  | { type: 'debrisField'; seconds: number };
+  | { type: 'debrisField'; seconds: number }
+  // Spawn a typed contact (pod / mineral / ghost / rock). The workhorse for
+  // don't-shoot and salvage missions — kind is resolved on the scope only when
+  // sensors are strong/close enough (see identification split). `count` spawns
+  // a small cluster of that kind.
+  | { type: 'spawnContact'; kind: ContactKind; count?: number; impactIn?: Range }
+  // Spawn a large obstacle the helm must steer AROUND (not through): holding
+  // the ship on its bearing when it arrives means a heavy collision. The
+  // topology set piece (forward-biased model).
+  | { type: 'spawnObstacle'; label?: string; reachIn?: Range; dmg?: number }
+  // Competing-objective fork (P#4): open a secondary destination on a bearing
+  // the helm may choose to divert onto (holding its bearing as the clock runs
+  // banks the divert reward). Ignoring it costs nothing but the bonus.
+  | { type: 'spawnDivert'; name: string; seconds: number; reward?: number }
+  // Cinematic beat (P#4): freeze the sim and show dialogue on the main screen
+  // for `seconds` (crew reads it, captain narrates). Non-interactive; a paired
+  // spawnDivert/log usually follows so the crew acts once threats resume.
+  | { type: 'cinematic'; title: string; lines: string[]; seconds?: number }
+  // Solar flare / EMP front (P#5): announced now, strikes after `inSeconds`.
+  // On impact, RAISED systems take stress (shields-up trips the shield breaker;
+  // a charged laser dumps). Counter = safe posture (shields down, hold fire).
+  | { type: 'solarFlare'; inSeconds: number }
+  // Black out the forward view (P#5/P#18): the crew must fly on sensors alone.
+  | { type: 'setViewImpaired'; on: boolean }
+  // Start a shipboard emergency for the Crew Chief's damage-control board (P#6).
+  | { type: 'startEmergency'; kind: EmergencyKind; severity?: number };
 
 // Parameters for the procedural generator: small enough to expose in a UI,
 // expressive enough to change how a run feels.

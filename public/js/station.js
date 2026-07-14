@@ -21,7 +21,7 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   const name = params.get('name') || '';
-  const difficulty = params.get('d') || 'normal';
+  const difficulty = params.get('d') || 'officer';
   if (!room) {
     location.href = '/'; // no room code: back to the join page
     return null;
@@ -32,6 +32,31 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   const lobbyOverlay = document.getElementById('lobby-overlay');
   const debriefOverlay = document.getElementById('debrief-overlay');
   const toasts = document.getElementById('toasts');
+
+  const CREW = ['helm', 'engineering', 'weapons', 'crewchief'];
+  const isCrew = CREW.includes(seat);
+  let latest = null; // most recent snapshot (for the GO-poll launch-button logic)
+
+  // Officer name on the console header (T1): "Weapons — Emma Cate".
+  if (isCrew && name) {
+    const h = document.querySelector('header h1');
+    if (h) h.textContent = `${h.textContent} — ${name}`;
+  }
+
+  // Crew consoles get a "Leave Console" button (back out to role-select, freeing
+  // the seat) added to the lobby overlay — the main screen keeps its own lobby.
+  let leaveBtn = null;
+  if (isCrew && lobbyOverlay) {
+    leaveBtn = document.createElement('button');
+    leaveBtn.id = 'leave-btn';
+    leaveBtn.textContent = '← Leave Console';
+    leaveBtn.style.marginTop = '0.6rem';
+    lobbyOverlay.appendChild(leaveBtn);
+    leaveBtn.addEventListener('click', () => {
+      net.send({ type: 'leaveSeat' });
+      location.href = `/?room=${room}`; // back to the landing page, code prefilled
+    });
+  }
 
   let lastDebriefSeed = null; // populate the debrief log once per run (keeps scroll position)
   const MAX_TOASTS = 3; // keep the corner stack short; drop the oldest beyond this
@@ -47,18 +72,45 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   }
 
   function renderPhase(state) {
+    latest = state;
+    // The ready-room banner (crew consoles) pins to the top and pushes the
+    // console down via body padding; clear that padding whenever we're NOT in
+    // the crew lobby so the console fills the screen normally.
+    if (!(state.phase === 'lobby' && isCrew)) document.body.style.paddingTop = '';
     // Lobby: show a waiting overlay with a launch button.
     lobbyOverlay.classList.toggle('hidden', state.phase !== 'lobby');
     if (state.phase === 'lobby') {
-      const crewed = ['helm', 'engineering', 'weapons']
+      // Roster with GO-poll status: GO ready, STBY standing by, AUTO (unmanned).
+      const crewed = CREW
         .map((s) => {
-          const seat = state.seats[s];
-          // Show non-default difficulty so the party can see who's on chill/intense.
-          const diff = seat.difficulty && seat.difficulty !== 'normal' ? ` (${seat.difficulty})` : '';
-          return `${s}: ${seat.connected ? seat.name : 'auto'}${diff}`;
+          const seatS = state.seats[s];
+          const diff = seatS.difficulty && seatS.difficulty !== 'officer' ? ` (${seatS.difficulty})` : '';
+          const tick = seatS.connected ? (seatS.ready ? 'GO' : 'STBY') : 'AUTO';
+          return `[${tick}] ${s}: ${seatS.connected ? seatS.name : 'auto'}${diff}`;
         })
         .join(' · ');
-      document.getElementById('lobby-crew').textContent = crewed;
+      document.getElementById('lobby-crew').innerHTML = crewed;
+      // Crew consoles run the GO-poll; the button reports GO until everyone is
+      // ready, then becomes the launch. The main screen keeps its own launch.
+      const launchBtn = document.getElementById('launch-btn');
+      const title = lobbyOverlay.querySelector('h2');
+      if (isCrew && launchBtn) {
+        lobbyOverlay.classList.add('checkout');
+        if (title) title.textContent = 'Systems Checkout';
+        const myReady = state.seats[seat]?.ready;
+        if (state.allReady) {
+          launchBtn.textContent = 'LAUNCH MISSION';
+          launchBtn.classList.add('primary');
+        } else {
+          launchBtn.textContent = myReady ? '✓ GO — stand down' : 'Report GO';
+          launchBtn.classList.toggle('primary', !myReady);
+        }
+        // Offset the console by the banner's measured height so no control hides
+        // behind it (the banner wraps to more rows on narrow phones).
+        requestAnimationFrame(() => {
+          if (latest && latest.phase === 'lobby') document.body.style.paddingTop = `${lobbyOverlay.offsetHeight}px`;
+        });
+      }
     }
     // Debrief: show outcome summary.
     debriefOverlay.classList.toggle('hidden', state.phase !== 'debrief');
@@ -73,9 +125,14 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
         title.style.color = lost ? 'var(--bad)' : '';
       }
       const grade = document.getElementById('debrief-grade');
-      grade.textContent = `${state.debrief.grade} — ${state.debrief.score}/100`;
-      // Color the grade by score band so a near-failure doesn't read as a win.
-      grade.style.color = scoreColor(state.debrief.score);
+      // Qualitative result on its own line; the numeric score labeled below it.
+      const lost = state.debrief.outcome === 'adrift';
+      grade.innerHTML =
+        `<div>${state.debrief.grade}</div>` +
+        `<div class="label" style="margin-top:0.25rem; font-size:0.95rem;">Score: ${state.debrief.score} / 100</div>`;
+      // Color the qualitative line by score band (red if the ship was lost) so a
+      // near-failure doesn't read as a win.
+      grade.style.color = lost ? 'var(--bad)' : scoreColor(state.debrief.score);
       document.getElementById('debrief-narrative').textContent = state.debrief.narrative;
       // Captain's log for review (populated once per run so a player's scroll
       // position isn't reset by each snapshot).
@@ -104,7 +161,11 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
         render(state);
       },
       onJoined: (msg) => onJoined?.(msg),
-      onEvent: toast,
+      // Route toasts by audience: a crew console shows only notices addressed to
+      // ITS seat; a view seat (main screen / supervisor) shows the crew-wide
+      // ('crew') notices. This keeps console chatter on its console and the shared
+      // awareness on the shared screen. (Older servers send no `to` → 'crew'.)
+      onEvent: (text, to) => { if (isCrew ? to === seat : to === 'crew') toast(text); },
       onError: (message) => {
         alert(message);
         location.href = '/';
@@ -113,9 +174,16 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     },
   });
 
-  // Anyone can launch from the lobby; the debrief return button too.
-  document.getElementById('launch-btn').addEventListener('click', () =>
-    net.send(startPayload ? startPayload() : { type: 'start' }));
+  // Launch button. For a crew console it runs the GO-poll: toggle this seat's
+  // ready until everyone is GO, then it launches. The main screen (no crew seat)
+  // always launches directly with its mission-select payload.
+  document.getElementById('launch-btn').addEventListener('click', () => {
+    if (isCrew && latest && latest.phase === 'lobby' && !latest.allReady) {
+      net.send({ type: 'setReady', on: !latest.seats[seat]?.ready });
+    } else {
+      net.send(startPayload ? startPayload() : { type: 'start' });
+    }
+  });
   document.getElementById('return-btn').addEventListener('click', () => net.send({ type: 'restart' }));
 
   net.connect();

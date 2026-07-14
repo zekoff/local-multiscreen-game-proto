@@ -4,15 +4,28 @@
 // lobby shows players.
 
 import type { MissionDef, CatalogEntry, GenParams } from './mission.js';
-import { generateMission } from './mission-gen.js';
+import { generateMission, generateEuropaSalvageLoop } from './mission-gen.js';
 import { randomSeed } from './rng.js';
 import { firstFlight } from './missions/first-flight.js';
 import { supplyRun } from './missions/supply-run.js';
 import { minedCorridor } from './missions/mined-corridor.js';
-import { keplerRescue } from './missions/kepler-rescue.js';
+import { lifeboatRun } from './missions/lifeboat-run.js';
+import { deadlineKepler } from './missions/deadline-kepler.js';
+import { salvageClaim } from './missions/salvage-claim.js';
+import { blackoutApproach } from './missions/blackout-approach.js';
+import { firstContact } from './missions/first-contact.js';
+import { freeFlight } from './missions/free-flight.js';
 
+// Mission audit (Crew Chief expansion pass): kepler-rescue was REMOVED —
+// deadline-kepler (P#21) is the same station/premise with a real failure clock
+// and rescue mechanics, so the old version was no longer unique. mined-corridor
+// was KEPT — it's still the only pure-combat debris gauntlet (the new missions
+// are salvage/rescue/first-contact, a different shape).
 // first-flight leads the list: it's the intro mission a new crew should see first.
-const AUTHORED: MissionDef[] = [firstFlight, supplyRun, minedCorridor, keplerRescue];
+const AUTHORED: MissionDef[] = [
+  firstFlight, supplyRun, lifeboatRun, deadlineKepler, salvageClaim, blackoutApproach, firstContact, minedCorridor,
+  freeFlight, // debug/sandbox range (no ambient spawns) — launch with debug on
+];
 
 // Generator presets exposed in the lobby. Intensity is fixed per preset for
 // now; a fuller mission-setup UI can expose GenParams directly later.
@@ -39,11 +52,16 @@ const GEN_PRESETS: Record<string, { name: string; description: string; rating: s
 
 export const DEFAULT_MISSION_ID = supplyRun.id;
 
+// Special generated missions that need a dedicated generator (not GenParams).
+// Europa Salvage Loop is a fixed-shape procedural TYPE (see mission-gen).
+const EUROPA_ID = 'gen:europa';
+
 // What the lobby lists. Sent to clients in the 'joined' message.
 export function missionCatalog(): CatalogEntry[] {
   return [
     ...AUTHORED.map((m) => ({ id: m.id, name: m.name, description: m.briefing, kind: m.kind, rating: m.rating ?? 'standard' })),
     ...Object.entries(GEN_PRESETS).map(([id, p]) => ({ id, name: p.name, description: p.description, kind: 'generated' as const, rating: p.rating })),
+    { id: EUROPA_ID, name: 'Europa Salvage Loop', description: 'A 5-minute salvage run: clear rocks, tractor in drifting salvage, answer a distress beacon. New timing every run.', kind: 'generated' as const, rating: 'standard' },
   ];
 }
 
@@ -52,6 +70,9 @@ export function missionCatalog(): CatalogEntry[] {
 // `seed` fixes the run's randomness (tests, replays); omitted = fresh seed.
 export function resolveMissionStart(missionId?: string, seed?: number): { def: MissionDef; seed: number } {
   const runSeed = seed ?? randomSeed();
+  if (missionId === EUROPA_ID) {
+    return { def: generateEuropaSalvageLoop(runSeed), seed: runSeed };
+  }
   const preset = missionId ? GEN_PRESETS[missionId] : undefined;
   if (preset) {
     return { def: generateMission({ ...preset.params, seed: runSeed }), seed: runSeed };

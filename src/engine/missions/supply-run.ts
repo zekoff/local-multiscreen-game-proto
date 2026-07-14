@@ -17,7 +17,7 @@ export const supplyRun: MissionDef = {
   kind: 'authored',
   ...pacingFor(180), // the 3-minute baseline: targetSeconds + derived speedScale/parTime
   spawnEvery: { min: 9, max: 16 },
-  impactIn: { min: 18, max: 26 }, // ambient rocks spawn beyond max sensor range (16s): seen dim on screen before sensors resolve them
+  impactIn: { min: 18, max: 26 }, // ambient rocks spawn near the detection edge (~21s at the default 2 sensor power): a low-sensor crew sees dim dots before sensors resolve them
   asteroidDmg: { min: 10, max: 20 },
   maxAsteroids: 4,
   breakerEvery: { min: 27, max: 45 }, // widened +50%: impacts now trip breakers, ambient trips are the exception

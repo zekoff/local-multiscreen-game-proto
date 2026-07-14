@@ -1,134 +1,128 @@
 # Console Complexity & Interplay Analysis
 
-Date: 2026-07-11, after the wave-2 flight-model / sensors / warp / asteroid
-changes. Purpose: gauge how much each station has to *do* and *think about*,
-map the cross-console dependencies, and propose balance adjustments before the
-human playtest. This is a design-load analysis, not a verdict — the real signal
-comes from watching people play.
+Date: 2026-07-13, on the `worktree-expansion-crew-chief` branch, after the
+merge-prep pass (breaker-into-power-row, sensor range +50%, E2/S1/W2/Sen2
+default, Crew Chief frozen for playtest, Europa Salvage Loop). Purpose: gauge how
+much each station has to *do* and *think about*, map the cross-console
+dependencies, and note balance shifts. This is a design-load analysis, not a
+verdict — the real signal comes from watching people play.
 
-## Method & the big caveat
+## The current bridge (4 crew consoles + a captain)
 
-Two sources:
+- **Helm** — throttle, hold-to-steer alignment, nav-gate/slipstream chasing,
+  course-hold trim, Emergency Warp. Holds the tow line steady when Weapons is
+  towing.
+- **Engineering** — the 7-point power grid across Engines / Shields / Weapons /
+  Sensors (max 4 each), breaker restores (now inline on each power row), the
+  sensor pulse, power presets. Lowest tap rate, highest decision density.
+- **Weapons** — target lock (forward-arc scope), laser recharge + governor
+  (standard vs snapshot), the deflector screen (shields as a managed resource),
+  **and the tractor beam** (shares the laser emitter — you can't fire while
+  latched). The mechanical hotspot.
+- **Crew Chief** — deck-ops: commit crew to trim system wear, patch the hull,
+  fight typed emergencies. **Frozen (WIP) for the current playtest** — it lags
+  the other consoles in fun/usability and is disabled in the lobby (re-enable
+  with `?debug`). Analyzed here for completeness; automated systems cover the
+  deck when it's unmanned, so its absence is neutral, never a penalty.
+- **Captain** (no device) — reads the main-screen threat data the gunner can't
+  see, calls target priorities, watches who's in trouble, and orders power
+  shifts. A real seat, not a spectator.
 
-1. **Quantitative floor** — ran the skilled bot crew through every mission
-   (8 seeds each), counting *meaningful* inputs per console (no-op repeats
-   filtered) and the rate of events each console must react to.
-2. **Qualitative** — the factors each console must hold in mind at once, and
-   the dependency graph between them.
+## Measured signal (skilled bot crew, from `npm run lab`)
 
-**The caveat that dominates the numbers:** the bots don't chase nav gates,
-don't juggle the 4-way power budget, don't manage sensor power, and never warp.
-So the measured inputs/min are a **floor**, and they *understate helm and
-(especially) engineering* — the two consoles whose new depth is optional-but-
-impactful. A real crew does more.
+The lab reports per-console *effectiveness*, not raw inputs/min. Representative
+skilled-crew rows:
 
-## Measured load (skilled bots, inputs/min = human floor)
+| mission | weap hit% | weap acquire(s) | weap chg-idle | helm gate% | helm on-course | eng power-util | cargo | captain coord |
+|---|---|---|---|---|---|---|---|---|
+| supply-run | 100% | 2.1 | 33% | 100% | 78% | 99% | 0.0 | 0.91 |
+| mined-corridor | 100% | 2.7 | 46% | 100% | 77% | 99% | 0.0 | 0.88 |
+| first-contact | 100% | 1.4 | 74% | ~100% | 81% | 99% | 0.5 | 0.93 |
+| gen:europa | 100% | 2.9 | 33% | ~100% | 82% | 99% | 2.8 | 0.86 |
 
-| mission | helm | eng | weapons | contacts/min | breakers/min | gates/min |
-|---|---|---|---|---|---|---|
-| supply-run | 12.9 | 2.3 | 17.7 | 7.9 | 2.3 | 1.7 |
-| mined-corridor | 13.4 | 2.4 | 14.4 | 6.7 | 2.4 | 1.7 |
-| kepler-rescue | 17.6 | 3.5 | 21.9 | 9.5 | 3.5 | 1.6 |
-| gen:short | 13.7 | 2.6 | 16.8 | 7.7 | 2.6 | 1.7 |
-| gen:standard | 15.5 | 2.7 | 19.1 | 8.5 | 2.7 | 1.7 |
-| gen:long | 15.2 | 2.8 | 19.7 | 8.7 | 2.8 | 1.7 |
-
-Reading it: **weapons is the mechanical hotspot** (highest input rate, driven by
-~7–10 contact resolutions/min it must target + shoot, plus shield toggles).
-**kepler-rescue is the busiest mission** across the board (it's the hot one).
-Engineering's 2–3/min is *only breaker resets* — its real load is thinking, not
-tapping (below).
+Reading it: **weapons stays the mechanical hotspot** — low acquire latency and
+low charge-idle mean it's firing near-continuously; on salvage runs (Europa) it
+*also* works the tractor, so its load is highest there. **Engineering's
+power-util pins near 100%** (the pool is always fully committed), which is why
+its depth is in *decisions*, not taps. Helm on-course ~78-82% reflects the
+constant tension between staying on the fast line and diverting for slipstreams.
 
 ## Cognitive load — factors held at once (ranked)
 
-1. **Engineering — highest thinking load, lowest tap rate.** Now a 4-way power
-   triage over a 6-unit budget, where every unit is a live tradeoff:
-   - engines → speed **and** turn authority (helm) **and** faster asteroid
-     closing (a cost to weapons)
-   - weapons → laser refire speed
-   - shields → shield regen rate
-   - sensors → how early weapons can target (their effective reaction time)
-   …plus resetting up to 4 breakers, timing the one-shot sensor pulse, and a
-   full re-power after an Emergency Warp. The APM is low but the *decision*
-   density is the highest on the bridge.
-2. **Weapons — highest tap load + real prioritization.** Targetable-gated
-   contacts, laser recharge timing, and shields-as-a-resource (raise around
-   threats, drop to recharge/gain speed). Because the scope now shows *only
-   names*, weapons **depends on the captain** for threat priority.
-3. **Helm — a genuine tension, understated by the bots.** Stay near course 0 for
-   speed vs. divert to a gate's 45–88° bearing for the bonus; and to turn onto a
-   gate you must ease the throttle or beg engineering for engine power. Plus the
-   Emergency Warp go/no-go. A gate-chasing human is far busier than the 13–18
-   ipm floor.
-4. **Captain (no device) — now a real seat.** Reads the main-screen threat data
-   (speed/threat colors that the gunner *can't* see), calls target priorities to
-   weapons, watches the captain HUD for who's in trouble, and orders power
-   shifts ("more sensors," "pump weapons"). The wave-1 captain was a spectator;
-   this one has a job.
+1. **Engineering — highest thinking load, lowest tap rate.** A 4-way triage over
+   a 7-unit pool where every unit is a live tradeoff: engines (helm speed +
+   turn), weapons (laser refire **and** the tractor's power floor), sensors (how
+   early Weapons can detect *and* identify — now reaching ~21s at the default 2
+   points, ~27s maxed), shields (regen). Plus inline breaker restores, the
+   one-shot pulse, and a full re-power after an Emergency Warp.
+2. **Weapons — highest tap load + real prioritization + a mode/emitter choice.**
+   Targetable-gated contacts, recharge timing, standard-vs-snapshot governor,
+   shields-as-resource, and the tractor (which forfeits the laser while latched).
+   Because the scope shows *only names and a POD/ORE/? tag*, Weapons depends on
+   the captain (or the main-screen pod beacon) for threat priority.
+3. **Helm — a genuine tension, understated by bots.** Course-0 speed vs a gate's
+   off-axis bearing for the slipstream; to turn onto a gate you ease throttle or
+   ask Engineering for engine power. Now also holds the bow steady while Weapons
+   tows (the bot helm favors the tractor target over slipstream chasing).
+4. **Captain — a real coordination seat.** Threat colours, pod beacons, and the
+   HUD live on the shared screen only; prioritization is a spoken hand-off.
+5. **Crew Chief (frozen) — allocation-under-scarcity, but thin.** Commit-hands-
+   to-posts with diminishing returns is a clean idea, but in play it reads as
+   upkeep bookkeeping more than a fun loop, and it doesn't surface on the crew
+   HUD. Deferred until it earns its seat (see the Library TODO's Crew Chief
+   group).
 
 ## Interplay map (who depends on whom)
 
-- **Engineering → everyone.** Power split is the ship's master dial: engines
-  (helm speed+turn), weapons (refire), shields (regen), sensors (weapons'
-  detection window). A tripped breaker on any of these visibly degrades that
-  console.
-- **Helm ↔ Weapons (tension).** Running the engines hot for speed/turning makes
-  asteroids close *faster*, shrinking weapons' shoot window. Helm chasing rings
-  (wants engine power + speed) can actively make weapons' job harder — a real,
-  legible conflict the captain arbitrates.
-- **Captain → Weapons (new comms channel).** Threat data is on the main screen
-  only; the gunner sees names and positions but not speed/threat. Prioritization
-  is now a spoken hand-off.
-- **Engineering ↔ Weapons.** Sensor power sets the shoot window; weapons power
-  sets refire; a sensors/weapons breaker cripples the gunner.
-- **Emergency Warp = a coordinated recovery.** One helm press dumps the whole
-  ship into a hole (no power, 4 tripped breakers, no shields/laser, off course)
-  — engineering re-powers and resets while helm re-establishes course and
-  weapons rebuilds charge. A deliberate "everyone reacts together" beat.
+- **Engineering → everyone.** Power is the master dial: engines (helm), weapons
+  (refire + tractor floor), sensors (Weapons' detect/ID window), shields (regen).
+  A tripped breaker visibly halves that system until restored.
+- **Weapons ↔ Helm (tow tension, new).** Latching the tractor forfeits the laser
+  and asks Helm to hold a line — so towing salvage means trusting the rest of the
+  crew to keep the sky clear. Running engines hot also closes asteroids faster,
+  shrinking Weapons' window.
+- **Captain / main screen → Weapons.** Pods now show their beacon on the main
+  screen well before sensors ID them (POD_VISUAL_RANGE), so the captain's eyes
+  are an *earlier* don't-shoot channel than Engineering's sensors — the confirm-
+  before-fire ritual has two independent paths.
+- **Engineering ↔ Weapons.** Sensor power sets the detect/ID window; weapons power
+  sets refire *and* powers the tractor; a sensors/weapons breaker cripples both.
+- **Emergency Warp = coordinated recovery.** One helm press scatters the ship;
+  everyone reacts together.
 
-Net: the dependency graph got denser and more *directional* (engineering feeds
-the others; helm and weapons now trade off through the shared physics). That's
-good for a co-op bridge game — it manufactures the cross-talk that makes the
-table fun — but it raises the floor for a first-time crew.
+Net: the graph is dense and directional (Engineering feeds everyone; Helm and
+Weapons now trade off through both the shared physics *and* the tractor). Good
+cross-talk for a co-op bridge — but it raises the floor for a first-time crew,
+and the tow loop currently piles onto the already-busiest console.
 
-## Balance & design observations / proposals
+## Balance & design observations
 
-Ordered by how much I'd want to resolve them before/around the playtest.
+1. **All-bot floor dropped this pass.** The E3→E2 default slows the *empty* ship,
+   lengthening auto runs and spawning more rocks than a bot gunner clears:
+   supply-run / gen:standard all-bot arrival went ~30% → **0%**. Skilled and all
+   single-human profiles are unaffected (skilled on-target; 1h-weapons still
+   carries a bot crew to 100%). If the pure-bot floor matters, keep the *CPU*
+   auto-engineer target at engines 3 while humans start at 2, or nudge
+   `SPEED_CALIB`. Owner tuning call.
+2. **Weapons is over-loaded on salvage runs.** Laser + shields + governor + tow on
+   one console, and the playtest called for separating the tractor. Revisit once
+   Crew Chief is unfrozen (the tractor could return to a dedicated seat).
+3. **Sensor range +50%** gives more reaction time but shrinks the "spot the dim
+   dot before sensors resolve it" window on missions whose ambient `impactIn`
+   sits inside the new detection range (~21s default). Watch whether contacts now
+   feel like they appear pre-resolved; if so, push ambient spawn distances out.
+4. **Captain-dependence of Weapons** remains: no engaged captain = flying half-
+   blind on priorities. The main-screen pod beacon helps for don't-shoot, but
+   rock threat colour is still main-screen-only. A fallback scope tint is a cheap
+   safety net if playtests show captain-less crews struggling.
+5. **Crew Chief needs a rethink, not just polish** (frozen for now): make trim a
+   per-system *bonus* rather than an ever-present penalty, put the chief on the
+   crew HUD, and give it a loop worth a seat.
 
-1. **Weapons may be over-loaded for a first-timer, and it's captain-dependent.**
-   It's the busiest console *and* it lost its own threat data. A crew with no
-   engaged captain will fly half-blind on prioritization.
-   *Proposal:* keep the captain hand-off as the intended design, but add a
-   **fallback minimal threat tint on the scope blips** (color by speed) so a
-   captain-less crew isn't lost. Cheap; preserves the captain's value when
-   present. Decide at playtest.
-2. **Unmanned/short-handed crews are now genuinely punished** (auto 50–70%
-   arrival). Great for motivating a full crew, but a **solo tester** poking at
-   one station will get wrecked.
-   *Proposal:* consider a "practice/chill" default that softens sensor gating +
-   damage, or bump auto-sensor range, so one person can explore without dying.
-3. **Do players bother with nav gates?** They're now off-course and cost speed;
-   the reward is only +2 each (cap +8).
-   *Proposal:* watch whether anyone chases them. If ignored, either raise the
-   reward (charge/slipstream) or make the occasional gate feel worth the
-   diversion. Easy knob (`GATE_*` constants).
-4. **Damage swinginess.** Big+fast rocks can hit for ~20+; the shield cap is 35,
-   so two big hits in a burst punch through. Intended pressure, but watch for
-   feels-bad spikes.
-   *Proposal:* if hull feels random in playtest, cap single-hit damage or widen
-   the shield cap slightly.
-5. **Engineering discoverability.** The station's depth is invisible if a new
-   player leaves power at default and never touches sensors. The `det Ns`
-   read-out helps, but the sensor→weapons link is a learned connection.
-   *Proposal:* watch whether engineers touch sensors unprompted; if not,
-   consider a first-mission prompt or a clearer "contacts resolving late" cue.
-6. **Emergency Warp downside is severe** (dead in the water while re-powering).
-   Correct for a last resort, but confirm it doesn't feel like self-sabotage.
-   `WARP_COOLDOWN`/`WARP_HULL_DMG` are the knobs.
-
-## Tunable constants (all at the top of `src/engine/game.ts`)
+## Tunable constants (top of `src/engine/game.ts`)
 
 `LASER_CHARGE_RATE`, `WARP_*`, `BASE_TURN`, `SENSOR_BASE`/`SENSOR_PER_POWER`/
-`SENSOR_PULSE_COOLDOWN`, `GATE_*`, `SPEED_RISK`, `BURST_CHANCE`, and the
-per-rock size/speed ranges in `spawnAsteroid`. The default power split
-(2/1/2/1) is set in `start()`.
+`SENSOR_ID_BASE`/`SENSOR_ID_PER_POWER`/`SENSOR_PULSE_COOLDOWN`, `POD_VISUAL_RANGE`,
+`GATE_*`, `SPEED_RISK`, `TRACTOR_*`, `STRIKE_CLEAR_*`, and the per-rock size/speed
+ranges in `spawnContact`. The default power split (E2 S1 W2 Sen2) is in `start()`;
+mission pace derives from each mission's `targetSeconds` via `SPEED_CALIB`.

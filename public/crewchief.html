@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Crew Chief Station</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>:root { --accent: #37c8c0; }</style>
+</head>
+<body>
+  <header>
+    <h1>Crew Chief</h1>
+    <span class="room-code"></span>
+    <span class="conn-dot"></span>
+  </header>
+  <div id="toasts"></div>
+
+  <!-- The console is a layout list of portable widgets (see widget.js). -->
+  <main id="cc-widgets"></main>
+
+  <!-- Phase overlays (shared shell fills these in) -->
+  <div class="overlay hidden" id="lobby-overlay">
+    <h2>Standing By</h2>
+    <p id="lobby-crew" style="color:var(--dim)"></p>
+    <button class="primary" id="launch-btn">Launch Mission</button>
+  </div>
+  <div class="overlay hidden" id="debrief-overlay">
+    <h2 id="debrief-title">Mission Debrief</h2>
+    <div class="grade" id="debrief-grade"></div>
+    <p id="debrief-narrative" style="max-width:26rem"></p>
+    <div class="label" style="margin-top:0.6rem;">Captain's Log</div>
+    <div id="debrief-log" class="log" style="max-height: 22vh; width: min(26rem, 88vw); text-align: left;"></div>
+    <button class="primary" id="return-btn">Return to Ready Room</button>
+  </div>
+
+  <script type="module">
+    import { initStation, mountHelp } from '/js/station.js';
+    import { createAudio } from '/js/audio.js';
+    import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
+    import { createIntents } from '/js/optimistic.js';
+    import { mountWidgets } from '/js/widget.js';
+    import { cargoHold, deckCrew } from '/js/widgets/crewchief.js';
+
+    // Console-local audio: the Crew Chief owns the deck sounds — cargo stow /
+    // jettison, fire + boarders alarms. (Tractor hum moved to Weapons.)
+    const audio = createAudio();
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
+    const CREWCHIEF_FX = new Set(['stow', 'jettison', 'fire', 'boarders']);
+
+    const intents = createIntents();
+    let host = null;
+
+    const net = initStation({
+      seat: 'crewchief',
+      intents,
+      render(state) {
+        playFxAudio(state.fx, audio, CREWCHIEF_FX);
+        readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
+        if (host) host.render(state);
+      },
+    });
+
+    // Lay out the console: the Crew Chief owns cargo + the deck crew. Hull /
+    // shields / power all read off the MAIN SCREEN now — no duplicate panels
+    // here (the console shows only what this seat acts on).
+    host = mountWidgets(
+      document.getElementById('cc-widgets'),
+      [cargoHold, deckCrew],
+      { net, intents, audio, seat: 'crewchief' },
+    );
+
+    mountHelp({
+      title: 'Crew Chief — you run the deck',
+      diagram: `
+        <svg viewBox="0 0 340 130" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="9">
+          <!-- deploy crew to posts -->
+          <rect x="14" y="16" width="150" height="46" rx="8" fill="none" stroke="#39456b"/>
+          <text x="89" y="30" fill="#7d8db3" text-anchor="middle">DEPLOY CREW</text>
+          <circle cx="34" cy="46" r="5" fill="currentColor"/>
+          <circle cx="48" cy="46" r="5" fill="currentColor"/>
+          <text x="110" y="49" fill="#7d8db3" text-anchor="middle">→ trim / repair</text>
+          <text x="89" y="78" fill="#7d8db3" text-anchor="middle">committed until the job is done</text>
+          <!-- emergencies -->
+          <rect x="176" y="16" width="150" height="46" rx="8" fill="none" stroke="#39456b"/>
+          <text x="251" y="30" fill="#ff6f6f" text-anchor="middle">FIRE — DECK 3</text>
+          <circle cx="210" cy="48" r="5" fill="currentColor"/>
+          <circle cx="224" cy="48" r="5" fill="currentColor"/>
+          <text x="262" y="52" fill="#7d8db3" text-anchor="middle">+ crew</text>
+          <text x="170" y="104" fill="#7d8db3" text-anchor="middle">heavy cargo hold = sluggish helm — jettison to lighten</text>
+        </svg>`,
+      lines: [
+        'You run the <b>deck crew</b> — the ship\'s hands. This console is <b>optional</b>: without you the ship self-manages, but a sharp Chief makes a real difference to the score.',
+        '<b>Maintenance</b>: systems slowly drift out of trim. Send a hand to a worn system to bring it back — a trimmed ship runs at full power.',
+        '<b>Hull Repair</b>: commit a detail to the repair bay to patch battle damage over a shift.',
+        '<b>Emergencies</b>: fires, breaches, boarders, coolant leaks — each hits the ship differently. Put hands on them fast; unattended, they bite.',
+        'Crew are <b>committed</b>: once you send a hand it stays until the job is done (more hands finish faster, with diminishing returns). Spend a scarce roster wisely.',
+        'You also manage the <b>cargo hold</b> — a heavy hold turns sluggishly; <b>jettison</b> to recover maneuverability. (Towing itself is now the Weapons console\'s job.)',
+      ],
+    });
+  </script>
+</body>
+</html>

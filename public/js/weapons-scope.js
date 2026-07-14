@@ -1,27 +1,31 @@
-// Weapons radar scope: a Phaser scene that replaces the plain button-list of
-// sensor contacts with a spatial display — asteroids converge toward the
-// ship at the center as impactIn counts down; tap a contact to target it.
-// The scene only ever reads the latest state snapshot (via setState) and
-// reports taps through onTarget — it never talks to the network directly,
-// same "state in, actions out" contract every other station follows.
-//
-// The server doesn't model bearing (asteroids are a flat list with no
-// angle), so each contact gets a stable synthetic bearing derived from its
-// id — consistent for the contact's whole lifetime, spread out using the
-// golden angle so simultaneous spawns don't overlap.
+// Weapons targeting scope: a Phaser scene showing a forward ARC out the front
+// window (not a 360° radar). The ship sits at the bottom; contacts fan across
+// the arc by their real lateral BEARING (port ↔ starboard) — the same bearing
+// the main-screen viewscreen uses, so the scope and the window agree on where a
+// contact is — and travel DOWN the arc toward the ship as impactIn counts down.
+// Two arcs mark the sensor bands: the DETECTION arc (a contact appears when it
+// crosses inside) and the tighter ID arc (a contact is identified — class
+// letters — once inside). The scene only reads the latest snapshot (setState)
+// and reports taps through onTarget — "state in, actions out".
 
 import Phaser from '/js/vendor/phaser.esm.min.js';
 
-const MAX_RANGE_S = 20; // impactIn (seconds) mapped to the outer ring
-const URGENT_S = 6;     // matches the .eta.urgent threshold in the old list UI
-const TAP_RADIUS = 36;  // scene px: how far a tap can land from a blip and still select it
-const BLIP_RADIUS = 10; // base blip dot size (was 8 — bigger touch/read targets)
+const MAX_RANGE_S = 28;   // impactIn (seconds) mapped to the outer edge of the arc (tracks max sensor detection, ~27s at full sensor power)
+const URGENT_S = 6;       // close-contact threshold (threat color)
+const TAP_RADIUS = 40;    // scene px: how far a tap can land from a blip and still select it
+const BLIP_RADIUS = 10;   // base blip dot size
+const ARC_HALF_DEG = 78;  // half-angle of the forward fan (~156° total ≈ viewscreen FOV)
 
 const COLOR_ACCENT = 0xff6f6f; // weapons station accent (--accent in style.css)
 const COLOR_DIM = 0x7d8db3;
 const COLOR_BAD = 0xff5c5c;
 const COLOR_TARGETED = 0xffffff;
 const COLOR_RING = 0x263353;
+// Identified-contact colors: a rescue pod reads green (do NOT shoot), salvage
+// amber, a sensor ghost faint purple. UNKNOWN contacts stay dim until resolved.
+const COLOR_POD = 0x4cd97b;
+const COLOR_MINERAL = 0xffb347;
+const COLOR_GHOST = 0x8a7ad0;
 
 export class WeaponsScopeScene extends Phaser.Scene {
   constructor() {
@@ -41,26 +45,30 @@ export class WeaponsScopeScene extends Phaser.Scene {
 
   create() {
     const { width, height } = this.scale;
-    this.cx = width / 2;
-    this.cy = height / 2;
-    this.radius = Math.min(width, height) / 2 - 14;
+    // Origin = the ship, at the bottom-center; the fan opens upward (forward).
+    this.ox = width / 2;
+    this.oy = height - 10;
+    this.radius = height - 22;                 // fan reaches nearly to the top
+    this.arcHalf = ARC_HALF_DEG * (Math.PI / 180);
+    this.up = -Math.PI / 2;                     // boresight (straight up) in screen angle
 
     // Scene-level tap handling: pick the nearest blip within TAP_RADIUS of
-    // the pointer, instead of tiny per-sprite hit areas on moving dots (the
-    // playtest found taps sporadically missing). One generous circle around
-    // the finger, resolved against current blip positions at tap time.
+    // the pointer, resolved against current blip positions at tap time.
     this.input.on('pointerdown', (pointer) => this.handleTap(pointer));
 
     this.ringsGfx = this.add.graphics();
     this.drawRings();
 
-    this.rangeGfx = this.add.graphics(); // passive sensor-range ring
+    this.rangeGfx = this.add.graphics(); // live detection + ID band arcs
     this.sweepGfx = this.add.graphics();
-    this.pulseGfx = this.add.graphics(); // expanding active-pulse ring
-    this.sweepAngle = 0;
-    this.pulseT = -1; // <0 = idle; 0..1 = expanding
+    this.pulseGfx = this.add.graphics(); // expanding active-pulse arc
+    this.sweepT = 0;                     // 0..1 oscillating sweep across the fan
+    this.pulseT = -1;                    // <0 = idle; 0..1 = expanding
 
-    this.add.circle(this.cx, this.cy, 6, COLOR_ACCENT); // the ship, dead center
+    // The ship: a small chevron at the origin pointing forward.
+    const g = this.add.graphics();
+    g.fillStyle(COLOR_ACCENT, 1);
+    g.fillTriangle(this.ox - 7, this.oy, this.ox + 7, this.oy, this.ox, this.oy - 12);
   }
 
   // Kick off the expanding sensor-pulse animation (engineering fired a pulse).
@@ -68,52 +76,66 @@ export class WeaponsScopeScene extends Phaser.Scene {
     this.pulseT = 0;
   }
 
+  // Draw an arc sector at a given radius across the forward fan.
+  strokeFanArc(g, r) {
+    g.beginPath();
+    g.arc(this.ox, this.oy, r, this.up - this.arcHalf, this.up + this.arcHalf, false);
+    g.strokePath();
+  }
+
   drawRings() {
     const g = this.ringsGfx;
     g.clear();
     g.lineStyle(1, COLOR_RING, 1);
-    for (let i = 1; i <= 3; i++) g.strokeCircle(this.cx, this.cy, (this.radius * i) / 3);
-    g.lineBetween(this.cx - this.radius, this.cy, this.cx + this.radius, this.cy);
-    g.lineBetween(this.cx, this.cy - this.radius, this.cx, this.cy + this.radius);
+    // A few range arcs for depth read + the two fan edges + the boresight.
+    for (let i = 1; i <= 3; i++) this.strokeFanArc(g, (this.radius * i) / 3);
+    for (const s of [-1, 1]) {
+      const a = this.up + s * this.arcHalf;
+      g.lineBetween(this.ox, this.oy, this.ox + Math.cos(a) * this.radius, this.oy + Math.sin(a) * this.radius);
+    }
+    g.lineStyle(1, COLOR_RING, 0.6);
+    g.lineBetween(this.ox, this.oy, this.ox, this.oy - this.radius); // boresight
   }
 
   update(_time, delta) {
-    // Decorative sweep — not tied to real data, just sells the "radar" read.
-    this.sweepAngle += delta * 0.0007;
+    // Decorative sweep: a radial line oscillating across the fan (not a full spin).
+    this.sweepT = (this.sweepT + delta * 0.0004) % 1;
+    const a = this.up + Math.sin(this.sweepT * Math.PI * 2) * this.arcHalf;
     const g = this.sweepGfx;
     g.clear();
-    g.lineStyle(2, COLOR_ACCENT, 0.3);
-    const x2 = this.cx + Math.cos(this.sweepAngle) * this.radius;
-    const y2 = this.cy + Math.sin(this.sweepAngle) * this.radius;
-    g.lineBetween(this.cx, this.cy, x2, y2);
+    g.lineStyle(2, COLOR_ACCENT, 0.25);
+    g.lineBetween(this.ox, this.oy, this.ox + Math.cos(a) * this.radius, this.oy + Math.sin(a) * this.radius);
 
     this.drawRange();
     this.drawPulse(delta);
     this.syncBlips();
   }
 
-  // Ring showing how far out the passive sensors currently resolve contacts:
-  // a rock is invisible until it crosses inside this radius.
+  // The live sensor bands: the DETECTION arc (contacts appear inside it) and the
+  // tighter ID arc (contacts are identified inside it). Both scale with sensor
+  // power, so a well-powered ship resolves contacts earlier (wider arcs).
   drawRange() {
     const g = this.rangeGfx;
     g.clear();
     const s = this.latestState;
     if (!s || s.sensorRange === undefined) return;
-    const rr = this.radius * Math.min(1, s.sensorRange / MAX_RANGE_S);
     g.lineStyle(1.5, COLOR_ACCENT, 0.35);
-    g.strokeCircle(this.cx, this.cy, rr);
+    this.strokeFanArc(g, this.radius * Math.min(1, s.sensorRange / MAX_RANGE_S));
+    if (s.idRange !== undefined) {
+      g.lineStyle(1.5, COLOR_TARGETED, 0.3); // inner ID arc
+      this.strokeFanArc(g, this.radius * Math.min(1, s.idRange / MAX_RANGE_S));
+    }
   }
 
-  // Expanding ring for an active sensor pulse.
+  // Expanding arc for an active sensor pulse.
   drawPulse(delta) {
     const g = this.pulseGfx;
     g.clear();
     if (this.pulseT < 0) return;
     this.pulseT += delta / 700;
     if (this.pulseT >= 1) { this.pulseT = -1; return; }
-    const r = this.radius * this.pulseT;
     g.lineStyle(3, COLOR_ACCENT, 1 - this.pulseT);
-    g.strokeCircle(this.cx, this.cy, r);
+    this.strokeFanArc(g, this.radius * this.pulseT);
   }
 
   // Called by the page every time a new server snapshot arrives.
@@ -153,10 +175,6 @@ export class WeaponsScopeScene extends Phaser.Scene {
     }
   }
 
-  bearingFor(id) {
-    return ((id * 137.508) % 360) * (Math.PI / 180); // golden-angle spread
-  }
-
   // Nearest blip within TAP_RADIUS wins the tap (ties go to the closer one).
   handleTap(pointer) {
     let bestId = null;
@@ -180,30 +198,53 @@ export class WeaponsScopeScene extends Phaser.Scene {
     const dot = this.add.circle(0, 0, BLIP_RADIUS, COLOR_DIM).setStrokeStyle(2, COLOR_DIM);
     // Label is the contact NAME only — threat/speed data lives on the main
     // screen so the captain (not the gunner) reads and calls out priorities.
+    // The scope renders at a fixed logical size then FIT-scales UP to the panel,
+    // so raster text (unlike the vector rings) came out soft. Oversample the
+    // label's texture to counter both the device pixel ratio AND the FIT upscale,
+    // which sharpens it markedly. (Vector graphics need no such treatment.)
+    const textRes = Math.min(4, Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)));
     const label = this.add
-      .text(0, 15, '', { fontSize: '10px', color: '#7d8db3', fontFamily: 'monospace' })
+      .text(0, 15, '', { fontSize: '11px', color: '#7d8db3', fontFamily: 'monospace' })
+      .setResolution(textRes)
       .setOrigin(0.5, 0);
-    const container = this.add.container(this.cx, this.cy, [halo, dot, label]);
+    const container = this.add.container(this.ox, this.oy, [halo, dot, label]);
     return { container, halo, dot, label };
   }
 
   updateBlip(blip, a) {
-    const bearing = this.bearingFor(a.id);
+    // Real lateral bearing (-100..100) → angle across the forward fan; impactIn
+    // → distance up the fan (far = top, near ship = bottom). Matches the window.
+    const bearing = Phaser.Math.Clamp((a.bearing ?? 0) / 100, -1, 1);
+    const angle = this.up + bearing * this.arcHalf;
     const t = Phaser.Math.Clamp(a.impactIn / MAX_RANGE_S, 0, 1);
-    const r = this.radius * t; // closer to center = closer to impact
-    blip.container.setPosition(this.cx + Math.cos(bearing) * r, this.cy + Math.sin(bearing) * r);
+    const dist = this.radius * t;
+    blip.container.setPosition(this.ox + Math.cos(angle) * dist, this.oy + Math.sin(angle) * dist);
 
     const urgent = a.impactIn <= URGENT_S;
     // Targeted if the server says so OR we optimistically locked it on tap.
     const targeted = a.id === this.latestState.targetId || a.id === this.optimisticTargetId;
-    const color = targeted ? COLOR_TARGETED : urgent ? COLOR_BAD : COLOR_DIM;
+    // Identified kind drives color so the gunner can tell a rescue pod (green,
+    // DON'T shoot) from a rock (red when urgent) at a glance — the sensor
+    // gameplay routed to the scope. UNKNOWN contacts stay dim until resolved.
+    const kind = a.identified ? a.kind : 'unknown';
+    const kindColor = kind === 'pod' ? COLOR_POD
+      : kind === 'mineral' ? COLOR_MINERAL
+      : kind === 'ghost' ? COLOR_GHOST
+      : kind === 'rock' ? (urgent ? COLOR_BAD : COLOR_ACCENT)
+      : (urgent ? COLOR_BAD : COLOR_DIM); // unknown
+    const color = targeted ? COLOR_TARGETED : kindColor;
     blip.dot.setFillStyle(color);
     blip.dot.setStrokeStyle(targeted ? 3 : 2, color);
     blip.halo.setFillStyle(color, targeted ? 0.22 : 0.12);
-    blip.halo.setRadius(BLIP_RADIUS * (targeted ? 2.4 : 2) * (0.8 + 0.35 * (a.size ?? 1)));
-    // Bigger rocks read as bigger blips (the captain's early-spot cue too).
-    blip.dot.setRadius((targeted ? BLIP_RADIUS + 2 : BLIP_RADIUS) * (0.8 + 0.35 * (a.size ?? 1)));
-    blip.label.setText(a.label);
-    blip.label.setColor(urgent ? '#ff5c5c' : '#7d8db3');
+    // Every contact reads the SAME size on the scope — it's target ID only. The
+    // gunner cannot tell a big rock (needs a full shot) from a small one (a
+    // snapshot cracks it); only the captain sees size on the viewscreen and
+    // calls it. That's the whole point of the snapshot/size cooperation.
+    blip.halo.setRadius(BLIP_RADIUS * (targeted ? 2.4 : 2));
+    blip.dot.setRadius(targeted ? BLIP_RADIUS + 2 : BLIP_RADIUS);
+    // Label shows the name, plus a "POD"/"?" tag once the kind matters.
+    const tag = kind === 'pod' ? ' POD' : kind === 'mineral' ? ' ORE' : kind === 'unknown' ? ' ?' : '';
+    blip.label.setText(a.label + tag);
+    blip.label.setColor(kind === 'pod' ? '#4cd97b' : urgent ? '#ff5c5c' : '#7d8db3');
   }
 }

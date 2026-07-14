@@ -27,7 +27,7 @@ import { makeCrew } from './lib/policies.mjs';
 
 const TICK = 0.25; // matches the live server tick
 const RUNS = Number(process.env.LAB_RUNS || 10);
-const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons'];
+const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief'];
 
 // A seat is either driven by a named policy ('skilled'/'novice') or left
 // unmanned ('auto'), in which case the engine's auto-assist plays it.
@@ -37,15 +37,18 @@ interface Scenario {
   seats: Record<SeatId, SeatMode>;
 }
 const SCENARIOS: Scenario[] = [
-  { name: 'skilled', seats: { helm: 'skilled', engineering: 'skilled', weapons: 'skilled', main: 'auto', supervisor: 'auto' } },
-  { name: 'novice', seats: { helm: 'novice', engineering: 'novice', weapons: 'novice', main: 'auto', supervisor: 'auto' } },
-  { name: 'auto', seats: { helm: 'auto', engineering: 'auto', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
-  { name: '1h-helm', seats: { helm: 'skilled', engineering: 'auto', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
-  { name: '1h-eng', seats: { helm: 'auto', engineering: 'skilled', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
-  { name: '1h-weap', seats: { helm: 'auto', engineering: 'auto', weapons: 'skilled', main: 'auto', supervisor: 'auto' } },
+  { name: 'skilled', seats: { helm: 'skilled', engineering: 'skilled', weapons: 'skilled', crewchief: 'skilled', main: 'auto', supervisor: 'auto' } },
+  { name: 'novice', seats: { helm: 'novice', engineering: 'novice', weapons: 'novice', crewchief: 'novice', main: 'auto', supervisor: 'auto' } },
+  { name: 'auto', seats: { helm: 'auto', engineering: 'auto', weapons: 'auto', crewchief: 'auto', main: 'auto', supervisor: 'auto' } },
+  { name: '1h-helm', seats: { helm: 'skilled', engineering: 'auto', weapons: 'auto', crewchief: 'auto', main: 'auto', supervisor: 'auto' } },
+  { name: '1h-eng', seats: { helm: 'auto', engineering: 'skilled', weapons: 'auto', crewchief: 'auto', main: 'auto', supervisor: 'auto' } },
+  { name: '1h-weap', seats: { helm: 'auto', engineering: 'auto', weapons: 'skilled', crewchief: 'auto', main: 'auto', supervisor: 'auto' } },
+  { name: '1h-chief', seats: { helm: 'auto', engineering: 'auto', weapons: 'auto', crewchief: 'skilled', main: 'auto', supervisor: 'auto' } },
   // Two humans with a BOT gunner: directly probes the old "weapons is the
   // survival linchpin" imbalance the CPU rebalance is meant to soften.
-  { name: '2h-helm-eng', seats: { helm: 'skilled', engineering: 'skilled', weapons: 'auto', main: 'auto', supervisor: 'auto' } },
+  { name: '2h-helm-eng', seats: { helm: 'skilled', engineering: 'skilled', weapons: 'auto', crewchief: 'auto', main: 'auto', supervisor: 'auto' } },
+  // Full four-console human crew (the new ideal table).
+  { name: 'full4', seats: { helm: 'skilled', engineering: 'skilled', weapons: 'skilled', crewchief: 'skilled', main: 'auto', supervisor: 'auto' } },
 ];
 
 const missionIds = process.env.LAB_MISSIONS
@@ -66,7 +69,7 @@ function runOnce(missionId: string, scenario: Scenario, seed: number): RunRecord
   // Manned seats join like human players would; 'auto' seats stay unmanned so
   // the engine's auto-assist plays them.
   const manned = CREW_SEATS.filter((s) => scenario.seats[s] !== 'auto');
-  for (const seat of manned) game.join(seat, `lab-${seat}`, `lab-${seat}`, 'normal');
+  for (const seat of manned) game.join(seat, `lab-${seat}`, `lab-${seat}`, 'officer');
   // One crew per policy flavour used this run (seeded, so the cell is
   // reproducible). We only ever call the policy for a manned seat.
   const crews: Partial<Record<SeatMode, ReturnType<typeof makeCrew>>> = {};
@@ -137,17 +140,19 @@ for (const missionId of missionIds) {
 // the single-human scenarios, and the 2-human/bot-gunner mix are shown — where a console's
 // effectiveness read is meaningful. Captain coord is the crew-coordination
 // proxy (defense + gate discipline + fast target hand-offs).
-console.log('\nPer-console effectiveness (arrived runs):\n');
-console.log('| mission | crew | helm gate% | helm on-course | weap hit% | weap acquire(s) | weap chg-idle | eng power-util | captain coord |');
-console.log('|---|---|---|---|---|---|---|---|---|');
-const METRIC_SCENARIOS = ['skilled', '1h-helm', '1h-eng', '1h-weap', '2h-helm-eng'];
+console.log('\nPer-console effectiveness (finished runs):\n');
+console.log('| mission | crew | helm gate% | helm on-course | weap hit% | weap acquire(s) | weap chg-idle | eng power-util | cargo | pods | captain coord |');
+console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+const METRIC_SCENARIOS = ['skilled', 'full4', '1h-helm', '1h-eng', '1h-weap', '1h-chief', '2h-helm-eng'];
 for (const missionId of missionIds) {
   for (const scenarioName of METRIC_SCENARIOS) {
+    // Include every finished run (not just 'arrived') so salvaged/expired
+    // missions surface their crew metrics too.
     const done = cellOf(missionId, scenarioName)
-      .filter((r) => r.debrief && r.debrief.outcome === 'arrived')
+      .filter((r) => r.debrief)
       .map((r) => r.debrief!.telemetry.perConsole);
     if (done.length === 0) {
-      console.log(`| ${missionId} | ${scenarioName} | — | — | — | — | — | — | — |`);
+      console.log(`| ${missionId} | ${scenarioName} | — | — | — | — | — | — | — | — | — |`);
       continue;
     }
     console.log(
@@ -160,6 +165,9 @@ for (const missionId of missionIds) {
       // firepower — high values mean the trigger, not the recharge, is slow).
       `| ${pct(avg(done.map((c) => c.weapons.chargeIdlePct ?? 0)))} ` +
       `| ${pct(avg(done.map((c) => c.engineering.avgPowerUtil)))} ` +
+      // Crew Chief: cargo units recovered and rescue pods aboard (avg per run).
+      `| ${avg(done.map((c) => c.crewchief?.cargoRecovered ?? 0)).toFixed(1)} ` +
+      `| ${avg(done.map((c) => c.crewchief?.podsRescued ?? 0)).toFixed(1)} ` +
       `| ${avg(done.map((c) => c.captain.coordinationScore)).toFixed(2)} |`,
     );
   }

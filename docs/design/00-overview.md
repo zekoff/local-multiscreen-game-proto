@@ -14,19 +14,18 @@ Added after implementation began:
 - [06 — Phaser station UIs: feasibility for a later stage](06-phaser-stations.md)
   (weapons scope now built)
 - [07 — Persistence plan: users, crews, ships](07-persistence.md)
-- [08 — Mission balance baseline data](08-mission-balance-baseline.md)
-  (original baseline; superseded — see below)
+- [11 — Gameplay expansion menu](11-gameplay-expansion-menu.md) — the proposal
+  pool the Crew Chief expansion branch drew from
+
+> Note: several one-off session docs (08–10, 12–14) and older recaps have been
+> pruned. The narrative of record for the Crew Chief expansion branch is PR #7
+> plus the commit log; current balance lives in `../console-complexity-analysis.md`.
 
 Living docs outside `design/` (current state, not assessment):
 
 - [`../status.md`](../status.md) — the resume-here snapshot; read this first
-- [`../pre-playtest-improvements-recap.md`](../pre-playtest-improvements-recap.md)
-  — full changelog of the two-wave pre-playtest pass (usability, viewscreen,
-  audio, flight model, sensors, Emergency Warp, asteroid physics)
 - [`../console-complexity-analysis.md`](../console-complexity-analysis.md) —
-  current per-console load, interplay map, and balance proposals
-- [`../playtest-visual-notes.md`](../playtest-visual-notes.md) — the visual
-  audit that started the pass
+  current per-console load, interplay map, and balance observations
 
 ## TL;DR
 

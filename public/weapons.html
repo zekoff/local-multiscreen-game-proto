@@ -19,7 +19,7 @@
     <!-- Incoming asteroid contacts: radar scope, tap a blip to target it -->
     <div class="panel">
       <h2>Sensor Contacts</h2>
-      <div id="scope-mount" style="width:100%; aspect-ratio:1; max-width:320px; margin:0 auto;"></div>
+      <div id="scope-mount" style="width:100%; aspect-ratio:9 / 5; max-width:420px; margin:0 auto;"></div>
       <p id="scope-empty" style="color:var(--dim); text-align:center; margin-top:0.5rem">No contacts.</p>
       <p id="scope-target" style="text-align:center; margin-top:0.5rem"></p>
     </div>
@@ -27,18 +27,34 @@
     <!-- Weapon charge and fire control -->
     <div class="panel">
       <h2>Phaser Bank</h2>
+      <p class="label" id="wpn-power" style="margin-bottom:0.4rem"></p>
       <div class="label">Charge</div>
-      <div class="meter" style="margin-bottom:0.75rem"><div id="charge-bar"></div></div>
+      <div class="meter" style="margin-bottom:0.75rem; position:relative"><div id="charge-bar"></div><div id="snap-tick"></div></div>
       <button class="primary" id="fire-btn" style="width:100%">FIRE</button>
+      <!-- Charge governor (P#10): STANDARD full-power shots vs SNAPSHOT quick
+           weak shots (fire at 40%, small contacts only) — your call on pacing. -->
+      <div class="label" style="margin:0.7rem 0 0.3rem;">Fire Mode</div>
+      <div class="row">
+        <button id="gov-standard" class="gov-btn">STANDARD</button>
+        <button id="gov-snapshot" class="gov-btn">SNAPSHOT</button>
+      </div>
+      <p class="label" id="gov-hint" style="margin-top:0.4rem;"></p>
     </div>
 
-    <!-- Shield control (regen rate depends on engineering's power allocation) -->
+    <!-- Deflector screen (renamed from "shields" so it stops colliding with
+         Engineering's "shield power" callout — playtest note). Regen rate
+         depends on engineering's shield power allocation. -->
     <div class="panel">
-      <h2>Shields</h2>
+      <h2>Deflector Screen</h2>
+      <p class="label" id="shd-power" style="margin-bottom:0.4rem"></p>
       <div class="label">Strength</div>
       <div class="meter" style="margin-bottom:0.75rem"><div id="shield-bar"></div></div>
-      <button id="shields-btn" style="width:100%">Raise Shields</button>
+      <button id="shields-btn" style="width:100%">Screen Up</button>
     </div>
+
+    <!-- Tractor / tow (shares the phaser emitter): aim + latch a pod/salvage.
+         The laser is offline while latched — your call. -->
+    <div id="tow-widgets"></div>
   </main>
 
   <!-- Phase overlays (shared shell fills these in) -->
@@ -61,15 +77,18 @@
     import { mountPhaser } from '/js/phaser-station.js';
     import { WeaponsScopeScene } from '/js/weapons-scope.js';
     import { createAudio } from '/js/audio.js';
-    import { playFxAudio } from '/js/fx-audio.js';
+    import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
+    import { mountWidgets } from '/js/widget.js';
+    import { towBeam } from '/js/widgets/tow.js';
 
     // Console-local audio: weapons hears its own laser, target lock, fire-ready
     // chime, and shields raise/lower. The laser is deliberately NOT on the main
     // screen — it fires from here.
     const audio = createAudio();
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.resume());
-    const WEAPONS_FX = new Set(['laser']);
+    const WEAPONS_FX = new Set(['laser', 'tractorBeam']);
+    let towHost = null;
     let prevShieldsRaised = false;
     let prevTargetId = null;
     let prevReady = false;
@@ -81,7 +100,7 @@
     let shieldsRaised = false;
 
     const scopeScene = new WeaponsScopeScene();
-    mountPhaser({ parentId: 'scope-mount', width: 320, height: 320, scene: scopeScene });
+    mountPhaser({ parentId: 'scope-mount', width: 360, height: 200, scene: scopeScene });
 
     const intents = createIntents();
     const net = initStation({
@@ -95,6 +114,7 @@
         // Weapons-local SFX: laser (from the fx stream), a lock chime when a new
         // contact is acquired, and a soft chime the moment the bank recharges.
         playFxAudio(state.fx, audio, WEAPONS_FX);
+        readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
         if (state.targetId !== null && state.targetId !== prevTargetId) audio.targetLock();
         prevTargetId = state.targetId;
         const chargeReady = state.charge >= 100;
@@ -107,29 +127,90 @@
         const acquirable = state.asteroids.filter((a) => a.targetable);
         scopeEmptyEl.style.display = acquirable.length === 0 ? '' : 'none';
         const targeted = state.asteroids.find((a) => a.id === state.targetId);
-        // Scope shows only the contact name — threat/speed data lives on the
-        // main screen so the captain can call priorities.
-        scopeTargetEl.textContent = targeted ? `Targeting ${targeted.label}` : '';
+        // Scope shows the contact name + its resolved kind (UNKNOWN until sensors
+        // identify it). Threat/speed data lives on the main screen so the captain
+        // can call priorities. A locked-on rescue POD reads as a HOLD-FIRE warning.
+        const kindLabel = targeted ? (targeted.identified ? targeted.kind.toUpperCase() : 'UNKNOWN') : '';
+        const isPod = targeted && targeted.identified && targeted.kind === 'pod';
+        scopeTargetEl.innerHTML = targeted
+          ? (isPod
+              ? `<b style="color:var(--bad)">${targeted.label}: RESCUE POD — HOLD FIRE</b>`
+              : `Targeting ${targeted.label} <span class="label">${kindLabel}</span>`)
+          : '';
 
-        // Charge is the laser recharge meter — green and firable only at full.
+        // Governor: SNAPSHOT fires at 40% (small contacts only), STANDARD at 100%.
+        const gov = intents.get('governor') ?? state.governor ?? 'standard';
+        const needed = gov === 'snapshot' ? 40 : 100;
+        document.getElementById('gov-standard').classList.toggle('on', gov === 'standard');
+        document.getElementById('gov-snapshot').classList.toggle('on', gov === 'snapshot');
+        document.getElementById('gov-hint').textContent = gov === 'snapshot'
+          ? 'Snapshot: fire at 40% — only cracks small rocks.'
+          : 'Standard: wait for full charge, full damage.';
+
+        // Charge is the laser recharge meter — firable at the governor threshold.
         // A just-tapped FIRE renders as drained immediately (optimistic flash)
         // even though the server won't echo the empty meter for a tick.
         const charge = intents.has('fired') ? 0 : state.charge;
-        const ready = charge >= 100;
+        const ready = charge >= needed;
         setChargeBar(document.getElementById('charge-bar'), charge, ready);
-        fireBtn.disabled = !ready || state.targetId === null;
-        fireBtn.textContent = !ready
-          ? 'CHARGING…'
-          : state.targetId === null ? 'FIRE (select a target)' : 'FIRE';
-        // Shield toggle: prefer the just-commanded value (optimistic) over the
-        // snapshot; the audio edge detector stays on authoritative state.
+        // Snapshot tick: mark the 40% threshold on the gauge in SNAPSHOT mode so
+        // the gunner can see at a glance when a quick shot is available. Green
+        // once the meter has crossed it.
+        const snapTick = document.getElementById('snap-tick');
+        snapTick.style.display = gov === 'snapshot' ? 'block' : 'none';
+        snapTick.style.background = charge >= 40 ? 'var(--good)' : 'rgba(255,255,255,0.55)';
+        // The tractor shares the laser emitter — you can't fire while it's
+        // latched. Disable the button outright and say why (clearer than letting
+        // the press through to a rejected action). Enforced server-side too.
+        const tractorEngaged = !!(state.tractor && state.tractor.latched);
+        // Never let the gunner fire on a confirmed pod (the don't-shoot invariant
+        // is enforced server-side too, but the UI refuses it and says why).
+        fireBtn.disabled = tractorEngaged || !ready || state.targetId === null || isPod;
+        fireBtn.textContent = tractorEngaged
+          ? 'TRACTOR BEAM ENGAGED'
+          : isPod
+            ? 'HOLD FIRE — RESCUE POD'
+            : !ready
+              ? (gov === 'snapshot' ? 'CHARGING (40%)…' : 'CHARGING…')
+              : state.targetId === null ? 'FIRE (select a target)' : (gov === 'snapshot' ? 'SNAPSHOT' : 'FIRE');
+        // Deflector-screen toggle: prefer the just-commanded value (optimistic)
+        // over the snapshot; the audio edge detector stays on authoritative state.
         if (state.shields.raised && !prevShieldsRaised) audio.shieldUp();
         else if (!state.shields.raised && prevShieldsRaised) audio.shieldDown();
         prevShieldsRaised = state.shields.raised;
         shieldsRaised = intents.get('shields') ?? state.shields.raised;
-        shieldsBtn.textContent = shieldsRaised ? 'Lower Shields' : 'Raise Shields';
+        shieldsBtn.textContent = shieldsRaised ? 'Screen Down' : 'Screen Up';
         setHealthBar(document.getElementById('shield-bar'), state.shields.strength);
+        if (towHost) towHost.render(state);
+        // Inline power readouts: Engineering's allocation shown right where it
+        // matters (drives laser recharge + tractor reel, and shield regen), with
+        // a NO-POWER call — no separate power panel needed on this console.
+        const wp = state.power.weapons, wTrip = state.breakers.weapons;
+        document.getElementById('wpn-power').innerHTML = wp > 0
+          ? `Weapon power <b style="color:var(--accent)">${wp}</b>${wTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — drives recharge + tractor`
+          : '<b style="color:var(--bad)">NO WEAPON POWER</b> — ask Engineering';
+        const sp = state.power.shields, sTrip = state.breakers.shields;
+        document.getElementById('shd-power').innerHTML = sp > 0
+          ? `Shield power <b style="color:var(--accent)">${sp}</b>${sTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — regen rate`
+          : '<b style="color:var(--bad)">NO SHIELD POWER</b> — regen stalled';
       },
+    });
+
+    // Tractor/tow widget (shares the emitter — the gunner's own tow control).
+    towHost = mountWidgets(
+      document.getElementById('tow-widgets'),
+      [towBeam],
+      { net, intents, audio, seat: 'weapons' },
+    );
+
+    // Governor mode buttons.
+    document.getElementById('gov-standard').addEventListener('click', () => {
+      net.action({ kind: 'governor', mode: 'standard' });
+      intents.set('governor', 'standard', (s) => s.governor === 'standard');
+    });
+    document.getElementById('gov-snapshot').addEventListener('click', () => {
+      net.action({ kind: 'governor', mode: 'snapshot' });
+      intents.set('governor', 'snapshot', (s) => s.governor === 'snapshot');
     });
 
     fireBtn.addEventListener('click', () => {
@@ -177,10 +258,11 @@
           <text x="220" y="122" fill="#7d8db3" text-anchor="middle">SHIELDS: BLOCK HITS, DRAIN WHILE UP</text>
         </svg>`,
       lines: [
-        '<b>Tap a blip</b> on the scope to target it. Press <b>FIRE</b> when the charge bar is full. Shots always hit.',
-        'The laser <b>recharges faster with more weapon power</b> — ask Engineering when rocks are thick.',
-        'Rocks appear on the scope only when <b>sensors detect them</b> — more sensor power or a pulse means earlier targeting.',
-        '<b>Shields</b> block damage but drain while raised, and only recharge while lowered.',
+        'The scope is a <b>forward arc</b> out the front window — contacts sit where they are relative to your bow (port ↔ starboard) and slide toward you as they close. <b>Tap a blip</b> to target it, then <b>FIRE</b> when charged. Shots always hit.',
+        '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% and cracks <b>most</b> rocks fast — but a genuinely <b>big</b> rock shrugs it off and needs a full shot. You can\'t tell size on the scope; the <b>captain</b> calls the big ones from the viewscreen. The gauge tick shows when a snapshot is ready.',
+        'Contacts read <b>UNKNOWN</b> until sensors identify them. A <b>RESCUE POD</b> looks like a rock at range — <b>never fire on a pod</b> (the console will refuse it). Confirm before you shoot.',
+        'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> shares your emitter: latch a pod/salvage in the arc to reel it in — but the <b>laser is offline while latched</b>, so it\'s a "tow or shoot?" call. Weapons power drives both.',
+        'The <b>deflector screen</b> blocks damage but drains while up, and only recharges while down.',
         'The <b>captain</b> reads speed and threat on the main screen and calls priorities.',
       ],
     });

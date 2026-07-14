@@ -12,6 +12,7 @@
 
 import { Game, type SystemId } from '../src/engine/game.js';
 import { pacingFor, type MissionDef } from '../src/engine/mission.js';
+import { generateEuropaSalvageLoop } from '../src/engine/mission-gen.js';
 
 const TICK = 0.25; // matches the live server tick
 
@@ -45,7 +46,7 @@ function freshGame(): Game {
   // Man every crew seat so no auto-assist interferes with the measurement
   // (auto-eng would reallocate power, auto-weapons would manage shields).
   for (const seat of ['helm', 'engineering', 'weapons'] as const) {
-    game.join(seat, `chk-${seat}`, `chk-${seat}`, 'normal');
+    game.join(seat, `chk-${seat}`, `chk-${seat}`, 'officer');
   }
   game.start(SANDBOX, 42);
   return game;
@@ -64,13 +65,14 @@ function measureRecharge(game: Game, secs: number): number {
   return game.serialize().charge as number;
 }
 
-// --- 1. The 7-point pool is fully spent by the default split, engines lead ---
+// --- 1. The 7-point pool is fully spent by the default split (E2 S1 W2 Sen2) ---
 {
   const game = freshGame();
   const power = game.serialize().power as Record<SystemId, number>;
   const total = power.engines + power.shields + power.weapons + power.sensors;
   check('default power split spends the full 7-point pool', total === 7, `total=${total}`);
-  check('default split leads with engines=3', power.engines === 3, `engines=${power.engines}`);
+  check('default split funds sensors=2 (earlier detection)', power.sensors === 2, `sensors=${power.sensors}`);
+  check('default split funds weapons=2 (laser + tractor share it)', power.weapons === 2, `weapons=${power.weapons}`);
 }
 
 // --- 2. Recharge slope = LASER_CHARGE_RATE × weapons power (default 2 ⇒ 14/s) ---
@@ -127,43 +129,44 @@ function measureRecharge(game: Game, secs: number): number {
 // helm = course drift, engineering = breaker trips per hull hit, weapons =
 // asteroid spawn pressure. Same seed both sides, so the comparison is exact.
 
-function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons', difficulty: 'chill' | 'intense'): Game {
+function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons', difficulty: 'cruise' | 'officer'): Game {
   const game = new Game();
   game.onEvent = () => {};
   for (const s of ['helm', 'engineering', 'weapons'] as const) {
-    game.join(s, `chk-${s}`, `chk-${s}`, s === seat ? difficulty : 'normal');
+    game.join(s, `chk-${s}`, `chk-${s}`, s === seat ? difficulty : 'officer');
   }
   game.start(def, 42);
   return game;
 }
 
 {
-  // Helm: drift pressure scales with the helm seat's difficulty.
+  // Helm: drift pressure scales with the helm seat's difficulty (Cruise 0.6 vs
+  // Officer 1.0 — a 1.67x span).
   const driftDef: MissionDef = { ...SANDBOX, driftScale: 1 };
-  const drift = (d: 'chill' | 'intense') => {
+  const drift = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(driftDef, 'helm', d);
     tickFor(game, 60);
     return Math.abs(game.serialize().alignment as number);
   };
-  const chill = drift('chill');
-  const intense = drift('intense');
-  check('helm difficulty scales course drift', intense > chill && intense >= chill * 1.5, `chill=${chill} intense=${intense}`);
+  const cruise = drift('cruise');
+  const officer = drift('officer');
+  check('helm difficulty scales course drift', officer > cruise && officer >= cruise * 1.5, `cruise=${cruise} officer=${officer}`);
 }
 
 {
   // Engineering: breaker trips per hull hit scale with the eng seat's
-  // difficulty (chill ~60% of hits, normal every hit, intense adds seconds).
-  const trips = (d: 'chill' | 'intense') => {
+  // difficulty (Cruise ~60% of hits, Officer every hit).
+  const trips = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(SANDBOX, 'engineering', d) as any;
     for (let i = 0; i < 20; i++) {
-      game.applyImpact({ id: 900 + i, label: `CHK-${i}`, dmg: 0.5, impactIn: 0, size: 1, speed: 1, bearing: 0, revealed: true });
+      game.applyImpact({ id: 900 + i, designation: 900 + i, dmg: 0.5, impactIn: 0, size: 1, speed: 1, bearing: 0, revealed: true });
       for (const s of ['engines', 'shields', 'weapons', 'sensors']) game.resetBreaker(s);
     }
     return game.stats.breakersTripped as number;
   };
-  const chill = trips('chill');
-  const intense = trips('intense');
-  check('eng difficulty scales impact breaker trips', chill <= 17 && intense >= 22 && intense > chill, `chill=${chill}/20 hits, intense=${intense}/20 hits`);
+  const cruise = trips('cruise');
+  const officer = trips('officer');
+  check('eng difficulty scales impact breaker trips', cruise <= 17 && officer >= 19 && officer > cruise, `cruise=${cruise}/20 hits, officer=${officer}/20 hits`);
 }
 
 {
@@ -174,14 +177,14 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
     impactIn: { min: 99999, max: 99999 }, // never actually arrive
     maxAsteroids: 999,
   };
-  const spawned = (d: 'chill' | 'intense') => {
+  const spawned = (d: 'cruise' | 'officer') => {
     const game = gameWithSeat(spawnDef, 'weapons', d) as any;
     tickFor(game, 100);
     return game.tel.asteroidsSpawned as number;
   };
-  const chill = spawned('chill');
-  const intense = spawned('intense');
-  check('weapons difficulty scales spawn pressure', intense >= chill * 1.5 && intense > chill, `chill=${chill} intense=${intense}`);
+  const cruise = spawned('cruise');
+  const officer = spawned('officer');
+  check('weapons difficulty scales spawn pressure', officer >= cruise * 1.5 && officer > cruise, `cruise=${cruise} officer=${officer}`);
 }
 
 // --- 8. Target lock is lost when the contact falls below sensor resolution ---
@@ -189,19 +192,223 @@ function gameWithSeat(def: MissionDef, seat: 'helm' | 'engineering' | 'weapons',
 // point: range shrinks under the contact and the lock must clear.
 {
   const game = freshGame() as any;
-  // Default sensors=1 -> range 10s. Hand-place a rock at 9.5s (targetable).
+  // Default sensors=2 -> detection range 15+3*2 = 21s. Hand-place a rock at 19.5s
+  // (targetable now, but only just — dropping a sensor point pulls range to 18s).
   game.asteroids.push({
-    id: 501, label: 'CHK-EDGE', impactIn: 9.5, dmg: 5, size: 1, speed: 1,
-    revealed: false, announced: true, bearing: 0,
+    id: 501, designation: 501, kind: 'rock', impactIn: 19.5, dmg: 5, size: 1, speed: 1, mass: 0,
+    revealed: false, identified: true, announced: true, bearing: 0,
   });
   game.action('weapons', { kind: 'target', id: 501 });
-  check('edge contact locks at sensors=1 (range 10s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
-  // Drop sensors 1 -> 0: range 8s < 9.5s, the contact fades, lock must drop.
+  check('edge contact locks at sensors=2 (range 21s)', game.serialize().targetId === 501, `targetId=${game.serialize().targetId}`);
+  // Drop sensors 2 -> 1: range 18s < 19.5s, the contact fades, lock must drop.
   game.action('engineering', { kind: 'power', system: 'sensors', delta: -1 });
   game.tick(0.25);
   const after = game.serialize();
   check('lock clears when sensor range shrinks under the contact', after.targetId === null, `targetId=${after.targetId}`);
   check('faded contact is no longer targetable', after.asteroids.find((a: any) => a.id === 501)?.targetable === false, '');
+}
+
+// --- 9. Weapons governor (P#10): SNAPSHOT fires at 40% but only cracks small
+// contacts; a big rock shrugs it off (charge spent, contact survives). ---
+{
+  const game = freshGame() as any;
+  game.action('weapons', { kind: 'governor', mode: 'snapshot' });
+  game.charge = 45;
+  game.asteroids.push({ id: 610, designation: 610, kind: 'rock', impactIn: 5, dmg: 5, size: 0.8, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 610 });
+  game.action('weapons', { kind: 'fire' });
+  check('snapshot at 40% destroys a small rock', !game.asteroids.some((a: any) => a.id === 610), 'small rock survived');
+
+  const g2 = freshGame() as any;
+  g2.action('weapons', { kind: 'governor', mode: 'snapshot' });
+  g2.charge = 45;
+  g2.asteroids.push({ id: 611, designation: 611, kind: 'rock', impactIn: 5, dmg: 5, size: 1.5, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  g2.action('weapons', { kind: 'target', id: 611 });
+  g2.action('weapons', { kind: 'fire' });
+  check('snapshot glances off a big rock (survives, charge spent)', g2.asteroids.some((a: any) => a.id === 611) && g2.charge === 0, `present=${g2.asteroids.some((a: any) => a.id === 611)} charge=${g2.charge}`);
+}
+
+// --- 10. Firing is blocked while the tractor beam is latched (shared emitter) ---
+{
+  const game = freshGame() as any;
+  game.charge = 100;
+  game.tractorLatched = true;
+  game.asteroids.push({ id: 620, designation: 620, kind: 'rock', impactIn: 5, dmg: 5, size: 1, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 620 });
+  game.action('weapons', { kind: 'fire' });
+  check('cannot fire while tractor latched', game.asteroids.some((a: any) => a.id === 620) && game.charge === 100, `present=${game.asteroids.some((a: any) => a.id === 620)} charge=${game.charge}`);
+}
+
+// --- 11. Detection vs identification split: a pod detected at low sensor power
+// reads UNKNOWN; a pulse resolves it. ---
+{
+  const game = freshGame() as any;
+  // sensors=2: detection range 21s, ID range 7.5+4.5*2 = 16.5s. Place a pod at
+  // 18.5s: detected (blip) but beyond ID range, so NOT identified.
+  game.spawnContact('pod', { min: 18.5, max: 18.5 }, { min: 0, max: 0 });
+  game.tick(0.25);
+  const s1 = game.serialize();
+  const blip = s1.asteroids.find((a: any) => a.impactIn >= 17);
+  check('pod detected but UNKNOWN at low sensor power', !!blip && blip.targetable === true && blip.kind === 'unknown', `blip=${JSON.stringify(blip)}`);
+  game.action('engineering', { kind: 'sensorPulse' });
+  game.tick(0.25);
+  const s2 = game.serialize();
+  const idd = s2.asteroids.find((a: any) => a.id === blip.id);
+  check('sensor pulse identifies the pod', !!idd && idd.kind === 'pod' && idd.identified === true, `idd=${JSON.stringify(idd)}`);
+}
+
+// --- 12. Cargo mass drags maneuverability (P#23): a full hold turns less per nudge ---
+{
+  const light = freshGame() as any;
+  light.throttle = 0;
+  const a0 = light.serialize().alignment;
+  light.action('helm', { kind: 'nudge', dir: 1 });
+  const lightTurn = Math.abs((light.serialize().alignment as number) - a0);
+
+  const heavy = freshGame() as any;
+  heavy.throttle = 0;
+  for (let i = 0; i < heavy.serialize().holdCapacity; i++) heavy.cargo.push({ id: i + 1, label: 'ORE', kind: 'mineral', mass: 2, value: 2 });
+  const b0 = heavy.serialize().alignment;
+  heavy.action('helm', { kind: 'nudge', dir: 1 });
+  const heavyTurn = Math.abs((heavy.serialize().alignment as number) - b0);
+  check('a laden hold reduces turn authority', heavyTurn < lightTurn * 0.8, `light=${lightTurn.toFixed(2)} heavy=${heavyTurn.toFixed(2)}`);
+}
+
+// --- 13. Course-hold (P#12) eases a crewed helm back on course; manual steering releases it ---
+{
+  const game = freshGame() as any;
+  game.alignment = 40;
+  game.action('helm', { kind: 'hold', on: true });
+  tickFor(game, 4);
+  const held = Math.abs(game.serialize().alignment as number);
+  check('course-hold eases the ship back toward course', held < 40, `|align|=${held.toFixed(1)}`);
+  game.action('helm', { kind: 'nudge', dir: 1 });
+  check('manual steering disengages course-hold', game.serialize().courseHold === false, 'still held');
+}
+
+// --- 14. Shooting a rescue pod is penalized (the don't-shoot invariant) ---
+{
+  const game = freshGame() as any;
+  game.charge = 100;
+  game.asteroids.push({ id: 630, designation: 642, kind: 'pod', impactIn: 5, dmg: 0, size: 0.8, speed: 1, mass: 1, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 630 });
+  game.action('weapons', { kind: 'fire' });
+  check('firing on a pod removes it and records the shame stat', !game.asteroids.some((a: any) => a.id === 630) && game.podsDestroyed === 1, `podsDestroyed=${game.podsDestroyed}`);
+}
+
+// --- 15. Tractor needs WEAPONS power (shared emitter): at 0 weapons power, no
+// latch. The tow controls are now the weapons seat's. ---
+{
+  const game = freshGame() as any;
+  // Drop WEAPONS power to 0 so eff('weapons') = 0 < TRACTOR_MIN_POWER.
+  game.action('engineering', { kind: 'power', system: 'weapons', delta: -1 });
+  game.action('engineering', { kind: 'power', system: 'weapons', delta: -1 });
+  game.spawnContact('mineral', { min: 6, max: 6 }, { min: 0, max: 0 });
+  game.action('engineering', { kind: 'sensorPulse' }); // identify it
+  game.tick(0.25);
+  const ore = game.serialize().asteroids.find((a: any) => a.kind === 'mineral');
+  game.alignment = ore ? ore.bearing : 0;
+  game.action('weapons', { kind: 'tractorTarget', id: ore?.id });
+  game.action('weapons', { kind: 'tractorLatch', on: true });
+  check('tractor will not latch without power', game.serialize().tractor.latched === false, 'latched with no power');
+}
+
+// --- 16. Crew Chief: committed maintenance crew trim a worn system down ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons', 'crewchief'] as const) {
+    game.join(s, `chk-${s}`, `chk-${s}`, 'officer');
+  }
+  game.start(SANDBOX, 42);
+  const g = game as any;
+  g.wear.engines = 0.4;
+  game.action('crewchief', { kind: 'assignCrew', post: 'maint:engines' });
+  tickFor(game, 5);
+  check('committed crew trim system wear down', g.wear.engines < 0.4, `after=${g.wear.engines}`);
+}
+
+// --- 17. No chief aboard: automated upkeep holds all wear at zero ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons'] as const) { // crewchief UNMANNED
+    game.join(s, `chk-${s}`, `chk-${s}`, 'officer');
+  }
+  game.start(SANDBOX, 42);
+  const g = game as any;
+  tickFor(game, 30);
+  const maxWear = Math.max(...['engines', 'shields', 'weapons', 'sensors'].map((s) => g.wear[s]));
+  check('automated upkeep holds wear at zero with no chief', maxWear === 0, `maxWear=${maxWear}`);
+}
+
+// --- 18. Crew Chief: the repair bay restores hull ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  for (const s of ['helm', 'engineering', 'weapons', 'crewchief'] as const) {
+    game.join(s, `chk-${s}`, `chk-${s}`, 'officer');
+  }
+  game.start(SANDBOX, 42);
+  const g = game as any;
+  g.hull = 60;
+  game.action('crewchief', { kind: 'assignCrew', post: 'repair' });
+  tickFor(game, 4);
+  check('repair bay restores hull', g.hull > 60, `hull=${g.hull}`);
+}
+
+// --- 19. Snapshot now cracks a MID-size rock (≤ 1.3), only genuinely big survive ---
+{
+  const game = freshGame() as any;
+  game.charge = 100;
+  game.governor = 'snapshot';
+  game.asteroids.push({ id: 615, designation: 615, kind: 'rock', impactIn: 5, dmg: 5, size: 1.2, speed: 1, mass: 0, revealed: true, identified: true, announced: true, bearing: 0 });
+  game.action('weapons', { kind: 'target', id: 615 });
+  game.action('weapons', { kind: 'fire' });
+  check('snapshot cracks a mid-size rock (1.2 ≤ threshold)', !game.asteroids.some((a: any) => a.id === 615), 'survived');
+}
+
+// --- 20. GO-poll: allReady is false until every manned crew seat is ready ---
+{
+  const game = new Game();
+  game.onEvent = () => {};
+  game.join('weapons', 'p1', 'Gun', 'officer'); // lobby, one manned seat
+  const before = game.serialize().allReady as boolean;
+  game.setReady('weapons', 'p1', true);
+  const after = game.serialize().allReady as boolean;
+  check('GO-poll allReady flips once the manned seat is ready', before === false && after === true, `before=${before} after=${after}`);
+}
+
+// --- 21. Debug crew-skill clamps to [0,1] ---
+{
+  const game = freshGame() as any;
+  game.debug = true;
+  game.action('main', { kind: 'setCrewSkill', value: 1.5 });
+  const hi = game.crewSkill;
+  game.action('main', { kind: 'setCrewSkill', value: -0.5 });
+  const lo = game.crewSkill;
+  check('debug crew-skill clamps to [0,1]', hi === 1 && lo === 0, `hi=${hi} lo=${lo}`);
+}
+
+// --- 22. Europa Salvage Loop: fixed-shape procedural mission ---
+{
+  const def = generateEuropaSalvageLoop(7);
+  const kinds = def.events.flatMap((e) => e.actions.map((a) => a.type));
+  const has = (t: string) => kinds.includes(t);
+  const contactKinds = def.events.flatMap((e) => e.actions.filter((a: any) => a.type === 'spawnContact').map((a: any) => a.kind));
+  check('europa is a 5-min salvage-scored run', def.targetSeconds === 300 && def.scoreModel === 'salvage' && (def.salvageGoal ?? 0) > 0, `t=${def.targetSeconds} model=${def.scoreModel}`);
+  check('europa has no obstacles / emergencies / flares', !has('spawnObstacle') && !has('startEmergency') && !has('solarFlare'), `kinds=${[...new Set(kinds)].join(',')}`);
+  check('europa mixes pod + ghost + mineral + hazards',
+    contactKinds.includes('pod') && contactKinds.includes('ghost') && contactKinds.includes('mineral') && has('ionStorm') && has('debrisField') && has('setViewImpaired'),
+    `contacts=${[...new Set(contactKinds)].join(',')} kinds=${[...new Set(kinds)].join(',')}`);
+  // Sim advances without throwing (all-auto crew): either it made real progress
+  // or it resolved to a debrief — both prove the run executed end to end.
+  const game = new Game();
+  game.onEvent = () => {};
+  game.start(def, 7);
+  for (let i = 0; i < Math.round(150 / TICK); i++) game.tick(TICK);
+  const s = game.serialize() as any;
+  check('europa sim runs end to end', (s.phase === 'active' && s.missionTime > 120) || s.phase === 'debrief', `phase=${s.phase} t=${s.missionTime}`);
 }
 
 if (failures > 0) {

@@ -33,17 +33,19 @@
       </div>
       <div class="row" style="margin-bottom:0.75rem;">
         <select id="difficulty-select">
-          <option value="chill">Chill — lighter workload</option>
-          <option value="normal" selected>Normal</option>
-          <option value="intense">Intense — heavier workload</option>
+          <option value="cruise">Cruise — lighter workload</option>
+          <option value="officer" selected>Officer — full duty</option>
         </select>
       </div>
       <div class="row" style="margin-bottom:0.75rem;">
         <button data-seat="helm">Helm</button>
         <button data-seat="engineering">Engineering</button>
       </div>
-      <div class="row">
+      <div class="row" style="margin-bottom:0.75rem;">
         <button data-seat="weapons">Weapons</button>
+        <button data-seat="crewchief">Crew Chief</button>
+      </div>
+      <div class="row">
         <button data-seat="mainscreen">Main Screen</button>
       </div>
       <div class="row" style="margin-top:0.75rem;">
@@ -59,6 +61,50 @@
     const params = new URLSearchParams(location.search);
     const codeInput = document.getElementById('code-input');
     if (params.get('room')) codeInput.value = params.get('room').toUpperCase();
+
+    // Crew Chief is frozen for playtesting — it lags the other consoles in
+    // fun/usability, so it's disabled and marked (WIP) to keep the rest of the
+    // branch mergeable. Adding ?debug to the landing URL re-enables it for
+    // continued development. When frozen it's never selectable and never polled.
+    const CC_ENABLED = params.has('debug');
+
+    // Grey out crew consoles already taken in the room (main/supervisor are
+    // non-exclusive, never disabled). Polls the room-info endpoint so the list
+    // stays fresh as crew join. Labels a taken console with its occupant.
+    const CREW_LABELS = { helm: 'Helm', engineering: 'Engineering', weapons: 'Weapons', crewchief: 'Crew Chief' };
+    // Freeze the Crew Chief button up front (unless ?debug); refreshSeats skips it.
+    if (!CC_ENABLED) {
+      const cc = document.querySelector('button[data-seat="crewchief"]');
+      if (cc) { cc.disabled = true; cc.textContent = 'Crew Chief (WIP)'; }
+    }
+    async function refreshSeats() {
+      const code = codeInput.value.trim().toUpperCase();
+      // The seats we actually manage here — Crew Chief drops out when frozen.
+      const seats = Object.keys(CREW_LABELS).filter((s) => s !== 'crewchief' || CC_ENABLED);
+      const setAll = () => {
+        for (const s of seats) {
+          const btn = document.querySelector(`button[data-seat="${s}"]`);
+          if (btn) { btn.disabled = false; btn.textContent = CREW_LABELS[s]; }
+        }
+      };
+      if (code.length !== 4) { setAll(); return; }
+      try {
+        const res = await fetch(`/api/room-info?code=${code}`);
+        if (!res.ok) { setAll(); return; }
+        const info = await res.json();
+        for (const s of seats) {
+          const btn = document.querySelector(`button[data-seat="${s}"]`);
+          if (!btn) continue;
+          const taken = info.claimed && info.claimed[s];
+          btn.disabled = !!taken;
+          const who = info.names && info.names[s];
+          btn.textContent = taken ? `${CREW_LABELS[s]} — taken${who ? ` (${who})` : ''}` : CREW_LABELS[s];
+        }
+      } catch { /* landing page works offline of a room; ignore */ }
+    }
+    codeInput.addEventListener('input', refreshSeats);
+    refreshSeats();
+    setInterval(refreshSeats, 3000);
 
     // Host: create a room, then open the main screen for it.
     document.getElementById('create-btn').addEventListener('click', async () => {
