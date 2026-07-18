@@ -43,7 +43,14 @@ class SpaceScene extends Phaser.Scene {
     this.usedTexts = new Set();
     this.nebulaImgs = [];
     this.nebulaKey = '';
-    this.explBursts = [];       // active explosion sparks { x, y, t }
+    this.dpr = 1;
+    // Arrival cinematic (client-driven): ramps 0->1 over ~2.5s once progress
+    // crosses the threshold near a station/planet destination.
+    this.arrivalStart = null;
+    this.arrivalT = 0;
+    this.stationPos = null;     // last-drawn station screen pos {x,y,r} (docking target)
+    this.dockers = [];          // decorative ships docking into a background station
+    this.dockTimer = 0;
   }
 
   preload() {
@@ -63,10 +70,14 @@ class SpaceScene extends Phaser.Scene {
     this.load.image('spark', `${ASSETS}/spark.png`);
     this.load.image('star', `${ASSETS}/star.png`);
     this.load.image('streak', `${ASSETS}/streak.png`);
+    this.load.image('docker1', `${ASSETS}/docker_1.png`);
+    this.load.image('docker2', `${ASSETS}/docker_2.png`);
   }
 
   create() {
+    this.dpr = this.game.registry.get('dpr') || 1;
     this.cameras.main.setBackgroundColor('#05070d');
+    this.applyCamera();
 
     // Graphics layers (immediate-mode, cleared+redrawn each frame), depth-ordered
     // to roughly match the canvas draw order. Additive layers give the glow read.
@@ -97,7 +108,24 @@ class SpaceScene extends Phaser.Scene {
       if (fl?.addVignette) fl.addVignette(0.5, 0.5, 0.9, 0.35);
     } catch { /* Filter API unavailable in this Phaser build — additive blend still glows */ }
 
-    this.scale.on('resize', () => this.cameras.main.setBackgroundColor('#05070d'));
+  }
+
+  // Zoom the camera by dpr so the scene authors in CSS px while the backing
+  // store is device px (crisp). centerOn keeps the CSS-content (0..cssW) filling
+  // the device-px viewport; baseScroll is the un-shaken scroll, added to by the
+  // screen-shake jitter each frame.
+  applyCamera() {
+    const cam = this.cameras.main;
+    cam.setZoom(this.dpr);
+    const cssW = this.scale.width / this.dpr, cssH = this.scale.height / this.dpr;
+    cam.centerOn(cssW / 2, cssH / 2);
+    this.baseScrollX = cam.scrollX;
+    this.baseScrollY = cam.scrollY;
+  }
+
+  onResize() {
+    this.cameras.main.setBackgroundColor('#05070d');
+    this.applyCamera();
   }
 
   // ---- pooled label text --------------------------------------------------
@@ -146,25 +174,43 @@ class SpaceScene extends Phaser.Scene {
 
     const latest = getLatest();
     const active = !!(latest && latest.phase === 'active');
-    const w = this.scale.width, h = this.scale.height;
+    // Author in CSS px (the camera zoom of dpr renders it at device px).
+    const w = this.scale.width / this.dpr, h = this.scale.height / this.dpr;
 
-    // Camera bank with the interpolated alignment; shake via camera scroll jitter.
+    // Arrival cinematic timer: start once progress crosses the threshold near a
+    // themed destination; ramp over ~2.5s. Reset when a fresh run is underway.
+    const dest = active ? latest.mission?.destination : null;
+    if (active && dest && latest.progress >= 96 && this.arrivalStart === null) this.arrivalStart = time;
+    if (active && latest.progress < 50) { this.arrivalStart = null; this.arrivalT = 0; }
+    if (this.arrivalStart !== null) this.arrivalT = Math.min(1, (time - this.arrivalStart) / 2500);
+    const arr = this.arrivalT;
+
+    // Camera bank with the interpolated alignment; shake via camera scroll jitter
+    // added to the base (zoom-centered) scroll. A steady low rumble while a debris
+    // field scours the hull, on top of the fx impacts.
     const targetYaw = active ? Math.max(-1, Math.min(1, displayAlignment() / 100)) : 0;
     this.yaw += (targetYaw - this.yaw) * Math.min(1, dt * 8);
     this.cameras.main.setRotation(this.yaw * 0.04);
-    if (fx.shake > 0.2) {
-      const s = fx.shake * 0.5;
-      this.cameras.main.setScroll((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
+    const scouring = active && latest.debrisIn > 0 && (latest.throttle || 0) > 40;
+    const shakeMag = Math.max(fx.shake, scouring ? 3 : 0);
+    if (shakeMag > 0.2) {
+      const s = shakeMag * 0.5;
+      this.cameras.main.setScroll(this.baseScrollX + (Math.random() - 0.5) * s, this.baseScrollY + (Math.random() - 0.5) * s);
     } else {
-      this.cameras.main.setScroll(0, 0);
+      this.cameras.main.setScroll(this.baseScrollX, this.baseScrollY);
     }
 
     const cx = w / 2 - this.yaw * w * 0.16;
     const cy = h / 2;
     const projScale = Math.min(w, h) * 0.5;
     const yawPx = -this.yaw * w * 0.16;
-    const shipSpeed = active ? latest.speed : 5;
-    const slipstream = !!(active && latest.slipstream);
+    // Normalized ship speed (0 stationary .. ~1.6 slipstream) for the starfield:
+    // speed maxes at 60*speedScale; slipstream (×1.6 in the engine) pushes past 1.
+    const speed = active ? (latest.speed || 0) : 0;
+    const maxSpeed = 60 * ((active && latest.mission?.speedScale) || 1);
+    let normSpeed = maxSpeed > 0 ? Math.min(1.6, speed / maxSpeed) : 0;
+    if (arr > 0) normSpeed = Math.max(normSpeed, 0.6 + arr); // rush the stars on arrival dolly
+    const slipstream = !!(active && latest.slipstream);      // radial streak burst (drawSlipstream)
 
     this.gStars.clear();
     this.gGates.clear();
@@ -174,14 +220,14 @@ class SpaceScene extends Phaser.Scene {
     this.beginTexts();
 
     this.drawNebula(latest, w, h, yawPx);
-    this.drawStars(dt, cx, cy, projScale, shipSpeed, slipstream, w, h);
+    this.drawStars(dt, cx, cy, projScale, normSpeed, w, h);
 
     if (active) {
       this.drawDistantTraffic(latest, w, h, yawPx);
-      this.drawDestination(latest, w, h, cx);
+      this.drawDestination(latest, w, h, cx, arr);
       this.drawGates(latest, w, h, cy);
       this.drawObstacles(latest, w, h, cy);
-      this.syncContacts(latest, w, h, yawPx, time);
+      this.syncContacts(latest, w, h, yawPx, time, arr);
       this.drawTractor(latest, w, h);
       this.drawLasers(w, h, yawPx);
       this.drawExplosions(dt, w, h, yawPx);
@@ -189,7 +235,9 @@ class SpaceScene extends Phaser.Scene {
       if (latest.ionStormIn > 0) this.drawIonStorm(w, h);
     } else {
       this.clearContacts();
+      this.stationPos = null;
     }
+    this.updateDockers(dt, active, dest, w, h);
     this.drawFades(w, h, time);
 
     // C-fx feedback (fixed-screen washes + shield arc). Drawn on gWash (screen
@@ -206,6 +254,10 @@ class SpaceScene extends Phaser.Scene {
     }
     this.drawGateFlash(w, h);
     this.drawFlashes(w, h);
+    // Arrival cinematic: ramp the whole viewscreen to black as the ship dollies
+    // into the station — kept drawing through the debrief hand-off so it stays
+    // dark under the debrief overlay.
+    if (arr > 0) this.fullRect(this.gWash, 0x000000, arr * arr, w, h);
 
     this.endTexts();
   }
@@ -242,18 +294,33 @@ class SpaceScene extends Phaser.Scene {
     });
   }
 
-  drawStars(dt, cx, cy, projScale, shipSpeed, slipstream, w, h) {
+  // normSpeed: 0 = stationary (no star motion), 1 = max velocity, up to ~1.6 in a
+  // slipstream. Star z-rate scales linearly with it, and each star grows a
+  // ghostly motion trail whose length and alpha both climb with speed (alpha to
+  // 1.0 at max), so "we're moving fast" reads at a glance.
+  drawStars(dt, cx, cy, projScale, normSpeed, w, h) {
     const g = this.gStars;
+    const rate = normSpeed * 0.2;             // z-decrease/sec — 0 at rest, ~3x cruise at max
+    const trailA = Math.min(1, normSpeed);    // trail/brightness ramp, up to 1.0
     for (const s of this.stars) {
-      s.z -= (0.07 + shipSpeed * 0.0055) * (slipstream ? 2.4 : 1) * dt;
+      s.z -= rate * dt;
       if (s.z <= STAR_NEAR_Z) this.resetStar(s, false);
       const px = cx + (s.x / s.z) * projScale;
       const py = cy + (s.y / s.z) * projScale;
       if (px < 0 || px > w || py < 0 || py > h) continue;
       const closeness = 1 - (s.z - STAR_NEAR_Z) / (STAR_FAR_Z - STAR_NEAR_Z);
       const size = 0.5 + closeness * 2.5;
+      // Streak back toward the vanishing point (project at a deeper z); its length
+      // grows with speed, so fast flight smears the stars into light-trails.
+      if (normSpeed > 0.05) {
+        const zb = Math.min(STAR_FAR_Z, s.z + Math.min(0.45, rate * 2.2) * (0.4 + closeness));
+        const bx = cx + (s.x / zb) * projScale;
+        const by = cy + (s.y / zb) * projScale;
+        g.lineStyle(Math.max(1, size * 0.8), 0xa8c4ff, (0.05 + closeness * 0.5) * trailA);
+        g.lineBetween(bx, by, px, py);
+      }
       g.fillStyle(0xcfe0ff, 0.2 + closeness * 0.7);
-      g.fillRect(px, py, size, size);
+      g.fillRect(px - size / 2, py - size / 2, size, size);
     }
   }
 
@@ -264,23 +331,31 @@ class SpaceScene extends Phaser.Scene {
       const x = (((v.phase + v.speed * tNow) % 1) + 1) % 1 * w + yawPx * 0.25;
       const y = v.y * h;
       const blink = (Math.sin(tNow * 3 + v.phase * 9) + 1) / 2;
-      g.fillStyle(v.col === '#9fb4e0' ? 0x9fb4e0 : 0xc8a882, 0.5);
-      g.fillRect(x, y, 6, 1.6);
-      g.fillStyle(0xb4dcff, 0.25 + blink * 0.55);
-      g.fillRect(x + (v.speed > 0 ? 6 : -1.5), y - 0.5, 1.5, 1.5);
+      // A bit bigger than a dot so distant traffic reads as vessels.
+      g.fillStyle(v.col === '#9fb4e0' ? 0x9fb4e0 : 0xc8a882, 0.55);
+      g.fillRect(x, y, 11, 2.6);
+      g.fillStyle(0xb4dcff, 0.3 + blink * 0.55);
+      g.fillRect(x + (v.speed > 0 ? 11 : -2.4), y - 0.6, 2.4, 2.4);
     }
   }
 
-  drawDestination(latest, w, h, cx) {
+  drawDestination(latest, w, h, cx, arr) {
     const progress = latest.progress;
     const dest = latest.mission?.destination;
-    const px = cx, py = h * 0.4;
     const grow = Math.min(1, progress / 100);
-    const r = 6 + grow * grow * 90;
+    // Start as a speck (about a spawned star) and stay tiny until well into the
+    // run — a steep growth curve — so the horizon body reads as genuinely distant.
+    let r = 1.5 + Math.pow(grow, 2.6) * 96;
+    // Arrival dolly: the ship rushes the station, so it swells fast and slides to
+    // screen centre while everything fades to black (see the update() wash).
+    const px = cx + (w / 2 - cx) * arr;
+    const py = h * 0.4 + (h * 0.5 - h * 0.4) * arr;
+    r *= 1 + arr * 5;
     const colorHex = dest?.color || '#7ddb9a';
     const name = (latest.mission?.arrivalName || 'DESTINATION').toUpperCase();
 
-    // Additive glow halo behind the body.
+    // Additive glow halo behind the body (scales with the body, so a speck has a
+    // speck-sized halo, not a big wash).
     this.destGlow.setVisible(true).setPosition(px, py).setDisplaySize(r * 4.2, r * 4.2)
       .setTint(hexInt(colorHex)).setAlpha(0.22);
 
@@ -291,6 +366,7 @@ class SpaceScene extends Phaser.Scene {
       if (this.destImg.texture.key !== key) this.destImg.setTexture(key);
       this.destImg.clearTint();
       this.destImg.setVisible(true).setPosition(px, py).setDisplaySize(r * 2.4, r * 2.4).setRotation(0);
+      this.stationPos = null;
     } else {
       // Station (or generic): the clean ringed station sprite, tinted the
       // mission's destination color, slowly rotating.
@@ -298,8 +374,10 @@ class SpaceScene extends Phaser.Scene {
       this.destImg.setTint(hexInt(colorHex));
       this.destImg.setVisible(true).setPosition(px, py).setDisplaySize(r * 2.6, r * 2.6)
         .setRotation((performance.now() / 6000) % (Math.PI * 2));
+      // Remember where the station is so docking traffic can fly into it.
+      this.stationPos = { x: px, y: py, r };
     }
-    if (r > 10) this.label('dest', name, px, py - r - 14, colorHex, 12, 8);
+    if (r > 10 && arr < 0.3) this.label('dest', name, px, py - r - 14, colorHex, 12, 8);
   }
 
   drawGates(latest, w, h, cy) {
@@ -346,8 +424,10 @@ class SpaceScene extends Phaser.Scene {
     }
   }
 
-  syncContacts(latest, w, h, yawPx, time) {
+  syncContacts(latest, w, h, yawPx, time, arr) {
     if (astPos.size > 400) astPos.clear();
+    const fadeA = 1 - arr;         // fade contacts out during the arrival dolly
+    const showLabels = arr < 0.3;
     const seen = new Set();
     for (const a of latest.asteroids) {
       if (a.phantom) continue;
@@ -356,8 +436,9 @@ class SpaceScene extends Phaser.Scene {
       const big = size > 1.2;
       const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
       const nearBoost = 1 + Math.max(0, 5 - a.impactIn) * 0.14;
-      const bloom = 26 * (big ? 2.0 : 1.0);
-      const r = (0.7 + Math.pow(growth, 1.25) * bloom) * (0.82 + 0.18 * size) * nearBoost;
+      // Wider small<->large spread: big hazards bloom a bit bigger, small rocks smaller.
+      const bloom = 26 * (big ? 2.25 : 0.82);
+      const r = (0.7 + Math.pow(growth, 1.25) * bloom) * (0.74 + 0.26 * size) * nearBoost;
       astPos.set(a.id, { x: px, y: py, r });
       seen.add(a.id);
 
@@ -372,24 +453,35 @@ class SpaceScene extends Phaser.Scene {
         this.contacts.set(a.id, c);
       }
       const shape = astShapeFor(a.id);
-      c.img.setPosition(px, py).setVisible(true);
+      c.img.setPosition(px, py).setVisible(true).setAlpha(fadeA);
       c.glow.setPosition(px, py).setVisible(true);
 
       if (vk === 'pod') {
-        const blink = (Math.sin(performance.now() / 220) + 1) / 2;
         const rr = Math.max(14, r);
-        c.img.setTexture('pod').setTint(0x4cd97b).setRotation(0).setDisplaySize(rr * 2.2, rr * 2.2);
-        c.glow.setTint(0x4cd97b).setDisplaySize(rr * 5, rr * 5).setAlpha(0.18 + blink * 0.22);
-        this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - rr - 14, '#4cd97b', 12, 12);
-        this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + rr + 16, blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
+        c.img.setTexture('pod').setRotation(0).setAlpha(fadeA);
+        if (a.identified) {
+          // Resolved as a rescue pod: green highlight + the DO-NOT-FIRE call.
+          const blink = (Math.sin(performance.now() / 220) + 1) / 2;
+          c.img.setTint(0x4cd97b).setDisplaySize(rr * 2.2, rr * 2.2);
+          c.glow.setTint(0x4cd97b).setDisplaySize(rr * 5, rr * 5).setAlpha((0.18 + blink * 0.22) * fadeA);
+          if (showLabels) {
+            this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - rr - 14, '#4cd97b', 12, 12);
+            this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + rr + 16, blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
+          }
+        } else {
+          // Visible pod SILHOUETTE, but not yet resolved — neutral, no green, no
+          // "rescue pod" call (that waits for sensor ID range). Silhouette holds.
+          c.img.setTint(0x9aa6b8).setDisplaySize(rr * 2.1, rr * 2.1);
+          c.glow.setTint(0x9aa6b8).setDisplaySize(rr * 3.2, rr * 3.2).setAlpha(0.1 * fadeA);
+        }
         continue;
       }
       if (vk === 'mineral') {
         const rr = Math.max(12, r);
         c.img.setTexture('mineral').setTint(0xffb347).setDisplaySize(rr * 2, rr * 2)
           .setRotation((performance.now() / 2600) % (Math.PI * 2));
-        c.glow.setTint(0xffb347).setDisplaySize(rr * 3.6, rr * 3.6).setAlpha(0.14 + growth * 0.14);
-        this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - rr - 14, '#ffb347', 11, 12);
+        c.glow.setTint(0xffb347).setDisplaySize(rr * 3.6, rr * 3.6).setAlpha((0.14 + growth * 0.14) * fadeA);
+        if (showLabels) this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - rr - 14, '#ffb347', 11, 12);
         continue;
       }
 
@@ -399,22 +491,24 @@ class SpaceScene extends Phaser.Scene {
       c.img.clearTint();
       c.img.setDisplaySize(r * 2.2, r * 2.2)
         .setRotation((time / 1000) * shape.spin);
-      c.glow.setTint(big ? 0x78604a : 0x968c78).setDisplaySize(r * 3.6, r * 3.6)
-        .setAlpha(0.1 + growth * 0.22);
+      // Keep the glow a tight rim, not a big wash — a large rock is a crisp
+      // sprite, not a fuzzy disc.
+      c.glow.setTint(big ? 0x78604a : 0x968c78).setDisplaySize(r * 2.2, r * 2.2)
+        .setAlpha((0.08 + growth * 0.14) * fadeA);
 
       // Range ring (acquired) — faint distance cue.
-      if (a.targetable) {
+      if (a.targetable && showLabels) {
         const ringR = r + (34 + r * 0.8) * Math.min(1, a.impactIn / 16);
-        this.gRings.lineStyle(1, 0xa0b4dc, 0.16);
+        this.gRings.lineStyle(1, 0xa0b4dc, 0.16 * fadeA);
         this.gRings.strokeCircle(px, py, ringR);
       }
       // Threat ring + label (targetable rocks/unknowns only).
-      if (a.targetable && (a.kind === 'rock' || a.kind === 'unknown')) {
+      if (a.targetable && showLabels && (a.kind === 'rock' || a.kind === 'unknown')) {
         const spd = a.speed ?? 1;
         const threatHex = (spd >= 1.15 || a.impactIn < 6) ? '#ff5c5c'
           : (spd >= 0.95 || a.impactIn < 12) ? '#ffb347' : '#e0d24c';
         const targeted = a.id === latest.targetId;
-        this.gRings.lineStyle(targeted ? 3.5 : 2, hexInt(threatHex), targeted ? 1 : 0.8);
+        this.gRings.lineStyle(targeted ? 3.5 : 2, hexInt(threatHex), (targeted ? 1 : 0.8) * fadeA);
         this.gRings.strokeCircle(px, py, r + (targeted ? 6 : 4));
         this.label(`c${a.id}`, `${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - 14, threatHex, 12, 12);
       }
@@ -426,6 +520,41 @@ class SpaceScene extends Phaser.Scene {
   clearContacts() {
     for (const [, c] of this.contacts) { c.img.destroy(); c.glow.destroy(); }
     this.contacts.clear();
+  }
+
+  // Decorative traffic for a background-station mission (e.g. Europa): small
+  // ships enter from a screen edge and fly INTO the station, angled along their
+  // travel and z-ordered behind it (depth 4 < station's 7), so they vanish into
+  // it on arrival. Pure backdrop — no state, seeded off Math.random (cosmetic).
+  updateDockers(dt, active, dest, w, h) {
+    const st = this.stationPos;
+    if (!active || dest?.kind !== 'station' || !st) {
+      for (const d of this.dockers) d.img.destroy();
+      this.dockers.length = 0;
+      return;
+    }
+    this.dockTimer -= dt;
+    if (this.dockTimer <= 0 && this.dockers.length < 3) {
+      this.dockTimer = 4 + Math.random() * 5;
+      const edge = Math.floor(Math.random() * 4);
+      const sx = edge === 1 ? w + 12 : edge === 3 ? -12 : Math.random() * w;
+      const sy = edge === 0 ? -12 : edge === 2 ? h * 0.72 : Math.random() * h * 0.6;
+      const img = this.add.image(sx, sy, Math.random() < 0.5 ? 'docker1' : 'docker2')
+        .setDepth(4).setTint(0xaebccc);
+      this.dockers.push({ img, sx, sy, t: 0, dur: 6 + Math.random() * 5, size: 13 + Math.random() * 9 });
+    }
+    for (let i = this.dockers.length - 1; i >= 0; i--) {
+      const d = this.dockers[i];
+      d.t += dt / d.dur;
+      if (d.t >= 1) { d.img.destroy(); this.dockers.splice(i, 1); continue; }
+      const x = d.sx + (st.x - d.sx) * d.t;
+      const y = d.sy + (st.y - d.sy) * d.t;
+      const scale = 1 - 0.82 * d.t; // shrink as it nears the station (perspective)
+      d.img.setPosition(x, y)
+        .setDisplaySize(d.size * scale, d.size * scale * 0.6)
+        .setAlpha(0.1 + 0.5 * (1 - d.t))
+        .setRotation(Math.atan2(st.y - d.sy, st.x - d.sx));
+    }
   }
 
   drawTractor(latest, w, h) {
@@ -497,12 +626,25 @@ class SpaceScene extends Phaser.Scene {
   }
 
   drawIonStorm(w, h) {
-    this.fullRect(this.gWash, 0x7882eb, 0.045, w, h);
-    for (let i = 0; i < 3; i++) {
-      if (Math.random() < 0.4) continue;
+    // Intensified: a heavier charged wash, denser flickering interference bands,
+    // an occasional full-screen surge, and additive crackling discharge arcs.
+    this.fullRect(this.gWash, 0x7882eb, 0.11, w, h);
+    for (let i = 0; i < 6; i++) {
+      if (Math.random() < 0.3) continue;
       const y = Math.random() * h;
-      this.gWash.fillStyle(0x96aaff, 0.03 + Math.random() * 0.05);
-      this.gWash.fillRect(0, y, w, 1 + Math.random() * 2);
+      this.gWash.fillStyle(0x96aaff, 0.05 + Math.random() * 0.11);
+      this.gWash.fillRect(0, y, w, 1 + Math.random() * 3);
+    }
+    if (Math.random() < 0.16) this.fullRect(this.gWash, 0xaab4ff, 0.06 + Math.random() * 0.07, w, h);
+    const arcs = Math.random() < 0.6 ? 1 + (Math.random() < 0.4 ? 1 : 0) : 0;
+    for (let a = 0; a < arcs; a++) {
+      this.gAdd.lineStyle(1.4, 0xc8d4ff, 0.3 + Math.random() * 0.3);
+      let x = Math.random() * w, y = Math.random() * h * 0.35;
+      this.gAdd.beginPath();
+      this.gAdd.moveTo(x, y);
+      const steps = 5 + Math.floor(Math.random() * 5);
+      for (let s = 0; s < steps; s++) { x += (Math.random() - 0.5) * 70; y += Math.random() * 45 + 12; this.gAdd.lineTo(x, y); }
+      this.gAdd.strokePath();
     }
   }
 
@@ -541,7 +683,9 @@ class SpaceScene extends Phaser.Scene {
   }
 
   drawShieldArc(latest, w, h) {
-    if (!latest.shields?.raised) return;
+    // No arc unless the deflector is actually up AND has charge — an exhausted
+    // shield must not linger on screen.
+    if (!latest.shields?.raised || (latest.shields.strength || 0) <= 0) return;
     const strength = (latest.shields.strength || 0) / 100;
     const cxs = w / 2, cys = h * 1.18, rad = h * 0.62;
     const half = (0.16 + 0.30 * strength) * Math.PI;
@@ -590,13 +734,25 @@ class SpaceScene extends Phaser.Scene {
 export function createPhaserRenderer({ container }) {
   let game = null;
   let vis = null;
+  let ro = null;
+  // Render at device pixel ratio (capped at 2 for perf) so text and sprites stay
+  // crisp on hi-dpi displays: the WebGL backing store is container × dpr, the
+  // canvas is CSS-downscaled back to the container, and the scene keeps authoring
+  // in CSS px via a camera zoom of dpr (see SpaceScene.applyCamera). Phaser's
+  // RESIZE mode renders at CSS px (blurry when the display upscales), so we drive
+  // the size manually.
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const cssW = () => Math.max(1, container.clientWidth);
+  const cssH = () => Math.max(1, container.clientHeight);
   return {
     mount() {
       if (game) return;
       game = new Phaser.Game({
         type: Phaser.AUTO,
         parent: container,
-        scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.NO_CENTER },
+        scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.NO_CENTER },
+        width: cssW() * dpr,
+        height: cssH() * dpr,
         powerPreference: 'high-performance',
         fps: { target: 60 },
         banner: false,
@@ -605,15 +761,27 @@ export function createPhaserRenderer({ container }) {
           postBoot: (gm) => { if (gm.canvas) gm.canvas.classList.add('phaser-canvas'); },
         },
       });
+      game.registry.set('dpr', dpr);
+      const fit = () => {
+        if (!game) return;
+        const w = cssW(), h = cssH();
+        game.scale.resize(w * dpr, h * dpr); // backing store in device px
+        if (game.canvas) { game.canvas.style.width = `${w}px`; game.canvas.style.height = `${h}px`; }
+        game.scene.getScene('space')?.onResize?.();
+      };
+      ro = new ResizeObserver(fit);
+      ro.observe(container);
+      requestAnimationFrame(fit); // set CSS style + camera once laid out
       vis = () => {
         if (!game) return;
         if (document.hidden) game.loop.sleep(); else game.loop.wake();
       };
       document.addEventListener('visibilitychange', vis);
     },
-    resize() { game?.scale.refresh(); },
+    resize() { game?.scene.getScene('space')?.onResize?.(); },
     destroy() {
       if (vis) document.removeEventListener('visibilitychange', vis);
+      if (ro) { ro.disconnect(); ro = null; }
       game?.destroy(true);
       game = null;
     },

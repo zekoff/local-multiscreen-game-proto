@@ -18,6 +18,8 @@ Source: **Kenney** (https://kenney.nl) — all packs licensed CC0 1.0
 | `asteroid_grey_2.png`  | Space Shooter Remastered | `PNG/Meteors/meteorGrey_big4.png` |
 | `station.png`          | Simple Space            | `PNG/Retina/station_C.png` |
 | `pod.png`              | Simple Space            | `PNG/Retina/satellite_C.png` |
+| `docker_1.png`         | Simple Space            | `PNG/Retina/ship_C.png` |
+| `docker_2.png`         | Simple Space            | `PNG/Retina/ship_F.png` |
 | `mineral.png`          | Simple Space            | `PNG/Retina/meteor_squareDetailedLarge.png` |
 | `planet_0.png`         | Planets                 | `Planets/planet00.png` |
 | `planet_1.png`         | Planets                 | `Planets/planet04.png` |
