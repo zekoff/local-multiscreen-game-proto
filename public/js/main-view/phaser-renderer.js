@@ -1,20 +1,19 @@
-// Phaser 4 space-view renderer — the cinematic port of the main-screen viewscreen.
-// Implements the renderer.js contract so the shell can mount it in place of the
-// Canvas 2D renderer for a live apples-to-apples comparison. It represents the
-// SAME game-legible elements as the canvas view (starfield, nebula, a growing
-// destination, nav gates, obstacles, asteroids/pods/minerals, tractor beam,
-// lasers, explosions, and the C-fx feedback) but with CC0 sprites for solid
-// bodies and additive glow for effects — "element parity, not pixel parity."
+// Phaser 4 space-view renderer — the main-screen viewscreen. Implements the
+// renderer.js mount contract. Renders the game-legible elements (starfield,
+// nebula, a growing destination, nav gates, obstacles, asteroids/pods/minerals,
+// tractor beam, lasers, explosions, and the C-fx feedback) with CC0 sprites for
+// solid bodies and additive glow for effects.
 //
-// It reads the SHARED model.js (snapshot + interpolators + geometry) and
-// effects.js (fx buffers + scalars), calling effects.advance(dt) once per frame
-// so effect timing matches the canvas renderer. All sizes are computed in CSS
-// px (Phaser RESIZE works in CSS px), i.e. the canvas formulas with dpr = 1.
+// It reads model.js (snapshot + interpolators + geometry) and effects.js (fx
+// buffers + scalars), calling effects.advance(dt) once per frame. The scene runs
+// at DEVICE pixels (backing store = container × dpr, CSS-downscaled) so text and
+// sprites stay crisp on hi-dpi displays; `this.dpr` scales font sizes, line
+// widths, and fixed pixel offsets.
 //
 // The clean HUD chrome (reticle, chevron, notification/COLLISION banners) is NOT
-// drawn here — the shared hud-overlay owns it, identical across renderers. Bloom/
-// Glow post-processing (Phaser 4 Filter system) is layered on in a later polish
-// pass; the additive blend modes below already give a strong glow read.
+// drawn here — the hud-overlay owns it. A camera-wide Glow filter + vignette
+// (Phaser 4 Filter system) give the cinematic bloom; additive blend layers carry
+// the per-effect glow.
 
 import Phaser from '/js/vendor/phaser.esm.min.js';
 import {

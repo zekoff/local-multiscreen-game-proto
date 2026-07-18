@@ -274,13 +274,18 @@ step.
   weapons is the Phaser radar scope (`js/weapons-scope.js` mounted via
   `js/phaser-station.js`) + recharge/fire + shields. Sliders track a local
   "dragging" flag so server echoes don't fight the player's finger.
-- **`mainscreen.html` + `js/mainscreen.js`** — view-only seat. Canvas
-  viewscreen: forward starfield that banks with course, an approaching themed
-  destination, off-course nav-gate rings, size/threat-coded asteroids
-  (unlabeled until sensors resolve them), laser/explosion/warp/pulse effects
-  and screen shake, a captain's per-station + system tactical HUD, the ship's
-  log, semantic HUD bars, mission-select lobby, client-side QR, and the full
-  debrief stats grid.
+- **`mainscreen.html` + `js/mainscreen.js`** — view-only seat. `mainscreen.js`
+  is the DOM/net shell (captain HUD, ship HUD + log, mission-select lobby,
+  client-side QR, debrief). The **viewscreen is a Phaser 4 scene**
+  (`js/main-view/phaser-renderer.js`): forward starfield that banks with course
+  and streaks/trails with speed, an approaching themed destination (CC0 station/
+  planet sprite) with an arrival dolly-to-station cinematic, off-course nav-gate
+  rings, size/threat-coded asteroids (CC0 meteor sprites, unlabeled until sensors
+  resolve them), pods/minerals, laser/explosion/warp/pulse effects, screen shake,
+  ion storm, and a camera Glow/vignette. It reads a shared model/effects layer
+  (`js/main-view/{model,effects}.js`); the clean HUD chrome (reticle, banners) is
+  a 2D overlay on top (`js/main-view/hud-overlay.js`). Sprites come from CC0 packs
+  under `public/assets/space/` (main-screen only).
 - **`js/audio.js`** — procedural Web-Audio module (no asset files): an ambient
   music bed that builds with mission progress, ship-wide SFX on the main screen
   (explosion/impact/laser/gate/warp/pulse), and console-local SFX on the
@@ -372,8 +377,9 @@ re-arranged between consoles later without re-architecting.
 
 ## Graphics approach (expanded for the Crew Chief pass)
 
-The viewscreen stays stylized and low-clutter (design pillar), rendered on one
-2D canvas from the interpolated `latest` snapshot (`public/js/mainscreen.js`).
+The viewscreen stays stylized and low-clutter (design pillar), rendered as a
+Phaser 4 scene from the interpolated `latest` snapshot
+(`public/js/main-view/phaser-renderer.js`).
 New complexity is layered onto the existing draw pipeline rather than replacing
 it:
 

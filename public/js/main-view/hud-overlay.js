@@ -1,15 +1,14 @@
-// Shared HUD-chrome overlay for the main-screen viewscreen. This is the "clean
-// graphics" layer the design wants kept crisp and IDENTICAL regardless of which
-// space renderer is active — so it lives OUTSIDE the renderers, owned by the
-// shell, layered on top of whichever space view (Canvas 2D or Phaser) is mounted.
-// It draws only the clean chrome: the forward reticle, the off-screen objective
-// chevron, the environmental/RED-ALERT notification banners, and the COLLISION
-// call. Cinematic feedback (flashes, shield arc, glitch, vignette) is NOT here —
-// that stays per-renderer so the Phaser view can make it prettier.
+// HUD-chrome overlay for the main-screen viewscreen. This is the "clean
+// graphics" layer the design wants kept crisp — a thin 2D canvas layered ON TOP
+// of the Phaser space view (owned by the shell, not the scene) so it stays sharp
+// and unaffected by the scene's Glow/vignette filters. It draws only the clean
+// chrome: the forward reticle, the off-screen objective chevron, the
+// environmental/RED-ALERT notification banners, and the COLLISION call. Cinematic
+// feedback (flashes, shield arc, glitch, vignette) lives in the Phaser scene.
 //
-// It reads the shared model (snapshot + interpolated alignment) and effects
-// (the collision-banner scalar, aged by the active renderer's advance()); it
-// never calls advance() itself, so it can't double-decay.
+// It reads the model (snapshot + interpolated alignment) and effects (the
+// collision-banner scalar, aged by the renderer's advance()); it never calls
+// advance() itself, so it can't double-decay.
 
 import { getLatest, displayAlignment } from '/js/main-view/model.js';
 import { fx } from '/js/main-view/effects.js';

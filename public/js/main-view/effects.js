@@ -1,9 +1,10 @@
-// Shared transient-effect model for the main-screen space view. The server's
-// one-shot `fx` stream (laser fire, explosions, impacts, gate passes, warps,
-// sensor pulses, ion storms, anomalies) is consumed here into a set of buffers
-// and decaying scalars. Both renderers read this SAME model so the two views
-// show identical effect intensities and timing; whichever renderer is active
-// calls advance(dt) once per frame to age it. The draw code is a pure reader.
+// Transient-effect model for the main-screen space view. The server's one-shot
+// `fx` stream (laser fire, explosions, impacts, gate passes, warps, sensor
+// pulses, ion storms, anomalies) is consumed here into a set of buffers and
+// decaying scalars that the Phaser renderer reads. The renderer calls
+// advance(dt) once per frame to age it; the draw code is a pure reader. (Kept as
+// its own module — separate from the scene — so effect timing lives in one place
+// and the fx consumption is testable without a GPU.)
 
 import { playFxAudio } from '/js/fx-audio.js';
 import { astPos } from '/js/main-view/model.js';
@@ -66,7 +67,7 @@ export function consume(state, audio) {
 // Detect contacts that vanished since the previous snapshot and start their
 // exit animation: a captured pod/salvage slides down toward the cargo bay;
 // anything else that drifted past fades its silhouette in place. Reads the
-// last-drawn positions cache (model.astPos) populated by the active renderer.
+// last-drawn positions cache (model.astPos) populated by the renderer each frame.
 export function detectFades(prevAsteroids, state) {
   if (!prevAsteroids) return;
   const nowIds = new Set(state.asteroids.map((a) => a.id));
@@ -85,9 +86,8 @@ export function detectFades(prevAsteroids, state) {
   }
 }
 
-// Age every buffer and scalar by one frame. Called once per frame by whichever
-// renderer is active — a single source of truth so effect timing matches
-// between the two renderers regardless of which one is showing.
+// Age every buffer and scalar by one frame. Called once per frame by the
+// renderer — the single place effect timing is advanced.
 export function advance(dt) {
   // Screen shake decays multiplicatively (frame-paced), snapping to 0 when tiny.
   if (fx.shake > 0.2) fx.shake *= 0.88; else fx.shake = 0;

@@ -1,11 +1,11 @@
-// Shared, renderer-agnostic "where is everything" model for the main-screen
-// space view. Both the Canvas 2D renderer and the Phaser renderer import THIS
-// so they place contacts, gates, and the destination identically and agree
-// frame-for-frame on the interpolated camera — the port is an art change, not a
-// geometry change. Nothing here touches a drawing context.
+// The "where is everything" model for the main-screen space view: the latest
+// snapshot, the interpolated camera (alignment + gate depth), seeded per-mission
+// generators, and the contact placement geometry. The Phaser renderer imports
+// THIS for positioning. Kept separate from the scene (no drawing context here)
+// so the geometry/interpolation is plain, testable logic.
 
 // --- Latest server snapshot -------------------------------------------------
-// The active renderer reads this every frame; the shell sets it each tick.
+// The renderer reads this every frame; the shell sets it each tick.
 let latest = null;
 export function setLatest(s) { latest = s; }
 export function getLatest() { return latest; }
@@ -105,7 +105,7 @@ export function asteroidBasePos(id, w, h) {
 
 // Last drawn screen position per asteroid id, so a laser/explosion can point at
 // where a rock WAS after it's been removed from the state, and so drawFades can
-// fade its silhouette in place. Populated each frame by the active renderer.
+// fade its silhouette in place. Populated each frame by the renderer.
 // Cleared if it grows unreasonably (session restarts).
 export const astPos = new Map();
 

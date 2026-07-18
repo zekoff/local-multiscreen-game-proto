@@ -71,10 +71,18 @@ cloud-migration design; the standalone migration doc was pruned).
 - `public/` — zero-build static clients served by both transports.
   `js/net.js` (reconnecting WS client), `js/station.js` (shared shell +
   meter/grade helpers), one HTML page per station, `mainscreen.html`/
-  `js/mainscreen.js` (canvas viewscreen: starfield, destination, gates,
-  asteroids, laser/explosion/warp effects, captain HUD + client-side QR from
-  `js/vendor/qrcode-generator.mjs`). `js/audio.js` is a procedural Web-Audio
-  music+SFX module (no asset files) — **music plays on the main screen only**;
+  `js/mainscreen.js` (the DOM/net shell: captain HUD, ship HUD, lobby/debrief,
+  music, + client-side QR from `js/vendor/qrcode-generator.mjs`). The **viewscreen
+  itself is a Phaser 4 scene** (`js/main-view/phaser-renderer.js`: starfield,
+  nebula, destination, gates, asteroids/pods/minerals, laser/explosion/warp
+  effects, arrival cinematic) reading a shared model/effects layer
+  (`js/main-view/model.js`, `effects.js`); the clean HUD chrome (reticle, banners)
+  is a thin 2D overlay on top (`js/main-view/hud-overlay.js`). The scene uses
+  **CC0 sprites under `public/assets/space/`** (main-screen only; see
+  `public/assets/CREDITS.md`) — so the "asset-free" note below is about *audio*,
+  not the main screen, which loads `js/vendor/phaser.esm.min.js`. `js/audio.js` is
+  a procedural Web-Audio music+SFX module (no audio asset files) —
+  **music plays on the main screen only**;
   SFX are routed per device (laser→weapons, sensor pings→engineering, gate
   chimes→helm, ship-wide booms→main screen) via the `js/fx-audio.js` helper.
   `js/weapons-scope.js` is the Phaser radar scope mounted via
