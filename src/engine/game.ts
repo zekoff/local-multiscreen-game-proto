@@ -116,7 +116,7 @@ const AUTO_WEAPONS_FIRE_DELAY = { min: 1, max: 2 };
 // one rock inside the threat window), drop a beat after the sky is clear.
 const AUTO_SHIELD_THREAT_WINDOW = 5; // seconds-to-impact that counts as "incoming"
 const AUTO_SHIELD_THREAT_COUNT = 2;  // rocks inside the window before shields go up
-const AUTO_SHIELD_LINGER = 3;        // seconds shields stay up after the last contact clears
+const AUTO_SHIELD_LINGER = 1;        // seconds shields stay up after the last VOLLEY clears (drop fast to recharge)
 const AUTO_HELM_THROTTLE = 70;       // auto-helm cruises easy, not fast
 const AUTO_HELM_CORRECTION = 5;      // course-correction authority per second
 // Auto-helm makes a POOR attempt at slipstream rings: it swings toward the
@@ -1503,13 +1503,18 @@ export class Game {
     // turn authority and swinging harder onto the bearing, the human technique.
     if (this.auto('helm')) {
       const over = this.botOverBase; // 0 at baseline, 1 at optimal
-      // Towing takes priority over slipstream. When the beam is latched, the bot
-      // helm holds the bow on the tractored contact's bearing so the tow line
-      // stays inside the tractor arc — chasing a gate here would break the latch.
-      const towed = this.tractorLatched ? this.asteroids.find((a) => a.id === this.tractorTargetId) : undefined;
+      // Priority: 1) rescue pods, 2) salvage minerals, 3) nav rings, 4) course
+      // line. Steering the bow onto the nearest detected pod/salvage lines it up
+      // for the tractor AND keeps an existing tow inside the arc — so this
+      // subsumes the old "hold the latched tractor target" behavior. Only
+      // detected (targetable) contacts count, so the bot isn't omniscient.
+      const nearestOfKind = (k: ContactKind) => this.asteroids
+        .filter((a) => a.kind === k && this.targetable(a))
+        .sort((a, b) => a.impactIn - b.impactIn)[0];
+      const focus = nearestOfKind('pod') ?? nearestOfKind('mineral');
       const gate = this.gates[0];
-      if (towed) {
-        const delta = towed.bearing - this.alignment;
+      if (focus) {
+        const delta = focus.bearing - this.alignment;
         this.throttle = this.missionTime < this.debrisUntil ? 45 : AUTO_HELM_THROTTLE;
         const step = Math.min(Math.abs(delta), AUTO_HELM_GATE_STEP * (1 + 1.6 * over) * dt);
         this.alignment += sign(delta) * step;
@@ -1553,6 +1558,11 @@ export class Game {
     // fixed upkeep while raised. Weapon charge always scales with weapon power.
     if (this.shieldRaised) {
       this.shieldStrength = Math.max(0, this.shieldStrength - SHIELD_DRAIN_PER_SEC * dt);
+      // Exhausted shields protect nothing — drop them immediately (both the human
+      // and the auto doctrine) so the deflector starts recharging and the bow arc
+      // clears. A human can raise them again at any time; the auto doctrine won't
+      // re-raise until they're back to at least 40% (see below).
+      if (this.shieldStrength <= 0) this.shieldRaised = false;
     } else {
       this.shieldStrength = Math.min(SHIELD_MAX, this.shieldStrength + SHIELD_REGEN_PER_POWER * this.eff('shields') * dt);
     }
@@ -1605,23 +1615,24 @@ export class Game {
       const closest = acquirable.length > 0
         ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
         : null;
-      // Shield doctrine: raise only for a real volley (2+ rocks inside the
-      // threat window); once the sky is clear of targetable contacts, keep
-      // them up a linger beat, then drop to recharge.
+      // Shield doctrine: raise only for a real volley (2+ rocks inside the threat
+      // window). Once there's no live volley, drop after a short linger to
+      // recharge — even if non-imminent contacts remain on the board (the old
+      // "wait for ZERO contacts" rule meant shields never lowered while a field
+      // kept spawning rocks). The auto-raise is gated on strength >= 40%, so once
+      // exhausted the deflector recharges to a useful level before going back up.
       const imminent = acquirable.filter((a) => a.impactIn <= AUTO_SHIELD_THREAT_WINDOW).length;
       if (imminent >= AUTO_SHIELD_THREAT_COUNT) {
-        this.shieldRaised = true;
-        this.autoShieldClearAt = null; // threat live: cancel any pending drop
-      } else if (acquirable.length === 0 && this.shieldRaised) {
+        this.autoShieldClearAt = null; // live volley: cancel any pending drop
+        if (this.shieldStrength >= SHIELD_MAX * 0.4) this.shieldRaised = true;
+      } else if (this.shieldRaised) {
+        // No live volley: linger a beat, then drop.
         if (this.autoShieldClearAt === null) {
           this.autoShieldClearAt = this.missionTime + AUTO_SHIELD_LINGER;
         } else if (this.missionTime >= this.autoShieldClearAt) {
           this.shieldRaised = false;
           this.autoShieldClearAt = null;
         }
-      } else {
-        // Contacts remain (but no volley): hold the current shield state.
-        this.autoShieldClearAt = null;
       }
       // A SKILLED bot (debug) snapshots small rocks — firing at partial charge to
       // clear the sky faster — and switches back to a full STANDARD shot for a
@@ -2404,7 +2415,7 @@ export class Game {
       phase: this.phase,
       allReady: this.allReady(), // GO-poll: every manned crew seat is ready
       mission: this.mission
-        ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null }
+        ? { id: this.mission.id, name: this.mission.name, arrivalName: this.mission.arrivalName, briefing: this.mission.briefing, destination: this.mission.destination ?? null, speedScale: this.mission.speedScale }
         : null,
       shipName: this.shipName,
       missionTime: Math.round(this.missionTime),
