@@ -1096,12 +1096,8 @@ export class Game {
   }
 
   private fire() {
-    // The laser and the tractor share an emitter: you can't fire while the beam
-    // is latched (the weapons↔crewchief negotiation — "drop the pod or hold?").
-    if (this.tractorLatched) {
-      this.consoleEvent('weapons', 'Cannot fire — tractor beam engaged. Release the latch to free the emitter.');
-      return;
-    }
+    // Tractor and laser run independently — the gunner can hold a tow AND fire
+    // (the tractor is managed alongside weapons on the same console).
     // Charge gate depends on the governor: STANDARD needs a full meter for a
     // full-power shot; SNAPSHOT fires at >=40% for a weak shot.
     const snapshot = this.governor === 'snapshot';
@@ -1659,16 +1655,13 @@ export class Game {
       } else {
         this.autoFireAt = null;
       }
-      // Opportunistic tow (the tractor shares this emitter now): when there's
-      // nothing to shoot, auto-latch only a CONFIRMED RESCUE POD inside the arc —
-      // saving lives is unambiguous, so the bot acts on it. Salvage/ore is a
-      // human judgment call (whether it's worth the tow), so the bot leaves ore
-      // alone — it never grabs an un-identified or merely-valuable contact. Drop
-      // the latch the instant a rock needs the laser.
+      // Opportunistic tow: the tractor is independent of the laser now, so the
+      // bot can tow AND still fire. Auto-latch only a CONFIRMED RESCUE POD inside
+      // the arc — saving lives is unambiguous, so the bot acts on it. Salvage/ore
+      // is a human judgment call, so the bot leaves it alone (it never grabs an
+      // un-identified or merely-valuable contact).
       const rockThreat = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE;
-      if (this.tractorLatched && rockThreat) {
-        this.setTractorLatch(false); // free the emitter to defend
-      } else if (!this.tractorLatched && !rockThreat && this.cargo.length < this.holdCapacity && this.eff('weapons') >= TRACTOR_MIN_POWER) {
+      if (!this.tractorLatched && !rockThreat && this.cargo.length < this.holdCapacity && this.eff('weapons') >= TRACTOR_MIN_POWER) {
         const cand = this.asteroids.find((a) =>
           a.kind === 'pod' && a.identified &&
           a.impactIn <= TRACTOR_RANGE && Math.abs(this.alignment - a.bearing) <= TRACTOR_ARC);

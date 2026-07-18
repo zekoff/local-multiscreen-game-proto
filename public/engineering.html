@@ -28,6 +28,21 @@
     .brk-slider { width: 100%; accent-color: var(--accent); }
     .brk-tap { width: 100%; }
     .brk-tap:disabled { opacity: 0.5; }
+    /* Engineering grid: fits a phone (no scroll); widens + adds deco on desktop. */
+    main.engineering {
+      grid-template-columns: 1fr;
+      grid-template-areas: "power" "sensors";
+    }
+    main.engineering .pwr-row { min-height: 2.7rem; margin-bottom: 0.4rem; }
+    @media (min-width: 860px) and (min-height: 620px) {
+      main.engineering {
+        grid-template-columns: 1.4fr 1fr 1fr;
+        grid-template-areas:
+          "power sensors deco3"
+          "power deco1   deco2";
+      }
+      main.engineering .pwr-row { min-height: 3.2rem; margin-bottom: 0.6rem; }
+    }
   </style>
 </head>
 <body>
@@ -38,10 +53,10 @@
   </header>
   <div id="toasts"></div>
 
-  <main>
+  <main class="console engineering">
     <!-- Power budget: 7 units across four systems, max 4 each. Each row also
          holds its breaker restore, shown in place when that system trips. -->
-    <div class="panel">
+    <div class="panel" style="grid-area:power">
       <h2>Power Distribution <span id="power-free" style="color:var(--accent)"></span></h2>
       <div id="power-systems"></div>
       <!-- Power presets (P#11): stash the current split and re-apply in one tap. -->
@@ -52,7 +67,7 @@
     </div>
 
     <!-- Sensors: detection range + one-shot active pulse -->
-    <div class="panel">
+    <div class="panel" style="grid-area:sensors">
       <h2>Sensors <span id="sensor-range" style="color:var(--accent)"></span></h2>
       <p style="color:var(--dim); font-size:0.85rem; margin-bottom:0.6rem;">
         More sensor power resolves asteroids sooner, so Weapons can target them earlier.
@@ -62,6 +77,38 @@
 
     <!-- (Breakers now live inline on each power row above; hull/shield vitals
          live on the main screen — no duplicates here.) -->
+
+    <!-- Decorative chrome: large screens only (hidden on phones). -->
+    <div class="panel large-only" style="grid-area:deco1">
+      <h2>Power Bus</h2>
+      <svg class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.75"
+          points="0,30 12,28 24,31 36,22 48,25 60,16 72,20 84,18 96,24 108,21 120,23"/>
+        <polyline fill="none" stroke="var(--good)" stroke-width="1" opacity="0.5"
+          points="0,38 12,37 24,38 36,35 48,36 60,33 72,34 84,33 96,35 108,34 120,35"/>
+      </svg>
+      <div class="deco-stat"><span>reactor</span><b>96%</b></div>
+      <div class="deco-stat"><span>bus temp</span><b>318 K</b></div>
+    </div>
+    <div class="panel large-only" style="grid-area:deco2">
+      <h2>Systems Log</h2>
+      <div class="deco-log">
+        <div>› reactor output steady</div>
+        <div>› breaker array armed</div>
+        <div>› coolant loop nominal</div>
+        <div>› bus tolerances green</div>
+        <div>› EPS conduits synced</div>
+      </div>
+    </div>
+    <div class="panel large-only" style="grid-area:deco3">
+      <h2>Bridge Status</h2>
+      <div class="deco-crew">
+        <div><span class="dot"></span>Helm — steady</div>
+        <div><span class="dot" style="background:var(--accent)"></span>Engineering — grid sync</div>
+        <div><span class="dot"></span>Weapons — armed</div>
+        <div style="margin-top:0.3rem" class="deco-stat"><span>alert</span><b>CONDITION GREEN</b></div>
+      </div>
+    </div>
   </main>
 
   <!-- Phase overlays (shared shell fills these in) -->

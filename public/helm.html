@@ -10,6 +10,24 @@
     :root { --accent: #6fa8ff; }
     /* Instant tactile ack for a steering nudge: the marker flares briefly. */
     .align-marker.nudging { box-shadow: 0 0 10px 3px var(--accent); }
+    /* Helm grid: fits a phone (no scroll); widens + adds deco chrome on desktop. */
+    main.helm {
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "speed    speed"
+        "throttle throttle"
+        "align    align"
+        "emergency emergency";
+    }
+    @media (min-width: 860px) and (min-height: 620px) {
+      main.helm {
+        grid-template-columns: 1.3fr 1fr 1fr;
+        grid-template-areas:
+          "align throttle  speed"
+          "align emergency emergency"
+          "deco1 deco2     deco3";
+      }
+    }
   </style>
 </head>
 <body>
@@ -20,9 +38,9 @@
   </header>
   <div id="toasts"></div>
 
-  <main>
+  <main class="console helm">
     <!-- Speed / progress readouts -->
-    <div class="panel">
+    <div class="panel" style="grid-area:speed">
       <div class="spread">
         <div><div class="label">Velocity</div><div class="readout" id="speed">0</div></div>
         <div style="text-align:right"><div class="label" id="dist-label">Distance to Station</div><div class="readout" id="dist">—</div></div>
@@ -30,7 +48,7 @@
     </div>
 
     <!-- Throttle control -->
-    <div class="panel">
+    <div class="panel" style="grid-area:throttle">
       <h2>Throttle <span id="throttle-val" style="color:var(--accent)">0%</span></h2>
       <input type="range" id="throttle" min="0" max="100" step="5" value="0">
       <!-- Engineering's engine allocation, shown where it matters: it sets top
@@ -39,7 +57,7 @@
     </div>
 
     <!-- Course alignment: keep the marker centered against drift -->
-    <div class="panel">
+    <div class="panel" style="grid-area:align">
       <h2>Course Alignment <span id="align-state" style="color:var(--accent)"></span></h2>
       <div class="align-track"><div class="align-zone" id="align-zone"></div><div class="align-marker" id="align-marker"></div></div>
       <div class="row" style="margin-top:0.75rem;">
@@ -54,12 +72,43 @@
     </div>
 
     <!-- Emergency Warp: jump clear of all threats, at a heavy systems cost -->
-    <div class="panel">
+    <div class="panel" style="grid-area:emergency">
       <h2>Emergency</h2>
       <button class="danger" id="warp-btn" style="width:100%">Emergency Warp</button>
       <p style="color:var(--dim); font-size:0.8rem; margin-top:0.5rem;">
         Jumps clear of every threat — but scatters all power, drops shields &amp; weapons,
         trips every breaker, and throws you off course. Last resort.</p>
+    </div>
+
+    <!-- Decorative chrome: large screens only (hidden on phones). -->
+    <div class="panel large-only" style="grid-area:deco1">
+      <h2>Heading Trace</h2>
+      <svg class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
+        <line x1="0" y1="22" x2="120" y2="22" stroke="var(--panel-edge)" stroke-width="1"/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.7"
+          points="0,22 15,18 30,26 45,20 60,14 75,24 90,19 105,23 120,21"/>
+      </svg>
+      <div class="deco-stat"><span>drift</span><b>±0.4°/s</b></div>
+      <div class="deco-stat"><span>inertial lock</span><b>NOMINAL</b></div>
+    </div>
+    <div class="panel large-only" style="grid-area:deco2">
+      <h2>Flight Log</h2>
+      <div class="deco-log">
+        <div>› inertial dampers online</div>
+        <div>› helm bus responsive</div>
+        <div>› course plot updated</div>
+        <div>› thruster gimbals free</div>
+        <div>› nav beacon acquired</div>
+      </div>
+    </div>
+    <div class="panel large-only" style="grid-area:deco3">
+      <h2>Bridge Status</h2>
+      <div class="deco-crew">
+        <div><span class="dot" style="background:var(--accent)"></span>Helm — conn</div>
+        <div><span class="dot"></span>Engineering — grid sync</div>
+        <div><span class="dot"></span>Weapons — armed</div>
+        <div style="margin-top:0.3rem" class="deco-stat"><span>alert</span><b>CONDITION GREEN</b></div>
+      </div>
     </div>
   </main>
 

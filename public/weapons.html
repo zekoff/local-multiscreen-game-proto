@@ -6,7 +6,28 @@
   <title>Weapons Station</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/css/style.css">
-  <style>:root { --accent: #ff6f6f; }</style>
+  <style>
+    :root { --accent: #ff6f6f; }
+    /* Weapons grid: scope big, laser + tractor side by side, deflector below.
+       Phone = one screen, no scroll. Large screen widens + reveals deco chrome. */
+    main.weapons {
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "scope scope"
+        "bank  tractor"
+        "deflector deflector";
+    }
+    main.weapons #scope-mount { max-width: none; }
+    @media (min-width: 860px) and (min-height: 620px) {
+      main.weapons {
+        grid-template-columns: 1.5fr 1fr 1fr;
+        grid-template-areas:
+          "scope bank      tractor"
+          "scope deflector tractor"
+          "deco1 deco2     deco3";
+      }
+    }
+  </style>
 </head>
 <body>
   <header>
@@ -16,46 +37,71 @@
   </header>
   <div id="toasts"></div>
 
-  <main>
-    <!-- Incoming asteroid contacts: radar scope, tap a blip to target it -->
-    <div class="panel">
+  <main class="console weapons">
+    <!-- Incoming asteroid contacts: radar scope, tap a blip to target it.
+         Kept the biggest element (sensor: bigger is better). -->
+    <div class="panel" style="grid-area:scope; display:flex; flex-direction:column;">
       <h2>Sensor Contacts</h2>
-      <div id="scope-mount" style="width:100%; aspect-ratio:9 / 5; max-width:420px; margin:0 auto;"></div>
-      <p id="scope-empty" style="color:var(--dim); text-align:center; margin-top:0.5rem">No contacts.</p>
-      <p id="scope-target" style="text-align:center; margin-top:0.5rem"></p>
+      <div id="scope-mount" style="flex:1; min-height:0; width:100%; aspect-ratio:9 / 5; margin:0 auto;"></div>
+      <p id="scope-empty" style="color:var(--dim); text-align:center; margin-top:0.3rem">No contacts.</p>
+      <p id="scope-target" style="text-align:center; margin-top:0.3rem"></p>
     </div>
 
     <!-- Weapon charge and fire control -->
-    <div class="panel">
+    <div class="panel" style="grid-area:bank">
       <h2>Phaser Bank</h2>
-      <p class="label" id="wpn-power" style="margin-bottom:0.4rem"></p>
-      <div class="label">Charge</div>
-      <div class="meter" style="margin-bottom:0.75rem; position:relative"><div id="charge-bar"></div><div id="snap-tick"></div></div>
+      <p class="label" id="wpn-power" style="margin-bottom:0.35rem"></p>
+      <div class="meter" style="margin-bottom:0.55rem; position:relative"><div id="charge-bar"></div><div id="snap-tick"></div></div>
       <button class="primary" id="fire-btn" style="width:100%">FIRE</button>
-      <!-- Charge governor (P#10): STANDARD full-power shots vs SNAPSHOT quick
-           weak shots (fire at 40%, small contacts only) — your call on pacing. -->
-      <div class="label" style="margin:0.7rem 0 0.3rem;">Fire Mode</div>
-      <div class="row">
+      <div class="row" style="margin-top:0.5rem">
         <button id="gov-standard" class="gov-btn">STANDARD</button>
         <button id="gov-snapshot" class="gov-btn">SNAPSHOT</button>
       </div>
-      <p class="label" id="gov-hint" style="margin-top:0.4rem;"></p>
+      <p class="label" id="gov-hint" style="margin-top:0.35rem;"></p>
     </div>
 
-    <!-- Deflector screen (renamed from "shields" so it stops colliding with
-         Engineering's "shield power" callout — playtest note). Regen rate
-         depends on engineering's shield power allocation. -->
-    <div class="panel">
+    <!-- Tractor / tow — managed alongside the laser (independent; tow AND fire). -->
+    <div id="tow-widgets" style="grid-area:tractor; display:flex; flex-direction:column;"></div>
+
+    <!-- Deflector screen (regen rate depends on engineering's shield power). -->
+    <div class="panel" style="grid-area:deflector">
       <h2>Deflector Screen</h2>
-      <p class="label" id="shd-power" style="margin-bottom:0.4rem"></p>
-      <div class="label">Strength</div>
-      <div class="meter" style="margin-bottom:0.75rem"><div id="shield-bar"></div></div>
+      <p class="label" id="shd-power" style="margin-bottom:0.35rem"></p>
+      <div class="meter" style="margin-bottom:0.55rem"><div id="shield-bar"></div></div>
       <button id="shields-btn" style="width:100%">Screen Up</button>
     </div>
 
-    <!-- Tractor / tow (shares the phaser emitter): aim + latch a pod/salvage.
-         The laser is offline while latched — your call. -->
-    <div id="tow-widgets"></div>
+    <!-- Decorative chrome: shown only on large screens, hidden on phones. -->
+    <div class="panel large-only" style="grid-area:deco1">
+      <h2>Emitter Load</h2>
+      <svg class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.7"
+          points="0,34 12,30 24,32 36,18 48,22 60,8 72,14 84,26 96,20 108,28 120,24"/>
+        <polyline fill="none" stroke="#4f7bd0" stroke-width="1" opacity="0.5"
+          points="0,40 12,38 24,39 36,34 48,36 60,30 72,33 84,37 96,35 108,38 120,36"/>
+      </svg>
+      <div class="deco-stat"><span>peak draw</span><b>3.4 GW</b></div>
+      <div class="deco-stat"><span>coil temp</span><b>412 K</b></div>
+    </div>
+    <div class="panel large-only" style="grid-area:deco2">
+      <h2>Tactical Log</h2>
+      <div class="deco-log">
+        <div>› emitter coils nominal</div>
+        <div>› tractor manifold: idle</div>
+        <div>› deflector lattice synced</div>
+        <div>› targeting bus: clear</div>
+        <div>› fire-control online</div>
+      </div>
+    </div>
+    <div class="panel large-only" style="grid-area:deco3">
+      <h2>Bridge Status</h2>
+      <div class="deco-crew">
+        <div><span class="dot"></span>Helm — steady</div>
+        <div><span class="dot"></span>Engineering — grid sync</div>
+        <div><span class="dot" style="background:var(--accent)"></span>Weapons — armed</div>
+        <div style="margin-top:0.3rem" class="deco-stat"><span>alert</span><b>CONDITION GREEN</b></div>
+      </div>
+    </div>
   </main>
 
   <!-- Phase overlays (shared shell fills these in) -->
@@ -160,20 +206,15 @@
         const snapTick = document.getElementById('snap-tick');
         snapTick.style.display = gov === 'snapshot' ? 'block' : 'none';
         snapTick.style.background = charge >= 40 ? 'var(--good)' : 'rgba(255,255,255,0.55)';
-        // The tractor shares the laser emitter — you can't fire while it's
-        // latched. Disable the button outright and say why (clearer than letting
-        // the press through to a rejected action). Enforced server-side too.
-        const tractorEngaged = !!(state.tractor && state.tractor.latched);
-        // Never let the gunner fire on a confirmed pod (the don't-shoot invariant
-        // is enforced server-side too, but the UI refuses it and says why).
-        fireBtn.disabled = tractorEngaged || !ready || state.targetId === null || isPod;
-        fireBtn.textContent = tractorEngaged
-          ? 'TRACTOR BEAM ENGAGED'
-          : isPod
-            ? 'HOLD FIRE — RESCUE POD'
-            : !ready
-              ? (gov === 'snapshot' ? 'CHARGING (40%)…' : 'CHARGING…')
-              : state.targetId === null ? 'FIRE (select a target)' : (gov === 'snapshot' ? 'SNAPSHOT' : 'FIRE');
+        // The tractor is independent of the laser now — firing is never blocked by
+        // an active tow. Never let the gunner fire on a confirmed pod (the
+        // don't-shoot invariant is enforced server-side too; the UI refuses it).
+        fireBtn.disabled = !ready || state.targetId === null || isPod;
+        fireBtn.textContent = isPod
+          ? 'HOLD FIRE — RESCUE POD'
+          : !ready
+            ? (gov === 'snapshot' ? 'CHARGING (40%)…' : 'CHARGING…')
+            : state.targetId === null ? 'FIRE (select a target)' : (gov === 'snapshot' ? 'SNAPSHOT' : 'FIRE');
         // Deflector-screen toggle: prefer the just-commanded value (optimistic)
         // over the snapshot; the audio edge detector stays on authoritative state.
         if (state.shields.raised && !prevShieldsRaised) audio.shieldUp();
@@ -262,7 +303,7 @@
         'The scope is a <b>forward arc</b> out the front window — contacts sit where they are relative to your bow (port ↔ starboard) and slide toward you as they close. <b>Tap a blip</b> to target it, then <b>FIRE</b> when charged. Shots always hit.',
         '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% and cracks <b>most</b> rocks fast — but a genuinely <b>big</b> rock shrugs it off and needs a full shot. You can\'t tell size on the scope; the <b>captain</b> calls the big ones from the viewscreen. The gauge tick shows when a snapshot is ready.',
         'Contacts read <b>UNKNOWN</b> until sensors identify them. A <b>RESCUE POD</b> looks like a rock at range — <b>never fire on a pod</b> (the console will refuse it). Confirm before you shoot.',
-        'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> shares your emitter: latch a pod/salvage in the arc to reel it in — but the <b>laser is offline while latched</b>, so it\'s a "tow or shoot?" call. Weapons power drives both.',
+        'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> is managed right here alongside the laser: latch a pod/salvage in the arc to reel it in. It runs <b>independently — you can tow AND fire</b>. Weapon power drives both.',
         'The <b>deflector screen</b> blocks damage but drains while up, and only recharges while down.',
         'The <b>captain</b> reads speed and threat on the main screen and calls priorities.',
       ],

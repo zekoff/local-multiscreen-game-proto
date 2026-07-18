@@ -255,8 +255,9 @@ function updateCaptainHud(state) {
       + (tripped.length ? ` · ${tripped.join(',')} TRIPPED ×½` : ''), // tripped = running at half power
     tripped.length ? 'alert' : '');
   const sh = state.shields.raised ? `screen ${state.shields.strength}%` : 'screen DOWN';
-  const laser = towing ? 'laser LOCKED (tow)' : state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
-  setCapRow('cap-wep', `${sh} · ${laser}`,
+  // Laser and tractor are independent now — show the real charge even while towing.
+  const laser = state.charge >= 100 ? 'laser READY' : `laser ${state.charge}%`;
+  setCapRow('cap-wep', `${sh} · ${laser}${towing ? ' · TOW' : ''}`,
     (state.shields.raised && state.shields.strength < 25) ? 'warn' : '');
   // THREAT row: only contacts the crew has actually IDENTIFIED as rocks (the
   // playtest ask — an all-seeing HUD undercuts the captain's job of spotting

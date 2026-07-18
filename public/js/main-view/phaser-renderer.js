@@ -300,8 +300,11 @@ class SpaceScene extends Phaser.Scene {
   // 1.0 at max), so "we're moving fast" reads at a glance.
   drawStars(dt, cx, cy, projScale, normSpeed, w, h) {
     const g = this.gStars;
-    const rate = normSpeed * 0.2;             // z-decrease/sec — 0 at rest, ~3x cruise at max
-    const trailA = Math.min(1, normSpeed);    // trail/brightness ramp, up to 1.0
+    const rate = normSpeed * 0.4;             // z-decrease/sec — 0 at rest, doubled top speed
+    // Trails cut ~a third from the old peak (length + opacity) so fast flight
+    // still smears but reads cleaner.
+    const trailLen = Math.min(0.30, normSpeed * 0.29);
+    const trailA = Math.min(1, normSpeed) * 0.67;
     for (const s of this.stars) {
       s.z -= rate * dt;
       if (s.z <= STAR_NEAR_Z) this.resetStar(s, false);
@@ -311,9 +314,9 @@ class SpaceScene extends Phaser.Scene {
       const closeness = 1 - (s.z - STAR_NEAR_Z) / (STAR_FAR_Z - STAR_NEAR_Z);
       const size = 0.5 + closeness * 2.5;
       // Streak back toward the vanishing point (project at a deeper z); its length
-      // grows with speed, so fast flight smears the stars into light-trails.
+      // grows with speed.
       if (normSpeed > 0.05) {
-        const zb = Math.min(STAR_FAR_Z, s.z + Math.min(0.45, rate * 2.2) * (0.4 + closeness));
+        const zb = Math.min(STAR_FAR_Z, s.z + trailLen * (0.4 + closeness));
         const bx = cx + (s.x / zb) * projScale;
         const by = cy + (s.y / zb) * projScale;
         g.lineStyle(Math.max(1, size * 0.8), 0xa8c4ff, (0.05 + closeness * 0.5) * trailA);

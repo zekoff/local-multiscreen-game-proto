@@ -1,9 +1,9 @@
-// Tractor / tow control — now a WEAPONS console widget. The tractor shares the
-// weapons emitter: the gunner aims and latches it, engineering's WEAPONS power
-// drives the reel, and the laser is offline while latched (the gunner's own
-// "tow or shoot?" call). Reel progress persists across releases (partial ring),
-// and alignment is forgiving — the helm can swing within a wide arc, closer =
-// faster. Built on the portable widget abstraction so it can be re-homed later.
+// Tractor / tow control — a WEAPONS console widget managed alongside the laser.
+// The gunner aims and latches it, engineering's WEAPONS power drives the reel,
+// and it runs INDEPENDENTLY of the laser (tow and fire at the same time). Reel
+// progress persists across releases (partial ring), and alignment is forgiving —
+// the helm can swing within a wide arc, closer = faster. Built on the portable
+// widget abstraction so it can be re-homed later.
 
 import { defineWidget, el } from '../widget.js';
 
@@ -12,7 +12,7 @@ const KIND_ICON = { pod: 'POD', mineral: 'ORE', rock: 'ROCK', ghost: '?', unknow
 export const towBeam = defineWidget({
   id: 'tow-beam',
   label: 'Tractor Beam',
-  hint: 'Latch a pod/salvage and hold it in the arc — your laser is offline while latched.',
+  hint: 'Latch a pod/salvage and hold it in the arc. Runs independently — tow and fire at once.',
   mount({ root, net, intents, audio }) {
     const status = el('div', 'tractor-status');
     const reelWrap = el('div', 'meter cool');
