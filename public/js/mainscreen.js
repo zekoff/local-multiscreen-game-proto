@@ -15,6 +15,8 @@ import { mountDebugPanel } from '/js/debug-panel.js';
 import { setLatest, getLatest, onAlignmentSnapshot, onGatesSnapshot } from '/js/main-view/model.js';
 import { consume as consumeFx, detectFades } from '/js/main-view/effects.js';
 import { createCanvasRenderer } from '/js/main-view/canvas-renderer.js';
+import { mountHudOverlay } from '/js/main-view/hud-overlay.js';
+import { mountToggle } from '/js/main-view/renderer-toggle.js';
 
 // The music builds over this many seconds, then holds — so a 3-minute run
 // climaxes right at the end and a longer run stays at full for the extra time
@@ -33,9 +35,37 @@ for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
   window.addEventListener(ev, () => audio.resume(), { once: false });
 }
 
-// --- Mount the space-view renderer into the viewscreen container ---
-const renderer = createCanvasRenderer({ container: document.getElementById('viewscreen'), audio });
-renderer.mount();
+// --- Space-view renderer: swappable Canvas 2D <-> Phaser, chosen by the
+// ?renderer flag (default canvas) and flippable live via the corner toggle for
+// an apples-to-apples comparison. The Phaser bundle (~1.3 MB) is loaded ONLY in
+// Phaser mode via dynamic import, so canvas mode's load cost is unchanged. The
+// shared HUD overlay + the DOM overlays stay put across a switch — only the
+// space view changes. ---
+const viewscreen = document.getElementById('viewscreen');
+let rendererKind = new URLSearchParams(location.search).get('renderer') === 'phaser' ? 'phaser' : 'canvas';
+let renderer = null;
+
+async function mountRenderer(kind) {
+  if (renderer) { renderer.destroy(); renderer = null; }
+  if (kind === 'phaser') {
+    const { createPhaserRenderer } = await import('/js/main-view/phaser-renderer.js');
+    renderer = createPhaserRenderer({ container: viewscreen, audio });
+  } else {
+    renderer = createCanvasRenderer({ container: viewscreen, audio });
+  }
+  renderer.mount();
+  rendererKind = kind;
+  // Persist the choice in the URL so a reload keeps the same renderer.
+  const u = new URL(location.href);
+  if (kind === 'phaser') u.searchParams.set('renderer', 'phaser'); else u.searchParams.delete('renderer');
+  history.replaceState(null, '', u);
+}
+
+// The clean HUD chrome (reticle/chevron/banners) is a shared overlay above the
+// space view, identical in both modes; mount it once and leave it across swaps.
+mountHudOverlay({ container: viewscreen }).mount();
+mountToggle({ container: viewscreen, getKind: () => rendererKind, onSwitch: mountRenderer });
+mountRenderer(rendererKind);
 
 // --- Join info (QR + URL) for the lobby overlay ---
 const room = new URLSearchParams(location.search).get('room')?.toUpperCase() || '';

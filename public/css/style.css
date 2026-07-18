@@ -306,9 +306,28 @@ select {
 .mainscreen-body { overflow: hidden; }
 .mainscreen-body main { max-width: none; padding: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; }
 /* #viewscreen is now a CONTAINER the active renderer mounts its own canvas into
-   (position:relative anchors that absolutely-filled canvas). */
+   (position:relative anchors the absolutely-stacked canvases). */
 #viewscreen { flex: 1; min-height: 0; width: 100%; display: block; background: #05070d; position: relative; }
-#viewscreen > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Base: every mounted canvas stacks at the container's top-left. */
+#viewscreen > canvas { position: absolute; top: 0; left: 0; display: block; }
+/* The 2D canvases (space renderer + HUD overlay) fill the container via CSS;
+   their backing store is sized to clientWidth*dpr in each renderer's resize().
+   The Phaser canvas (.phaser-canvas) is sized by Phaser's RESIZE scale mode, so
+   it is deliberately excluded from the 100% rule. */
+#viewscreen > canvas.view-canvas { width: 100%; height: 100%; }
+/* The shared clean-chrome overlay always sits on top and never eats pointers. */
+#viewscreen > canvas.hud-overlay { z-index: 5; pointer-events: none; }
+
+/* Live renderer switch (Canvas <-> Phaser) for A/B comparison on the main screen. */
+.renderer-toggle {
+  position: absolute; bottom: 0.6rem; right: 0.6rem; z-index: 6;
+  width: auto; margin: 0; padding: 0.35rem 0.7rem;
+  font-size: 0.72rem; font-family: monospace; letter-spacing: 0.02em;
+  color: var(--dim); background: rgba(10, 16, 26, 0.7);
+  border: 1px solid var(--panel-edge); border-radius: 6px; cursor: pointer;
+}
+.renderer-toggle:hover { color: var(--text); border-color: var(--accent); }
+.renderer-toggle:disabled { opacity: 0.5; cursor: default; }
 .hud { display: flex; gap: 1rem; padding: 0.8rem 1rem; background: var(--panel); border-top: 1px solid var(--panel-edge); flex-wrap: wrap; max-height: 32vh; overflow: hidden; }
 .hud .cell { flex: 1; min-width: 130px; }
 
