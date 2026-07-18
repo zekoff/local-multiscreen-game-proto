@@ -1,54 +1,129 @@
-// Phaser 4 space-view renderer (WIP scaffold). Implements the renderer.js
-// contract so the shell can mount it in place of the Canvas 2D renderer for a
-// live apples-to-apples comparison. This scaffold proves the plumbing end to
-// end — Phaser boots full-bleed into the #viewscreen container, banks with the
-// interpolated alignment, streams a starfield, and reads the shared model — so
-// the switch and the shared HUD overlay can be verified now. Step 4 builds the
-// full scene (CC0 sprites for station/asteroids, gates, lasers, explosions, and
-// the C-fx feedback with Bloom/Glow/particles) on top of this same skeleton.
+// Phaser 4 space-view renderer — the cinematic port of the main-screen viewscreen.
+// Implements the renderer.js contract so the shell can mount it in place of the
+// Canvas 2D renderer for a live apples-to-apples comparison. It represents the
+// SAME game-legible elements as the canvas view (starfield, nebula, a growing
+// destination, nav gates, obstacles, asteroids/pods/minerals, tractor beam,
+// lasers, explosions, and the C-fx feedback) but with CC0 sprites for solid
+// bodies and additive glow for effects — "element parity, not pixel parity."
 //
-// Reads the shared model.js (snapshot + interpolators) and effects.js (fx
-// buffers + scalars); calls effects.advance(dt) once per frame — the single
-// source of truth for effect timing shared with the canvas renderer.
+// It reads the SHARED model.js (snapshot + interpolators + geometry) and
+// effects.js (fx buffers + scalars), calling effects.advance(dt) once per frame
+// so effect timing matches the canvas renderer. All sizes are computed in CSS
+// px (Phaser RESIZE works in CSS px), i.e. the canvas formulas with dpr = 1.
+//
+// The clean HUD chrome (reticle, chevron, notification/COLLISION banners) is NOT
+// drawn here — the shared hud-overlay owns it, identical across renderers. Bloom/
+// Glow post-processing (Phaser 4 Filter system) is layered on in a later polish
+// pass; the additive blend modes below already give a strong glow read.
 
 import Phaser from '/js/vendor/phaser.esm.min.js';
-import { getLatest, displayAlignment } from '/js/main-view/model.js';
-import { fx, advance } from '/js/main-view/effects.js';
+import {
+  getLatest, displayAlignment, displayGateReach, nebulaFor, trafficFor,
+  asteroidScreenPos, cachedAstPos, astShapeFor, astPos,
+} from '/js/main-view/model.js';
+import { fx, lasers, explosions, gateFx, fadeAway, fadeCargo, advance } from '/js/main-view/effects.js';
 
+const ASSETS = '/assets/space';
 const STAR_COUNT = 150;
 const STAR_FAR_Z = 1;
 const STAR_NEAR_Z = 0.02;
+const ASTEROID_KEYS = ['ast_b1', 'ast_b2', 'ast_g1', 'ast_g2'];
+
+// #rrggbb -> 0xRRGGBB int for Phaser tint/fill.
+const hexInt = (hex) => parseInt(hex.slice(1), 16);
 
 class SpaceScene extends Phaser.Scene {
   constructor() {
     super('space');
     this.yaw = 0;
     this.lastTs = 0;
+    this.stars = [];
+    this.debris = [];
+    this.contacts = new Map();  // asteroid id -> { img, glow }
+    this.texts = new Map();     // pooled labels: key -> Text
+    this.usedTexts = new Set();
+    this.nebulaImgs = [];
+    this.nebulaKey = '';
+    this.explBursts = [];       // active explosion sparks { x, y, t }
+  }
+
+  preload() {
+    this.load.image('ast_b1', `${ASSETS}/asteroid_brown_1.png`);
+    this.load.image('ast_b2', `${ASSETS}/asteroid_brown_2.png`);
+    this.load.image('ast_g1', `${ASSETS}/asteroid_grey_1.png`);
+    this.load.image('ast_g2', `${ASSETS}/asteroid_grey_2.png`);
+    this.load.image('station', `${ASSETS}/station.png`);
+    this.load.image('pod', `${ASSETS}/pod.png`);
+    this.load.image('mineral', `${ASSETS}/mineral.png`);
+    this.load.image('planet0', `${ASSETS}/planet_0.png`);
+    this.load.image('planet1', `${ASSETS}/planet_1.png`);
+    this.load.image('planet2', `${ASSETS}/planet_2.png`);
+    this.load.image('glow', `${ASSETS}/glow.png`);
+    this.load.image('flame', `${ASSETS}/flame.png`);
+    this.load.image('smoke', `${ASSETS}/smoke.png`);
+    this.load.image('spark', `${ASSETS}/spark.png`);
+    this.load.image('star', `${ASSETS}/star.png`);
+    this.load.image('streak', `${ASSETS}/streak.png`);
   }
 
   create() {
     this.cameras.main.setBackgroundColor('#05070d');
-    this.starGfx = this.add.graphics();
-    // Star field in normalized perspective coords (same math as the canvas
-    // renderer) so the sense of speed reads identically.
+
+    // Graphics layers (immediate-mode, cleared+redrawn each frame), depth-ordered
+    // to roughly match the canvas draw order. Additive layers give the glow read.
+    this.gStars = this.add.graphics().setDepth(0);
+    this.gGates = this.add.graphics().setDepth(5);   // gates + obstacles (behind bodies)
+    this.gRings = this.add.graphics().setDepth(14);  // range/threat rings + tractor
+    this.gAdd = this.add.graphics().setDepth(16).setBlendMode(Phaser.BlendModes.ADD); // lasers, slipstream, explosion glow
+    this.gWash = this.add.graphics().setDepth(30);   // full-screen flashes / vignette / shield arc / blackout
+
+    // Destination body (station/planet) with an additive glow behind it.
+    this.destGlow = this.add.image(0, 0, 'glow').setDepth(6).setBlendMode(Phaser.BlendModes.ADD).setVisible(false);
+    this.destImg = this.add.image(0, 0, 'station').setDepth(7).setVisible(false);
+
+    // Starfield + debris in normalized perspective coords (same math as canvas).
     this.stars = Array.from({ length: STAR_COUNT }, () => this.resetStar({}, true));
-    // WIP marker so it's obvious which renderer is live during comparison.
-    this.tag = this.add.text(0, 0, 'PHASER RENDERER · WIP', {
-      fontFamily: 'monospace', fontSize: '13px', color: 'rgba(125,219,154,0.5)',
-    }).setResolution(Math.min(3, window.devicePixelRatio || 1));
-    this.scale.on('resize', this.layout, this);
-    this.layout();
+    this.debris = Array.from({ length: 80 }, () => this.resetDebris({}, true));
+
+    this.scale.on('resize', () => this.cameras.main.setBackgroundColor('#05070d'));
   }
 
-  layout() {
-    const { width, height } = this.scale;
-    if (this.tag) this.tag.setPosition(12, height - 26);
+  // ---- pooled label text --------------------------------------------------
+  beginTexts() { this.usedTexts.clear(); }
+  label(key, str, x, y, colorHex, size, depth) {
+    let t = this.texts.get(key);
+    if (!t) {
+      t = this.add.text(0, 0, '', { fontFamily: 'monospace' })
+        .setOrigin(0.5, 0.5)
+        .setResolution(Math.min(3, window.devicePixelRatio || 1));
+      this.texts.set(key, t);
+    }
+    t.setFontSize(size);
+    t.setText(str);
+    t.setColor(colorHex);
+    t.setPosition(x, y);
+    t.setDepth(depth);
+    t.setVisible(true);
+    this.usedTexts.add(key);
+    return t;
+  }
+  endTexts() {
+    for (const [key, t] of this.texts) if (!this.usedTexts.has(key)) t.setVisible(false);
   }
 
   resetStar(s, seed) {
     s.x = (Math.random() - 0.5) * 2.4;
     s.y = (Math.random() - 0.5) * 2.4;
     s.z = seed ? STAR_NEAR_Z + Math.random() * (STAR_FAR_Z - STAR_NEAR_Z) : STAR_FAR_Z;
+    return s;
+  }
+  resetDebris(s, deep) {
+    s.x = (Math.random() - 0.5) * 2.6;
+    s.y = (Math.random() - 0.5) * 2.6;
+    s.z = deep ? STAR_NEAR_Z + Math.random() * (STAR_FAR_Z - STAR_NEAR_Z) : STAR_FAR_Z;
+    s.a = Math.random() * Math.PI * 2;
+    s.sp = (Math.random() - 0.5) * 6;
+    s.m = 0.7 + Math.random() * 1.1;
     return s;
   }
 
@@ -59,15 +134,14 @@ class SpaceScene extends Phaser.Scene {
 
     const latest = getLatest();
     const active = !!(latest && latest.phase === 'active');
-    const { width: w, height: h } = this.scale;
+    const w = this.scale.width, h = this.scale.height;
 
-    // Bank the camera with the interpolated alignment (matches the canvas view).
+    // Camera bank with the interpolated alignment; shake via camera scroll jitter.
     const targetYaw = active ? Math.max(-1, Math.min(1, displayAlignment() / 100)) : 0;
     this.yaw += (targetYaw - this.yaw) * Math.min(1, dt * 8);
     this.cameras.main.setRotation(this.yaw * 0.04);
-    // Screen shake driven by the shared scalar (decayed in advance()).
     if (fx.shake > 0.2) {
-      const s = fx.shake * 0.25;
+      const s = fx.shake * 0.5;
       this.cameras.main.setScroll((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
     } else {
       this.cameras.main.setScroll(0, 0);
@@ -76,11 +150,88 @@ class SpaceScene extends Phaser.Scene {
     const cx = w / 2 - this.yaw * w * 0.16;
     const cy = h / 2;
     const projScale = Math.min(w, h) * 0.5;
+    const yawPx = -this.yaw * w * 0.16;
     const shipSpeed = active ? latest.speed : 5;
     const slipstream = !!(active && latest.slipstream);
 
-    const g = this.starGfx;
-    g.clear();
+    this.gStars.clear();
+    this.gGates.clear();
+    this.gRings.clear();
+    this.gAdd.clear();
+    this.gWash.clear();
+    this.beginTexts();
+
+    this.drawNebula(latest, w, h, yawPx);
+    this.drawStars(dt, cx, cy, projScale, shipSpeed, slipstream, w, h);
+
+    if (active) {
+      this.drawDistantTraffic(latest, w, h, yawPx);
+      this.drawDestination(latest, w, h, cx);
+      this.drawGates(latest, w, h, cy);
+      this.drawObstacles(latest, w, h, cy);
+      this.syncContacts(latest, w, h, yawPx, time);
+      this.drawTractor(latest, w, h);
+      this.drawLasers(w, h, yawPx);
+      this.drawExplosions(dt, w, h, yawPx);
+      if (latest.debrisIn > 0) this.drawDebris(latest, dt, cx, cy, projScale, w, h);
+      if (latest.ionStormIn > 0) this.drawIonStorm(w, h);
+    } else {
+      this.clearContacts();
+    }
+    this.drawFades(w, h, time);
+
+    // C-fx feedback (fixed-screen washes + shield arc). Drawn on gWash (screen
+    // space); these are allowed to differ from the canvas view — the point of the
+    // port. Position in world coords compensating for camera scroll/rotation is
+    // unnecessary here because a full-screen wash reads the same either way; we
+    // oversize the rects so rotation never reveals an edge.
+    if (active) {
+      this.drawShieldArc(latest, w, h);
+      this.drawHullVignette(latest, w, h);
+      this.drawDamageOverlay(latest, w, h);
+      if (latest.viewImpaired) this.drawBlackout(w, h);
+      if (slipstream) this.drawSlipstream(w, h);
+    }
+    this.drawGateFlash(w, h);
+    this.drawFlashes(w, h);
+
+    this.endTexts();
+  }
+
+  // Oversized rect helper so camera rotation/scroll never reveals an unfilled edge.
+  fullRect(g, colorInt, alpha, w, h) {
+    if (alpha <= 0) return;
+    g.fillStyle(colorInt, alpha);
+    g.fillRect(-w, -h, w * 3, h * 3);
+  }
+
+  drawNebula(latest, w, h, yawPx) {
+    const id = latest?.mission?.id;
+    if (!id) { for (const im of this.nebulaImgs) im.setVisible(false); return; }
+    if (id !== this.nebulaKey) {
+      this.nebulaKey = id;
+      const blobs = nebulaFor(id);
+      // (Re)build one additive glow sprite per nebula blob.
+      for (const im of this.nebulaImgs) im.destroy();
+      this.nebulaImgs = blobs.map(() => this.add.image(0, 0, 'glow')
+        .setDepth(-1).setBlendMode(Phaser.BlendModes.ADD));
+    }
+    const blobs = nebulaFor(id);
+    const tNow = performance.now() / 1000;
+    blobs.forEach((b, i) => {
+      const im = this.nebulaImgs[i];
+      if (!im) return;
+      const bx = ((b.x + b.drift * tNow) % 1.2) * w + yawPx * b.depth;
+      const by = b.y * h;
+      const br = b.r * Math.min(w, h) * 3.2;
+      im.setPosition(bx, by).setDisplaySize(br, br)
+        .setTint(Phaser.Display.Color.GetColor(b.c[0], b.c[1], b.c[2]))
+        .setAlpha(b.a * 2.2).setVisible(true);
+    });
+  }
+
+  drawStars(dt, cx, cy, projScale, shipSpeed, slipstream, w, h) {
+    const g = this.gStars;
     for (const s of this.stars) {
       s.z -= (0.07 + shipSpeed * 0.0055) * (slipstream ? 2.4 : 1) * dt;
       if (s.z <= STAR_NEAR_Z) this.resetStar(s, false);
@@ -93,38 +244,356 @@ class SpaceScene extends Phaser.Scene {
       g.fillRect(px, py, size, size);
     }
   }
+
+  drawDistantTraffic(latest, w, h, yawPx) {
+    const g = this.gGates;
+    const tNow = performance.now() / 1000;
+    for (const v of trafficFor(latest.mission?.id || 'x')) {
+      const x = (((v.phase + v.speed * tNow) % 1) + 1) % 1 * w + yawPx * 0.25;
+      const y = v.y * h;
+      const blink = (Math.sin(tNow * 3 + v.phase * 9) + 1) / 2;
+      g.fillStyle(v.col === '#9fb4e0' ? 0x9fb4e0 : 0xc8a882, 0.5);
+      g.fillRect(x, y, 6, 1.6);
+      g.fillStyle(0xb4dcff, 0.25 + blink * 0.55);
+      g.fillRect(x + (v.speed > 0 ? 6 : -1.5), y - 0.5, 1.5, 1.5);
+    }
+  }
+
+  drawDestination(latest, w, h, cx) {
+    const progress = latest.progress;
+    const dest = latest.mission?.destination;
+    const px = cx, py = h * 0.4;
+    const grow = Math.min(1, progress / 100);
+    const r = 6 + grow * grow * 90;
+    const colorHex = dest?.color || '#7ddb9a';
+    const name = (latest.mission?.arrivalName || 'DESTINATION').toUpperCase();
+
+    // Additive glow halo behind the body.
+    this.destGlow.setVisible(true).setPosition(px, py).setDisplaySize(r * 4.2, r * 4.2)
+      .setTint(hexInt(colorHex)).setAlpha(0.22);
+
+    if (dest?.kind === 'planet') {
+      // Seeded planet sprite per mission (full-color art, shown as-is).
+      let hsh = 0; for (const c of (latest.mission.id || 'x')) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;
+      const key = `planet${hsh % 3}`;
+      if (this.destImg.texture.key !== key) this.destImg.setTexture(key);
+      this.destImg.clearTint();
+      this.destImg.setVisible(true).setPosition(px, py).setDisplaySize(r * 2.4, r * 2.4).setRotation(0);
+    } else {
+      // Station (or generic): the clean ringed station sprite, tinted the
+      // mission's destination color, slowly rotating.
+      if (this.destImg.texture.key !== 'station') this.destImg.setTexture('station');
+      this.destImg.setTint(hexInt(colorHex));
+      this.destImg.setVisible(true).setPosition(px, py).setDisplaySize(r * 2.6, r * 2.6)
+        .setRotation((performance.now() / 6000) % (Math.PI * 2));
+    }
+    if (r > 10) this.label('dest', name, px, py - r - 14, colorHex, 12, 8);
+  }
+
+  drawGates(latest, w, h, cy) {
+    const GATE_MAX_REACH = 19;
+    const align = displayAlignment();
+    const g = this.gGates;
+    for (const gate of latest.gates || []) {
+      const reach = displayGateReach(gate.id, gate.reachIn);
+      const t = Math.max(0, Math.min(1, 1 - reach / GATE_MAX_REACH));
+      const r = 14 + t * t * Math.min(w, h) * 0.7;
+      const cxg = w / 2 + ((gate.bearing - align) / 100) * (w * 0.5);
+      const lined = Math.abs(align - gate.bearing) <= 30;
+      const colorInt = lined ? 0x8fd6ff : 0xffb347;
+      g.lineStyle(2 + t * 3, colorInt, 0.35 + t * 0.5);
+      g.strokeEllipse(cxg, cy, r * 2, r * 2 * 0.82);
+      g.fillStyle(colorInt, 0.5 + t * 0.4);
+      for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+        g.fillCircle(cxg + Math.cos(a) * r, cy + Math.sin(a) * r * 0.82, 2.5);
+      }
+      if (t < 0.5) {
+        this.label(`gate${gate.id}`, `${gate.label} ${Math.ceil(gate.reachIn)}s`,
+          cxg, cy - r * 0.82 - 12, lined ? '#8fd6ff' : '#ffb347', 11, 8);
+      }
+    }
+  }
+
+  drawObstacles(latest, w, h, cy) {
+    const align = displayAlignment();
+    const g = this.gGates;
+    for (const ob of latest.obstacles || []) {
+      const t = Math.max(0, Math.min(1, 1 - ob.reachIn / 20));
+      const r = 24 + t * t * Math.min(w, h) * 0.9;
+      const cxo = w / 2 + ((ob.bearing - align) / 100) * (w * 0.5);
+      const into = Math.abs(align - ob.bearing) < (ob.clearWindow || 22);
+      const pulse = (Math.sin(performance.now() / 160) + 1) / 2;
+      const bodyInt = into ? 0x281a18 : 0x1e1a18;
+      g.fillStyle(bodyInt, into ? 0.9 : 0.85);
+      g.fillCircle(cxo, cy, r);
+      g.lineStyle(2 + t * 2, into ? 0xff5a5a : 0x786e64, into ? 0.7 + pulse * 0.3 : 0.6);
+      g.strokeCircle(cxo, cy, r);
+      const steer = ob.bearing > align ? 'STEER PORT ◀' : '▶ STEER STARBOARD';
+      this.label(`ob${ob.label}`, into ? `${ob.label} — COLLISION · ${steer}` : `${ob.label} — CLEAR`,
+        cxo, cy - r - 12, into ? '#ff5c5c' : '#7ddb9a', 12, 20);
+    }
+  }
+
+  syncContacts(latest, w, h, yawPx, time) {
+    if (astPos.size > 400) astPos.clear();
+    const seen = new Set();
+    for (const a of latest.asteroids) {
+      if (a.phantom) continue;
+      const { x: px, y: py } = asteroidScreenPos(a, w, h, yawPx);
+      const size = a.size ?? 1;
+      const big = size > 1.2;
+      const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
+      const nearBoost = 1 + Math.max(0, 5 - a.impactIn) * 0.14;
+      const bloom = 26 * (big ? 2.0 : 1.0);
+      const r = (0.7 + Math.pow(growth, 1.25) * bloom) * (0.82 + 0.18 * size) * nearBoost;
+      astPos.set(a.id, { x: px, y: py, r });
+      seen.add(a.id);
+
+      const vk = a.visualKind || 'unknown';
+      let c = this.contacts.get(a.id);
+      if (!c) {
+        const img = this.add.image(0, 0, ASTEROID_KEYS[a.id % 4]).setDepth(10);
+        c = { img };
+        this.contacts.set(a.id, c);
+      }
+      const shape = astShapeFor(a.id);
+      c.img.setPosition(px, py).setVisible(true);
+
+      if (vk === 'pod') {
+        const blink = (Math.sin(performance.now() / 220) + 1) / 2;
+        c.img.setTexture('pod').setTint(0x4cd97b).setRotation(0).setDisplaySize(Math.max(14, r * 2.2), Math.max(14, r * 2.2));
+        this.gRings.fillStyle(0x4cd97b, 0.12 + blink * 0.18);
+        this.gRings.fillCircle(px, py, Math.max(14, r) * 1.6);
+        this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - Math.max(14, r) - 14, '#4cd97b', 12, 12);
+        this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + Math.max(14, r) + 16, blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
+        continue;
+      }
+      if (vk === 'mineral') {
+        c.img.setTexture('mineral').setTint(0xffb347).setDisplaySize(Math.max(12, r * 2), Math.max(12, r * 2))
+          .setRotation((performance.now() / 2600) % (Math.PI * 2));
+        this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - Math.max(12, r) - 14, '#ffb347', 11, 12);
+        continue;
+      }
+
+      // Rock: asteroid sprite (brown = large/deeper, grey = small), per-id spin.
+      const key = ASTEROID_KEYS[(big ? 0 : 2) + (a.id % 2)];
+      if (c.img.texture.key !== key) c.img.setTexture(key);
+      c.img.clearTint();
+      c.img.setDisplaySize(r * 2.2, r * 2.2)
+        .setRotation((time / 1000) * shape.spin);
+
+      // Range ring (acquired) — faint distance cue.
+      if (a.targetable) {
+        const ringR = r + (34 + r * 0.8) * Math.min(1, a.impactIn / 16);
+        this.gRings.lineStyle(1, 0xa0b4dc, 0.16);
+        this.gRings.strokeCircle(px, py, ringR);
+      }
+      // Threat ring + label (targetable rocks/unknowns only).
+      if (a.targetable && (a.kind === 'rock' || a.kind === 'unknown')) {
+        const spd = a.speed ?? 1;
+        const threatHex = (spd >= 1.15 || a.impactIn < 6) ? '#ff5c5c'
+          : (spd >= 0.95 || a.impactIn < 12) ? '#ffb347' : '#e0d24c';
+        const targeted = a.id === latest.targetId;
+        this.gRings.lineStyle(targeted ? 3.5 : 2, hexInt(threatHex), targeted ? 1 : 0.8);
+        this.gRings.strokeCircle(px, py, r + (targeted ? 6 : 4));
+        this.label(`c${a.id}`, `${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - 14, threatHex, 12, 12);
+      }
+    }
+    for (const [id, c] of this.contacts) {
+      if (!seen.has(id)) { c.img.destroy(); this.contacts.delete(id); }
+    }
+  }
+  clearContacts() {
+    for (const [, c] of this.contacts) c.img.destroy();
+    this.contacts.clear();
+  }
+
+  drawTractor(latest, w, h) {
+    const t = latest.tractor;
+    if (!t || !t.latched || t.targetId == null) return;
+    const p = astPos.get(t.targetId);
+    if (!p) return;
+    const ox = w / 2, oy = h * 0.98;
+    const pulse = (Math.sin(performance.now() / 120) + 1) / 2;
+    this.gAdd.lineStyle(5 + pulse * 5, 0x78ebdc, 0.25 + pulse * 0.35);
+    this.gAdd.lineBetween(ox, oy, p.x, p.y);
+    this.gAdd.lineStyle(1.5, 0xc8fffa, 0.4 + pulse * 0.4);
+    this.gAdd.lineBetween(ox, oy, p.x, p.y);
+    this.gRings.lineStyle(3, 0x78ebdc, 0.9);
+    this.gRings.beginPath();
+    this.gRings.arc(p.x, p.y, 16, -Math.PI / 2, -Math.PI / 2 + (t.reel || 0) * Math.PI * 2);
+    this.gRings.strokePath();
+  }
+
+  drawLasers(w, h, yawPx) {
+    const originY = h * 0.98;
+    for (const l of lasers) {
+      const p = cachedAstPos(l.id, w, h, yawPx);
+      let tx = p.x; const ty = p.y;
+      if (!l.hit) tx += (l.id % 2 ? 1 : -1) * 40;
+      const alpha = Math.max(0, l.life / 0.28);
+      const originX = w / 2 + (l.id % 2 ? 22 : -22);
+      this.gAdd.lineStyle(3.5, l.hit ? 0xff5a5a : 0xffb478, alpha);
+      this.gAdd.lineBetween(originX, originY, tx, ty);
+      if (!l.hit && l.life < 0.14) this.gAdd.fillStyle(0xffb478, alpha), this.gAdd.fillCircle(tx, ty, 4);
+    }
+  }
+
+  drawExplosions(dt, w, h, yawPx) {
+    for (const e of explosions) {
+      const p = cachedAstPos(e.id, w, h, yawPx);
+      const t = 1 - e.life / e.max;
+      const r = 8 + t * 46;
+      const alpha = 1 - t;
+      // Expanding additive fireball + a ring of spark lines (canvas parity).
+      this.gAdd.fillStyle(0xffe0a0, alpha * 0.9);
+      this.gAdd.fillCircle(p.x, p.y, r * 0.55);
+      this.gAdd.fillStyle(0xff8a3c, alpha * 0.5);
+      this.gAdd.fillCircle(p.x, p.y, r);
+      this.gAdd.lineStyle(1.5, 0xffc878, alpha);
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 + e.id;
+        this.gAdd.lineBetween(p.x + Math.cos(a) * r * 0.5, p.y + Math.sin(a) * r * 0.5,
+          p.x + Math.cos(a) * r, p.y + Math.sin(a) * r);
+      }
+    }
+  }
+
+  drawDebris(latest, dt, cx, cy, projScale, w, h) {
+    const g = this.gStars;
+    const hot = 0.7 + ((latest.throttle || 0) / 100) * 2.0;
+    for (const s of this.debris) {
+      s.z -= 0.30 * hot * dt;
+      s.a += s.sp * dt;
+      if (s.z <= STAR_NEAR_Z) this.resetDebris(s, false);
+      const px = cx + (s.x / s.z) * projScale;
+      const py = cy + (s.y / s.z) * projScale;
+      if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
+      const closeness = 1 - (s.z - STAR_NEAR_Z) / (STAR_FAR_Z - STAR_NEAR_Z);
+      const size = (0.9 + closeness * 3.6) * s.m;
+      g.fillStyle(0x96846c, 0.22 + closeness * 0.55);
+      g.fillRect(px - size / 2, py - size / 2, size, size * 0.72);
+    }
+  }
+
+  drawIonStorm(w, h) {
+    this.fullRect(this.gWash, 0x7882eb, 0.045, w, h);
+    for (let i = 0; i < 3; i++) {
+      if (Math.random() < 0.4) continue;
+      const y = Math.random() * h;
+      this.gWash.fillStyle(0x96aaff, 0.03 + Math.random() * 0.05);
+      this.gWash.fillRect(0, y, w, 1 + Math.random() * 2);
+    }
+  }
+
+  drawSlipstream(w, h) {
+    const cx = w / 2, cy = h / 2;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + (performance.now() / 900) % (Math.PI * 2);
+      const r0 = Math.min(w, h) * 0.12;
+      const r1 = Math.min(w, h) * (0.5 + (i % 3) * 0.14);
+      const peak = 0.05 + (i % 3) * 0.03;
+      this.gAdd.lineStyle(1 + (i % 2), 0xa3deff, peak);
+      this.gAdd.lineBetween(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.82,
+        cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.82);
+    }
+  }
+
+  drawFades(w, h, time) {
+    for (const f of fadeAway) {
+      const alpha = 1 - f.t;
+      const r = f.r || 8;
+      if (f.kind === 'rock') {
+        this.gRings.fillStyle(0x968c7a, 0.9 * alpha);
+        this.gRings.fillCircle(f.x, f.y, r);
+      } else {
+        this.gRings.fillStyle(f.kind === 'pod' ? 0x4cd97b : 0xffb347, alpha);
+        this.gRings.fillCircle(f.x, f.y, r);
+      }
+    }
+    const bayX = w / 2, bayY = h * 0.985;
+    for (const f of fadeCargo) {
+      const x = f.x + (bayX - f.x) * f.t;
+      const y = f.y + (bayY - f.y) * f.t;
+      this.gRings.fillStyle(f.kind === 'pod' ? 0x4cd97b : 0xffb347, 1 - f.t * 0.7);
+      this.gRings.fillCircle(x, y, 7 * (1 - f.t * 0.5));
+    }
+  }
+
+  drawShieldArc(latest, w, h) {
+    if (!latest.shields?.raised) return;
+    const strength = (latest.shields.strength || 0) / 100;
+    const cxs = w / 2, cys = h * 1.18, rad = h * 0.62;
+    const half = (0.16 + 0.30 * strength) * Math.PI;
+    const start = -Math.PI / 2 - half, end = -Math.PI / 2 + half;
+    const g = this.gWash;
+    g.lineStyle(3, 0x96d7ff, 0.3 + strength * 0.45);
+    g.beginPath();
+    g.arc(cxs, cys, rad, start, end);
+    g.strokePath();
+  }
+
+  drawHullVignette(latest, w, h) {
+    const hull = latest.hull ?? 100;
+    if (hull >= 30) return;
+    const a = ((30 - hull) / 30) * 0.16;
+    this.fullRect(this.gWash, 0xff3c3c, a, w, h);
+  }
+
+  drawDamageOverlay(latest, w, h) {
+    if (fx.hullFlash > 0.001) this.fullRect(this.gWash, 0xff2d2d, fx.hullFlash * 0.32, w, h);
+    if (latest.debrisIn > 0 && (latest.throttle || 0) > 40) {
+      const pulse = 0.07 + 0.05 * Math.sin(performance.now() / 170);
+      this.fullRect(this.gWash, 0xd24628, pulse, w, h);
+    }
+  }
+
+  drawBlackout(w, h) {
+    this.fullRect(this.gWash, 0x020306, 0.975, w, h);
+    this.label('blackout', '— FORWARD VIEW LOST — FLY ON SENSORS —', w / 2, h * 0.5, '#b4c8ff', 16, 31);
+  }
+
+  drawFlashes(w, h) {
+    if (fx.warpFlash > 0) this.fullRect(this.gWash, 0xe6f0ff, Math.min(0.85, fx.warpFlash), w, h);
+    if (fx.pulseFlash > 0) this.fullRect(this.gWash, 0x8fd6ff, fx.pulseFlash * 0.5, w, h);
+    if (fx.shieldFlash > 0) this.fullRect(this.gWash, 0x78c8ff, fx.shieldFlash * 0.4, w, h);
+    if (fx.stormFlash > 0) this.fullRect(this.gWash, 0x8c96ff, fx.stormFlash * 0.25, w, h);
+  }
+
+  drawGateFlash(w, h) {
+    for (const f of gateFx) {
+      if (f.passed) this.fullRect(this.gWash, 0x7ddb9a, (f.life / 0.5) * 0.18, w, h);
+    }
+  }
 }
 
 export function createPhaserRenderer({ container }) {
   let game = null;
+  let vis = null;
   return {
     mount() {
       if (game) return;
       game = new Phaser.Game({
         type: Phaser.AUTO,
         parent: container,
-        // Full-bleed: track the container size instead of a fixed logical scene.
         scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.NO_CENTER },
-        // A TV/laptop main screen, not a phone — prefer the discrete GPU and 60fps.
         powerPreference: 'high-performance',
         fps: { target: 60 },
         banner: false,
         scene: SpaceScene,
         callbacks: {
-          // Tag the canvas so it stacks under the shared HUD overlay (see CSS).
           postBoot: (gm) => { if (gm.canvas) gm.canvas.classList.add('phaser-canvas'); },
         },
       });
-      // Pause rendering while the tab is hidden (battery + no drift on a snapshot
-      // the scene isn't seeing).
-      document.addEventListener('visibilitychange', this._vis = () => {
+      vis = () => {
         if (!game) return;
         if (document.hidden) game.loop.sleep(); else game.loop.wake();
-      });
+      };
+      document.addEventListener('visibilitychange', vis);
     },
     resize() { game?.scale.refresh(); },
     destroy() {
-      if (this._vis) document.removeEventListener('visibilitychange', this._vis);
+      if (vis) document.removeEventListener('visibilitychange', vis);
       game?.destroy(true);
       game = null;
     },
