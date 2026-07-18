@@ -85,6 +85,19 @@ class SpaceScene extends Phaser.Scene {
     this.stars = Array.from({ length: STAR_COUNT }, () => this.resetStar({}, true));
     this.debris = Array.from({ length: 80 }, () => this.resetDebris({}, true));
 
+    // Cinematic lift: a subtle camera-wide Glow (Phaser 4 Filter system) blooms
+    // bright things — lasers, explosions, star cores, gate rings, the destination.
+    // Plus a light vignette for a filmic frame. Wrapped defensively: if this
+    // build's Filter API differs, the scene still renders (the additive blend
+    // layers already carry a glow read).
+    try {
+      const cam = this.cameras.main;
+      if (typeof cam.enableFilters === 'function') cam.enableFilters();
+      const fl = cam.filters?.internal;
+      if (fl?.addGlow) fl.addGlow(0xffffff, 1.1, 0, 1, false);
+      if (fl?.addVignette) fl.addVignette(0.5, 0.5, 0.9, 0.35);
+    } catch { /* Filter API unavailable in this Phaser build — additive blend still glows */ }
+
     this.scale.on('resize', () => this.cameras.main.setBackgroundColor('#05070d'));
   }
 
@@ -352,26 +365,32 @@ class SpaceScene extends Phaser.Scene {
       const vk = a.visualKind || 'unknown';
       let c = this.contacts.get(a.id);
       if (!c) {
+        // Additive glow halo behind the body (matches the canvas rock/pod glow —
+        // this is what makes a contact read against the dark starfield).
+        const glow = this.add.image(0, 0, 'glow').setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
         const img = this.add.image(0, 0, ASTEROID_KEYS[a.id % 4]).setDepth(10);
-        c = { img };
+        c = { img, glow };
         this.contacts.set(a.id, c);
       }
       const shape = astShapeFor(a.id);
       c.img.setPosition(px, py).setVisible(true);
+      c.glow.setPosition(px, py).setVisible(true);
 
       if (vk === 'pod') {
         const blink = (Math.sin(performance.now() / 220) + 1) / 2;
-        c.img.setTexture('pod').setTint(0x4cd97b).setRotation(0).setDisplaySize(Math.max(14, r * 2.2), Math.max(14, r * 2.2));
-        this.gRings.fillStyle(0x4cd97b, 0.12 + blink * 0.18);
-        this.gRings.fillCircle(px, py, Math.max(14, r) * 1.6);
-        this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - Math.max(14, r) - 14, '#4cd97b', 12, 12);
-        this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + Math.max(14, r) + 16, blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
+        const rr = Math.max(14, r);
+        c.img.setTexture('pod').setTint(0x4cd97b).setRotation(0).setDisplaySize(rr * 2.2, rr * 2.2);
+        c.glow.setTint(0x4cd97b).setDisplaySize(rr * 5, rr * 5).setAlpha(0.18 + blink * 0.22);
+        this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - rr - 14, '#4cd97b', 12, 12);
+        this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + rr + 16, blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
         continue;
       }
       if (vk === 'mineral') {
-        c.img.setTexture('mineral').setTint(0xffb347).setDisplaySize(Math.max(12, r * 2), Math.max(12, r * 2))
+        const rr = Math.max(12, r);
+        c.img.setTexture('mineral').setTint(0xffb347).setDisplaySize(rr * 2, rr * 2)
           .setRotation((performance.now() / 2600) % (Math.PI * 2));
-        this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - Math.max(12, r) - 14, '#ffb347', 11, 12);
+        c.glow.setTint(0xffb347).setDisplaySize(rr * 3.6, rr * 3.6).setAlpha(0.14 + growth * 0.14);
+        this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - rr - 14, '#ffb347', 11, 12);
         continue;
       }
 
@@ -381,6 +400,8 @@ class SpaceScene extends Phaser.Scene {
       c.img.clearTint();
       c.img.setDisplaySize(r * 2.2, r * 2.2)
         .setRotation((time / 1000) * shape.spin);
+      c.glow.setTint(big ? 0x78604a : 0x968c78).setDisplaySize(r * 3.6, r * 3.6)
+        .setAlpha(0.1 + growth * 0.22);
 
       // Range ring (acquired) — faint distance cue.
       if (a.targetable) {
@@ -400,11 +421,11 @@ class SpaceScene extends Phaser.Scene {
       }
     }
     for (const [id, c] of this.contacts) {
-      if (!seen.has(id)) { c.img.destroy(); this.contacts.delete(id); }
+      if (!seen.has(id)) { c.img.destroy(); c.glow.destroy(); this.contacts.delete(id); }
     }
   }
   clearContacts() {
-    for (const [, c] of this.contacts) c.img.destroy();
+    for (const [, c] of this.contacts) { c.img.destroy(); c.glow.destroy(); }
     this.contacts.clear();
   }
 
