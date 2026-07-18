@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Bridge Crew">
+  <!-- Dark viewscreen backdrop -->
+  <rect width="64" height="64" rx="14" fill="#0b1020"/>
+  <!-- Curved horizon of the forward view -->
+  <path d="M8 44 Q32 34 56 44" fill="none" stroke="#7ddb9a" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <!-- Ship heading chevron (the bridge, looking forward) -->
+  <path d="M32 14 L44 40 L32 33 L20 40 Z" fill="#7ddb9a"/>
+  <!-- A few stars -->
+  <circle cx="16" cy="20" r="1.6" fill="#cfe0ff"/>
+  <circle cx="49" cy="24" r="1.6" fill="#cfe0ff"/>
+  <circle cx="52" cy="15" r="1.1" fill="#8fd6ff"/>
+</svg>

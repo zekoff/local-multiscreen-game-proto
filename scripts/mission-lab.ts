@@ -6,7 +6,7 @@
 //
 //   npm run lab                 # default sweep (10 seeds per cell)
 //   LAB_RUNS=30 npm run lab     # bigger sample
-//   LAB_MISSIONS=supply-run npm run lab   # restrict to specific mission ids
+//   LAB_MISSIONS=gen:europa npm run lab   # restrict to specific mission ids
 //
 // Scenarios:
 //   skilled - a fully-crewed, coordinated table (the ceiling)

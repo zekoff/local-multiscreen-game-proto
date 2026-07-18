@@ -16,14 +16,14 @@ try {
     { readyPattern: /Ready on/i, startTimeoutMs: 120_000 },
   );
 
-  // A scripted mission on the CF transport also exercises the event system.
+  // A procedural mission on the CF transport also exercises the event system.
   // Seed pinned for determinism — see the note in smoke.mjs.
-  const debrief = await runBotCrew(BASE, { missionId: 'mined-corridor', seed: 1003 });
+  const debrief = await runBotCrew(BASE, { missionId: 'gen:europa', seed: 1003 });
   console.log(`debrief reached: ${debrief.outcome} — ${debrief.grade} (${debrief.score}/100)`);
   console.log(`mission: ${debrief.missionId} seed=${debrief.seed}`);
   console.log(`stats: ${JSON.stringify(debrief.stats)}`);
   if (debrief.outcome !== 'arrived') throw new Error('bot crew should have arrived but went adrift');
-  if (debrief.missionId !== 'mined-corridor') throw new Error(`wrong mission ran: ${debrief.missionId}`);
+  if (!debrief.missionId.startsWith('gen:europa')) throw new Error(`wrong mission ran: ${debrief.missionId}`);
   console.log('SMOKE-CF PASS');
   killTree();
   process.exit(0);

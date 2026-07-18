@@ -32,12 +32,12 @@ async function main() {
   // The live deployment runs at real-time speed (no GAME_SPEED override),
   // unlike the smoke tests' 10x — missions take several real minutes.
   const [d1, d2] = await Promise.all([
-    runBotCrew(BASE, { missionId: 'supply-run', timeoutMs: 10 * 60_000 }),
-    runBotCrew(BASE, { missionId: 'kepler-rescue', timeoutMs: 10 * 60_000 }),
+    runBotCrew(BASE, { missionId: 'gen:europa', timeoutMs: 10 * 60_000 }),
+    runBotCrew(BASE, { missionId: 'first-flight', timeoutMs: 10 * 60_000 }),
   ]);
   console.log(`    room A: ${d1.missionId} seed=${d1.seed} -> ${d1.outcome} (${d1.score})`);
   console.log(`    room B: ${d2.missionId} seed=${d2.seed} -> ${d2.outcome} (${d2.score})`);
-  if (d1.missionId !== 'supply-run' || d2.missionId !== 'kepler-rescue') {
+  if (!d1.missionId.startsWith('gen:europa') || d2.missionId !== 'first-flight') {
     throw new Error('mission cross-talk between concurrent rooms');
   }
 

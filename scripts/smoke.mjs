@@ -18,12 +18,12 @@ try {
   // Seed pinned: smoke is a deterministic TRANSPORT regression test, not a
   // balance probe (that's npm run lab). The 10x wire bots act only every
   // ~2.5 sim-seconds, so a random hard seed can legitimately sink them.
-  const debrief = await runBotCrew(BASE, { missionId: 'supply-run', seed: 1003 });
+  const debrief = await runBotCrew(BASE, { missionId: 'gen:europa', seed: 1003 });
   console.log(`debrief reached: ${debrief.outcome} — ${debrief.grade} (${debrief.score}/100)`);
   console.log(`mission: ${debrief.missionId} seed=${debrief.seed}`);
   console.log(`stats: ${JSON.stringify(debrief.stats)}`);
   if (debrief.outcome !== 'arrived') throw new Error('bot crew should have arrived but went adrift');
-  if (debrief.missionId !== 'supply-run') throw new Error(`wrong mission ran: ${debrief.missionId}`);
+  if (!debrief.missionId.startsWith('gen:europa')) throw new Error(`wrong mission ran: ${debrief.missionId}`);
   console.log('SMOKE PASS');
   killTree();
   process.exit(0);

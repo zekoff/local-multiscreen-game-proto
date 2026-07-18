@@ -10,7 +10,7 @@ import { pacingFor, type MissionDef } from '../mission.js';
 
 export const firstFlight: MissionDef = {
   id: 'first-flight',
-  name: 'First Flight: Shakedown Cruise',
+  name: 'Shakedown Cruise',
   briefing:
     'Fresh out of the yard and fresh out of the academy — this crew has never ' +
     'flown together. Run the shakedown lane to Meridian Relay, learn your ' +

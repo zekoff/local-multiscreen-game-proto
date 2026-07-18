@@ -1,82 +1,45 @@
 // Mission registry: the single place transports resolve a mission start
-// request into a MissionDef. Authored missions register here; generated
-// missions resolve through preset GenParams. Also produces the catalog the
-// lobby shows players.
+// request into a MissionDef. Also produces the catalog the lobby shows players.
+//
+// The selectable set is intentionally small: Europa Salvage Loop (the default —
+// a fixed-shape procedural salvage/rescue run), the Shakedown Cruise (the
+// authored intro mission), and Free Flight (the debug/sandbox range). Other
+// authored missions and the generic gen:* presets were retired.
 
-import type { MissionDef, CatalogEntry, GenParams } from './mission.js';
-import { generateMission, generateEuropaSalvageLoop } from './mission-gen.js';
+import type { MissionDef, CatalogEntry } from './mission.js';
+import { generateEuropaSalvageLoop } from './mission-gen.js';
 import { randomSeed } from './rng.js';
 import { firstFlight } from './missions/first-flight.js';
-import { supplyRun } from './missions/supply-run.js';
-import { minedCorridor } from './missions/mined-corridor.js';
-import { lifeboatRun } from './missions/lifeboat-run.js';
-import { deadlineKepler } from './missions/deadline-kepler.js';
-import { salvageClaim } from './missions/salvage-claim.js';
-import { blackoutApproach } from './missions/blackout-approach.js';
-import { firstContact } from './missions/first-contact.js';
 import { freeFlight } from './missions/free-flight.js';
 
-// Mission audit (Crew Chief expansion pass): kepler-rescue was REMOVED —
-// deadline-kepler (P#21) is the same station/premise with a real failure clock
-// and rescue mechanics, so the old version was no longer unique. mined-corridor
-// was KEPT — it's still the only pure-combat debris gauntlet (the new missions
-// are salvage/rescue/first-contact, a different shape).
-// first-flight leads the list: it's the intro mission a new crew should see first.
 const AUTHORED: MissionDef[] = [
-  firstFlight, supplyRun, lifeboatRun, deadlineKepler, salvageClaim, blackoutApproach, firstContact, minedCorridor,
-  freeFlight, // debug/sandbox range (no ambient spawns) — launch with debug on
+  firstFlight, // "Shakedown Cruise" — the intro mission a new crew should see
+  freeFlight,  // debug/sandbox range (no ambient spawns) — launch with debug on
 ];
 
-// Generator presets exposed in the lobby. Intensity is fixed per preset for
-// now; a fuller mission-setup UI can expose GenParams directly later.
-const GEN_PRESETS: Record<string, { name: string; description: string; rating: string; params: Omit<GenParams, 'seed'> }> = {
-  'gen:short': {
-    name: 'Generated: Short Hop',
-    description: 'A quick generated run (~3 min). New route every time.',
-    rating: 'standard',
-    params: { length: 'short', intensity: 0.5 },
-  },
-  'gen:standard': {
-    name: 'Generated: Standard Run',
-    description: 'A full-length generated mission (~4 min).',
-    rating: 'standard',
-    params: { length: 'standard', intensity: 0.55 },
-  },
-  'gen:long': {
-    name: 'Generated: Deep Haul',
-    description: 'A long, grinding generated voyage (~5 min).',
-    rating: 'veteran',
-    params: { length: 'long', intensity: 0.6 },
-  },
-};
-
-export const DEFAULT_MISSION_ID = supplyRun.id;
-
-// Special generated missions that need a dedicated generator (not GenParams).
+// Special generated mission with a dedicated generator (not a static def).
 // Europa Salvage Loop is a fixed-shape procedural TYPE (see mission-gen).
 const EUROPA_ID = 'gen:europa';
+
+// Europa is the default: used when no mission id is given (and by the smoke
+// tests). The lobby also lists it first, so the picker defaults to it.
+export const DEFAULT_MISSION_ID = EUROPA_ID;
 
 // What the lobby lists. Sent to clients in the 'joined' message.
 export function missionCatalog(): CatalogEntry[] {
   return [
-    ...AUTHORED.map((m) => ({ id: m.id, name: m.name, description: m.briefing, kind: m.kind, rating: m.rating ?? 'standard' })),
-    ...Object.entries(GEN_PRESETS).map(([id, p]) => ({ id, name: p.name, description: p.description, kind: 'generated' as const, rating: p.rating })),
     { id: EUROPA_ID, name: 'Europa Salvage Loop', description: 'A 5-minute salvage run: clear rocks, tractor in drifting salvage, answer a distress beacon. New timing every run.', kind: 'generated' as const, rating: 'standard' },
+    ...AUTHORED.map((m) => ({ id: m.id, name: m.name, description: m.briefing, kind: m.kind, rating: m.rating ?? 'standard' })),
   ];
 }
 
-// Resolve a start request. Unknown/missing ids fall back to the default
-// mission rather than erroring — a stale client can always launch something.
+// Resolve a start request. Unknown/missing ids fall back to the default mission
+// (Europa) rather than erroring — a stale client can always launch something.
 // `seed` fixes the run's randomness (tests, replays); omitted = fresh seed.
 export function resolveMissionStart(missionId?: string, seed?: number): { def: MissionDef; seed: number } {
   const runSeed = seed ?? randomSeed();
-  if (missionId === EUROPA_ID) {
-    return { def: generateEuropaSalvageLoop(runSeed), seed: runSeed };
-  }
-  const preset = missionId ? GEN_PRESETS[missionId] : undefined;
-  if (preset) {
-    return { def: generateMission({ ...preset.params, seed: runSeed }), seed: runSeed };
-  }
-  const authored = AUTHORED.find((m) => m.id === missionId);
-  return { def: authored ?? supplyRun, seed: runSeed };
+  const authored = missionId ? AUTHORED.find((m) => m.id === missionId) : undefined;
+  if (authored) return { def: authored, seed: runSeed };
+  // Europa (explicit) OR anything unknown/missing → the default Europa loop.
+  return { def: generateEuropaSalvageLoop(runSeed), seed: runSeed };
 }
