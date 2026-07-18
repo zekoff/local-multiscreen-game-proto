@@ -16,8 +16,9 @@
   <div id="toasts"></div>
 
   <main>
-    <!-- Simulated view outside the ship -->
-    <canvas id="viewscreen"></canvas>
+    <!-- Simulated view outside the ship. A container the active space-view
+         renderer (Canvas 2D or Phaser) mounts its own canvas into. -->
+    <div id="viewscreen"></div>
 
     <!-- Captain's tactical readout: per-station + ship-system status overlaid on
          the viewscreen so a screen-less commander can see who needs help. -->
