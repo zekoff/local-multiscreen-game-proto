@@ -633,8 +633,10 @@ class SpaceScene extends Phaser.Scene {
       const big = size > 1.2;
       const growth = Math.max(0, Math.min(1, 1 - a.impactIn / 16));
       const nearBoost = 1 + Math.max(0, 5 - a.impactIn) * 0.14;
-      // Wider small<->large spread: big hazards bloom a bit bigger, small rocks smaller.
-      const bloom = 26 * (big ? 2.25 : 0.82);
+      // Wider small<->large spread: big hazards bloom a bit bigger, small rocks
+      // smaller. Base bloom nudged up so the MAX size of every target is a touch
+      // larger.
+      const bloom = 29 * (big ? 2.25 : 0.82);
       const r = (0.7 + Math.pow(growth, 1.25) * bloom) * (0.74 + 0.26 * size) * nearBoost;
       astPos.set(a.id, { x: px, y: py, r });
       seen.add(a.id);
@@ -680,7 +682,9 @@ class SpaceScene extends Phaser.Scene {
         continue;
       }
       if (vk === 'mineral') {
-        const rr = Math.max(12, r);
+        // Salvage reads MID-SIZED — between a small and a large asteroid — so it's
+        // easy to spot as tow-worthy (it's small-class in the engine, so scale up).
+        const rr = Math.max(16, r * 1.8);
         c.img.setTexture('mineral').setTint(0xffb347).setDisplaySize(rr * 2, rr * 2)
           .setRotation((performance.now() / 2600) % (Math.PI * 2));
         c.glow.setTint(0xffb347).setDisplaySize(rr * 3.6, rr * 3.6).setAlpha((0.14 + growth * 0.14) * fadeA);

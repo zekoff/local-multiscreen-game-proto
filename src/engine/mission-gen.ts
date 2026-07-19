@@ -206,7 +206,7 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
     id, at: { time: jit(at) },
     actions: [
       { type: 'log', text: 'Salvage drifting in the lane — Weapons, tractor it in when the sky is clear.' },
-      { type: 'spawnContact', kind: 'mineral', count: int(rng, 1, 2) },
+      { type: 'spawnContact', kind: 'mineral', count: int(rng, 2, 3) },
     ],
   });
   const ghost = (id: string, at: number) => events.push({
@@ -217,6 +217,10 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
   events.push({ id: 'europa-start', at: { time: 1 }, actions: [{ type: 'log', text: 'On the Europa salvage loop. Clear the lane, grab what drifts by, bring it home in one piece.' }] });
   doubleTap('europa-dt-1', 25);
   salvage('europa-salv-1', 45);
+  // More salvage across the quiet stretches (a salvage-heavy loop).
+  salvage('europa-salv-4', 105);
+  salvage('europa-salv-5', 200);
+  salvage('europa-salv-6', 288);
   ghost('europa-ghost-1', 66);
 
   // Heavy batch #1 with the slow lifeboat in the middle of it.

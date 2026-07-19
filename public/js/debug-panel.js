@@ -4,7 +4,7 @@
 // when the run was launched with debug enabled (the server ignores otherwise).
 // Used by the main screen (overlay) and the supervisor page (inline panel).
 
-const SPEEDS = [0, 0.25, 0.5, 1, 2, 4]; // 0 = pause
+const SPEEDS = [0, 0.25, 0.5, 1, 2, 5]; // 0 = pause; 5× is the debug top speed
 const SPAWN_OPTIONS = [
   ['rock', 'Rock'], ['pod', 'Rescue Pod'], ['mineral', 'Salvage'], ['ghost', 'Sensor Ghost'],
   ['gate', 'Nav Gate'], ['obstacle', 'Obstacle'], ['fire', 'Fire'], ['boarders', 'Boarders'], ['flare', 'Solar Flare'],

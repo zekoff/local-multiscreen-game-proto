@@ -1062,7 +1062,7 @@ export class Game {
   // Debug/sim-supervisor actions (only reached when this.debug is set).
   private debugAction(a: Action) {
     if (a.kind === 'setTimeScale' && typeof a.value === 'number') {
-      this.timeScale = clamp(a.value, 0, 4);
+      this.timeScale = clamp(a.value, 0, 5);
       this.event(this.timeScale === 0 ? '[debug] Simulation paused.' : `[debug] Simulation speed set to ${this.timeScale}x.`);
     } else if (a.kind === 'setCrewSkill' && typeof a.value === 'number') {
       // Tune how well the auto-assist bots play (solo-playtest aid).
