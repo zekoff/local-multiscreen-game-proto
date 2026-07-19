@@ -120,11 +120,19 @@
          live on the main screen — no duplicates here.) -->
 
     <!-- Decorative chrome: large screens only (hidden on phones). Live data. -->
-    <div class="panel large-only" style="grid-area:deco1">
+    <div class="panel large-only graph-panel" style="grid-area:deco1">
       <h2>Power Bus</h2>
+      <div class="deco-legend">
+        <span><i style="color:var(--accent)"></i>bus load</span>
+        <span><i style="color:var(--good)"></i>drive+sensor</span>
+        <span><i style="color:#ffb347"></i>core temp</span>
+        <span><i style="color:#ff6f6f"></i>neutron flux</span>
+      </div>
       <svg id="eng-graph" class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
-        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.8" points=""/>
-        <polyline fill="none" stroke="var(--good)" stroke-width="1" opacity="0.5" points=""/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.85" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="var(--good)" stroke-width="1" opacity="0.55" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#ffb347" stroke-width="1.2" opacity="0.55" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#ff6f6f" stroke-width="1" opacity="0.5" vector-effect="non-scaling-stroke" points=""/>
       </svg>
       <div class="deco-stat"><span>bus load</span><b id="eng-load">—</b></div>
       <div class="deco-stat"><span>bus temp</span><b id="eng-temp">—</b></div>
@@ -159,10 +167,14 @@
     import { createAudio } from '/js/audio.js';
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
-    import { spark, renderCrew, tacticalLog } from '/js/deco.js';
+    import { spark, makeSignal, renderCrew, tacticalLog } from '/js/deco.js';
 
     // Live decorative chrome (large screens): power-bus history, bridge status, log.
     const engGraph = spark(document.getElementById('eng-graph'), { lo: 0, hi: 100 });
+    // Two extra traces have no real datum: a smooth-wandering "core temp" and a
+    // jumpy "neutron flux" — different variation characters for visual life.
+    const engCoreTemp = makeSignal('walk', { base: 55, amp: 40 });
+    const engFlux = makeSignal('jitter', { base: 45, amp: 55 });
     const engCrewEl = document.getElementById('eng-crew');
     const engLog = tacticalLog(document.getElementById('eng-log'), [
       'reactor output steady', 'breaker array armed', 'coolant loop nominal',
@@ -256,7 +268,8 @@
           const p = state.power, b = state.breakers;
           const eff = SYSTEMS.reduce((s, k) => s + p[k] * (b[k] ? 0.5 : 1), 0);
           const load = Math.round((eff / 7) * 100);
-          engGraph(load, Math.round(((p.engines + p.sensors) / 8) * 100));
+          // Traces: real bus load + real drive+sensor draw + synthetic core temp / flux.
+          engGraph(load, Math.round(((p.engines + p.sensors) / 8) * 100), engCoreTemp(), engFlux());
           document.getElementById('eng-load').textContent = `${load}%`;
           document.getElementById('eng-temp').textContent = `${Math.round(300 + load * 0.55)} K`;
           renderCrew(engCrewEl, state, 'engineering');

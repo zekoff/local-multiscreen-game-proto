@@ -82,11 +82,18 @@
     </div>
 
     <!-- Decorative chrome: large screens only (hidden on phones). Live data. -->
-    <div class="panel large-only" style="grid-area:deco1">
+    <div class="panel large-only graph-panel" style="grid-area:deco1">
       <h2>Heading Trace</h2>
+      <div class="deco-legend">
+        <span><i style="color:var(--accent)"></i>heading</span>
+        <span><i style="color:#6fa8ff"></i>throttle</span>
+        <span><i style="color:#6ad39a"></i>inertial load</span>
+      </div>
       <svg id="helm-graph" class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
         <line x1="0" y1="22" x2="120" y2="22" stroke="var(--panel-edge)" stroke-width="1"/>
-        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.8" points=""/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.85" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#6fa8ff" stroke-width="1.2" opacity="0.6" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#6ad39a" stroke-width="1.2" opacity="0.55" vector-effect="non-scaling-stroke" points=""/>
       </svg>
       <div class="deco-stat"><span>off-axis</span><b id="helm-drift">—</b></div>
       <div class="deco-stat"><span>velocity</span><b id="helm-vel">—</b></div>
@@ -121,10 +128,12 @@
     import { createAudio } from '/js/audio.js';
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
-    import { spark, renderCrew, tacticalLog } from '/js/deco.js';
+    import { spark, makeSignal, renderCrew, tacticalLog } from '/js/deco.js';
 
     // Live decorative chrome (large screens): heading trace, bridge status, log.
     const helmGraph = spark(document.getElementById('helm-graph'), { lo: -100, hi: 100 });
+    // Third trace has no real datum — a slow sine "inertial load" for character.
+    const helmInertial = makeSignal('wave', { base: 0, amp: 62, period: 8, lo: -100, hi: 100 });
     const helmCrewEl = document.getElementById('helm-crew');
     const helmLog = tacticalLog(document.getElementById('helm-log'), [
       'inertial dampers online', 'helm bus responsive', 'course plot updated',
@@ -150,7 +159,8 @@
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
         // Live deco: heading trace (course drift), real readouts, bridge status.
-        helmGraph(state.alignment ?? 0);
+        // Traces: real heading (alignment) + real throttle + synthetic inertial load.
+        helmGraph(state.alignment ?? 0, state.throttle ?? 0, helmInertial());
         document.getElementById('helm-drift').textContent = `${Math.abs(state.alignment ?? 0).toFixed(0)}° ${(state.alignment ?? 0) > 0 ? 'STBD' : 'PORT'}`;
         document.getElementById('helm-vel').textContent = (state.speed ?? 0).toFixed(1);
         renderCrew(helmCrewEl, state, 'helm');

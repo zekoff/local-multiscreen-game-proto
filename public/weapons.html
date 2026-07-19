@@ -84,11 +84,19 @@
     <!-- Decorative chrome: shown only on large screens, hidden on phones.
          Live data — charge history, real readouts, real bridge status, and the
          console's own toasts. -->
-    <div class="panel large-only" style="grid-area:deco1">
+    <div class="panel large-only graph-panel" style="grid-area:deco1">
       <h2>Emitter Load</h2>
+      <div class="deco-legend">
+        <span><i style="color:var(--accent)"></i>charge</span>
+        <span><i style="color:#4f7bd0"></i>emitter pwr</span>
+        <span><i style="color:#ff6f6f"></i>capacitor</span>
+        <span><i style="color:#6ad39a"></i>track jitter</span>
+      </div>
       <svg id="wpn-graph" class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
-        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.8" points=""/>
-        <polyline fill="none" stroke="#4f7bd0" stroke-width="1" opacity="0.5" points=""/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.85" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#4f7bd0" stroke-width="1" opacity="0.55" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#ff6f6f" stroke-width="1" opacity="0.5" vector-effect="non-scaling-stroke" points=""/>
+        <polyline fill="none" stroke="#6ad39a" stroke-width="1.2" opacity="0.5" vector-effect="non-scaling-stroke" points=""/>
       </svg>
       <div class="deco-stat"><span>charge</span><b id="wpn-charge">—</b></div>
       <div class="deco-stat"><span>coil temp</span><b id="wpn-temp">—</b></div>
@@ -127,11 +135,15 @@
     import { createIntents } from '/js/optimistic.js';
     import { mountWidgets } from '/js/widget.js';
     import { towBeam } from '/js/widgets/tow.js';
-    import { spark, renderCrew, tacticalLog } from '/js/deco.js';
+    import { spark, makeSignal, renderCrew, tacticalLog } from '/js/deco.js';
 
     // Live decorative chrome (large screens): charge history, bridge status, and
     // a tactical log of this console's own toasts + ambient flavor.
     const wpnGraph = spark(document.getElementById('wpn-graph'), { lo: 0, hi: 100 });
+    // Two extra traces have no real datum: a spiky "capacitor" bank (mostly low,
+    // occasional discharge spikes) and a gently-beating "track jitter".
+    const wpnCap = makeSignal('pulse', { base: 22, amp: 70 });
+    const wpnTrack = makeSignal('wave2', { base: 50, amp: 34, period: 7 });
     const wpnCrewEl = document.getElementById('wpn-crew');
     const wpnLog = tacticalLog(document.getElementById('wpn-tac-log'), [
       'emitter coils nominal', 'targeting bus clear', 'deflector lattice synced',
@@ -166,7 +178,8 @@
       render(state) {
         // Live deco (cheap; the panels are hidden on phones): charge history +
         // real coil-temp derived from charge, real bridge status, ambient log.
-        wpnGraph(state.charge ?? 0, (state.power.weapons ?? 0) * 25);
+        // Traces: real charge + real emitter power + synthetic capacitor / track jitter.
+        wpnGraph(state.charge ?? 0, (state.power.weapons ?? 0) * 25, wpnCap(), wpnTrack());
         document.getElementById('wpn-charge').textContent = `${Math.round(state.charge ?? 0)}%`;
         document.getElementById('wpn-temp').textContent = `${Math.round(360 + (state.charge ?? 0) * 0.85)} K`;
         renderCrew(wpnCrewEl, state, 'weapons');

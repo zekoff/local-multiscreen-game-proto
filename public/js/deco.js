@@ -6,7 +6,8 @@
 // in `.large-only` cells, so they cost nothing on a phone and fill a big screen.
 
 // A rolling sparkline bound to an <svg class="deco-graph"> that contains one or
-// two <polyline> children. Returns push(v0, v1?) to feed a new sample per line.
+// more <polyline> children (one line each). Returns push(v0, v1, …) — feed one
+// new sample per line, in the SVG's polyline order.
 export function spark(svg, { max = 48, lo = 0, hi = 100 } = {}) {
   const lines = [...svg.querySelectorAll('polyline')];
   const hist = lines.map(() => []);
@@ -19,6 +20,36 @@ export function spark(svg, { max = 48, lo = 0, hi = 100 } = {}) {
       const step = W / (h.length - 1);
       lines[i].setAttribute('points', h.map((v, k) => `${(k * step).toFixed(1)},${norm(v).toFixed(1)}`).join(' '));
     });
+  };
+}
+
+// A decorative synthetic signal for graph lines that model no real console
+// datum — they still need to look alive, each with its own character. This is
+// pure client chrome (never gameplay), so Math.random is fine here — it is NOT
+// the seeded engine RNG. Call the returned fn once per render; it returns a
+// value clamped to [lo, hi].
+//   wave   — smooth rhythmic sine
+//   wave2  — two summed sines, a slow beat
+//   jitter — jumps a lot (fresh random level every sample)
+//   walk   — random walk, wanders smoothly
+//   pulse  — mostly low with occasional sharp spikes that decay
+//   saw    — sawtooth ramp
+export function makeSignal(kind, { base = 50, amp = 30, period = 10, lo = 0, hi = 100 } = {}) {
+  let t = Math.random() * 1000; // random phase so lines don't move in lockstep
+  let v = base;                 // running value for walk/pulse kinds
+  const clamp = (x) => Math.max(lo, Math.min(hi, x));
+  const TAU = Math.PI * 2;
+  return (dt = 0.25) => {
+    t += dt;
+    switch (kind) {
+      case 'wave': return clamp(base + amp * Math.sin((t / period) * TAU));
+      case 'wave2': return clamp(base + amp * (0.7 * Math.sin((t / period) * TAU) + 0.3 * Math.sin((t / (period * 0.31)) * TAU)));
+      case 'jitter': return clamp(base + (Math.random() - 0.5) * amp * 2);
+      case 'walk': v = clamp(v + (Math.random() - 0.5) * amp * 0.4); return v;
+      case 'pulse': v = Math.max(lo, v - amp * 0.12); if (Math.random() < 0.05) v = clamp(base + amp); return v;
+      case 'saw': return lo + ((t / period) % 1) * (hi - lo);
+      default: return base;
+    }
   };
 }
 
