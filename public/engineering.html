@@ -325,9 +325,18 @@
       else if (on) audio.breakerArm && audio.breakerArm();
     }
     dcDeploy.addEventListener('click', () => setDeployed(!dcDeployed));
-    // Hold-to-seal on the big button.
-    dcSeal.addEventListener('pointerdown', (e) => { if (dcDeployed) { e.preventDefault(); setSealing(true); } });
-    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) dcSeal.addEventListener(ev, () => setSealing(false));
+    // Hold-to-seal on the big button. Capture the pointer on press so the hold
+    // survives small finger drift within the button (like the helm steering
+    // buttons) — only lifting the finger (pointerup) or a browser cancel stops it.
+    dcSeal.addEventListener('pointerdown', (e) => {
+      if (!dcDeployed) return;
+      e.preventDefault();
+      dcSeal.setPointerCapture && dcSeal.setPointerCapture(e.pointerId);
+      setSealing(true);
+    });
+    // NOTE: no 'pointerleave' — with capture the pointer stays targeted at the
+    // button, so leaving its bounds shouldn't cancel the seal.
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) dcSeal.addEventListener(ev, () => setSealing(false));
     window.addEventListener('blur', () => setSealing(false)); // safety: never latch sealing
 
     function renderDamageControl(state) {
@@ -346,11 +355,14 @@
       } else {
         dcStatus.innerHTML = '— <b style="color:var(--bad)">⚠ HULL BREACHED</b>';
       }
-      // A completed bond: the server resets bond high→low. Flash + chime feedback.
+      // A completed bond: the server resets bond high→low. Flash + chime feedback,
+      // and pop the Deploy toggle back off so each breach seal is a deliberate
+      // re-engagement (deploy → hold → chunk sealed → re-deploy for the next).
       if (prevBond > 0.7 && (r.bond || 0) < 0.2 && dcAvailable) {
         repairPanel.classList.add('sealed-flash');
         setTimeout(() => repairPanel.classList.remove('sealed-flash'), 450);
         audio.breakerTick && audio.breakerTick();
+        if (dcDeployed) setDeployed(false); // also stops sealing (disables the button)
       }
       prevBond = r.bond || 0;
     }
