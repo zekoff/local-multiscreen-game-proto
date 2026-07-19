@@ -222,12 +222,6 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
   salvage('europa-salv-5', 200);
   salvage('europa-salv-6', 288);
   ghost('europa-ghost-1', 66);
-  // A sensor-spoof swarm: phantom contacts flood the scope among the real rocks,
-  // so Weapons must verify before spending a shot (sensor ID/pulse resolves them).
-  events.push({ id: 'europa-ghostswarm', at: { time: jit(52, 5) }, actions: [
-    { type: 'log', text: 'Sensor grid is ghosting — phantom returns all over the scope. Weapons, confirm a contact before you spend a shot on it.' },
-    { type: 'ghostSwarm', seconds: int(rng, 22, 28) },
-  ] });
 
   // Heavy batch #1 with the slow lifeboat in the middle of it.
   const batch1 = jit(90, 6);
@@ -243,24 +237,34 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
     ],
   });
 
-  events.push({ id: 'europa-ion', at: { time: jit(122, 5) }, actions: [{ type: 'log', text: 'Charged particle front across the lane — sensors hazing. More sensor power or a pulse cuts through.' }, { type: 'ionStorm', seconds: int(rng, 18, 24) }] });
   doubleTap('europa-dt-2', 145);
   salvage('europa-salv-2', 158);
   ghost('europa-ghost-2', 172);
-  events.push({ id: 'europa-debris', at: { time: jit(186, 5) }, actions: [{ type: 'log', text: 'Pulverized rock haze ahead — ease the throttle through it or it scours the hull.' }, { type: 'debrisField', seconds: int(rng, 16, 22) }] });
 
   // Heavy batch #2.
   const batch2 = jit(214, 6);
   events.push({ id: 'europa-batch2-call', at: { time: batch2 - 2 }, actions: [{ type: 'log', text: 'Second cluster inbound — here we go again!' }] });
   heavyBatch('europa-batch2', batch2);
   ghost('europa-ghost-3', 232);
-
-  // A blackout: fly on sensors for a stretch, then the view returns.
-  const blackoutAt = jit(240, 5);
-  events.push({ id: 'europa-blackout-on', at: { time: blackoutAt }, actions: [{ type: 'log', text: 'Forward view lost — fly on the scope until it clears.' }, { type: 'setViewImpaired', on: true }] });
-  events.push({ id: 'europa-blackout-off', at: { time: blackoutAt + int(rng, 14, 18) }, actions: [{ type: 'setViewImpaired', on: false }] });
   salvage('europa-salv-3', 262);
   ghost('europa-ghost-4', 275);
+
+  // Procedural HAZARDS: each run draws a different set + placement from the pool
+  // (ion storm / debris field / ghost swarm / blackout / solar flare), so no two
+  // Europa runs feel the same. Four spread slots (between the heavy batches), one
+  // distinct hazard shuffled onto each per seed.
+  const hazardSlots = [jit(50, 5), jit(118, 5), jit(178, 6), jit(245, 5)];
+  const hazardPool: ((id: string, t: number) => void)[] = [
+    (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Charged particle front across the lane — sensors hazing. More sensor power or a pulse cuts through.' }, { type: 'ionStorm', seconds: int(rng, 18, 24) }] }),
+    (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Pulverized rock haze ahead — ease the throttle through it or it scours the hull.' }, { type: 'debrisField', seconds: int(rng, 16, 22) }] }),
+    (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Sensor grid is ghosting — phantom returns all over the scope. Weapons, confirm a contact before you spend a shot on it.' }, { type: 'ghostSwarm', seconds: int(rng, 22, 28) }] }),
+    (id, t) => { const d = int(rng, 14, 18); events.push({ id: `${id}-on`, at: { time: t }, actions: [{ type: 'log', text: 'Forward view lost — fly on the scope until it clears.' }, { type: 'setViewImpaired', on: true }] }); events.push({ id: `${id}-off`, at: { time: t + d }, actions: [{ type: 'setViewImpaired', on: false }] }); },
+    (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Solar flare building off the beam — safe posture: shields DOWN, hold fire when it peaks.' }, { type: 'solarFlare', inSeconds: int(rng, 8, 12) }] }),
+  ];
+  // Fisher-Yates shuffle (seeded), then drop one distinct hazard on each slot.
+  const order = hazardPool.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  hazardSlots.forEach((t, i) => hazardPool[order[i]](`europa-hazard-${i}`, t));
 
   return {
     id: `gen:europa:${seed}`,

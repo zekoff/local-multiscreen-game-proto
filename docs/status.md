@@ -36,4 +36,12 @@ hull 58→79). See the response for the full table + CPU-improvement ideas (top:
 let the auto-gunner tractor identified salvage; smarter auto-engineer power/breaker
 + auto Damage Control below 50%).
 
+**Europa hazards are now procedural**: each run draws a different set + placement
+of hazards (ion storm / debris field / ghost swarm / blackout / solar flare) —
+4 distinct from the pool of 5, shuffled onto 4 slots per seed. Debug panel also
+gained a **Hull +30%** heal (alongside the −30% damage test).
+
+The CPU-crew study + a ranked improvement backlog is written to
+`docs/cpu-crew-findings.md` (NOT yet implemented — owner call).
+
 Missions: Europa (default), Shakedown Cruise, Free Flight. Deployed to Cloudflare.

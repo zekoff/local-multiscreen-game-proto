@@ -1131,8 +1131,9 @@ export class Game {
       case 'breach': this.startEmergency('breach', 1); break;
       case 'boarders': this.startEmergency('boarders', 1); break;
       case 'leak': this.startEmergency('leak', 1); break;
-      // Test aid: knock the hull down (past shields) to exercise Damage Control.
+      // Test aids: knock the hull down (past shields) or heal it back up.
       case 'damage': this.hull = Math.max(1, this.hull - 30); this.event('[debug] Hull −30% (test Damage Control).'); break;
+      case 'heal': this.hull = Math.min(100, this.hull + 30); this.event('[debug] Hull +30%.'); break;
       default: break;
     }
   }

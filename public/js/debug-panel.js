@@ -13,7 +13,7 @@ const SPAWN_GROUPS = [
   ['Navigation', [['gate', 'Nav Gate'], ['obstacle', 'Obstacle'], ['divert', 'Divert Beacon']]],
   ['Hazards', [['ionstorm', 'Ion Storm'], ['debris', 'Debris Field'], ['ghostswarm', 'Ghost Swarm'], ['blackout', 'Blackout (toggle)'], ['flare', 'Solar Flare']]],
   ['Emergencies', [['fire', 'Fire'], ['breach', 'Hull Breach'], ['boarders', 'Boarders'], ['leak', 'Coolant Leak']]],
-  ['Test', [['damage', 'Hull −30% (test repair)']]],
+  ['Test', [['damage', 'Hull −30% (test repair)'], ['heal', 'Hull +30%']]],
 ];
 
 export function mountDebugPanel(container, net) {
