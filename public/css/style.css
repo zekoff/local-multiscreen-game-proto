@@ -110,10 +110,10 @@ main.console .widget-hint { display: none; } /* the ? help covers this; save pho
 /* Decorative, large-screen-only "chrome" — non-functional but characterful. */
 .large-only { display: none; }
 .deco-graph { width: 100%; height: 44px; display: block; }
-/* A graph panel stacks title → legend → graph → readouts, with the graph
-   flexing to fill ALL remaining panel height (the labels take only what they
-   need). The panel's height comes from the stretched console grid row. */
-.panel.graph-panel { display: flex; flex-direction: column; }
+/* Graph-panel layout (title → legend → graph → readouts) lives in the desktop
+   media query below — on a phone graph panels are display:none (.large-only)
+   and this flex rule must NOT override that (it's more specific), or the graphs
+   would render and crush the functional widgets. */
 .panel.graph-panel .deco-graph { flex: 1 1 auto; height: auto; min-height: 44px; }
 .deco-legend { display: flex; flex-wrap: wrap; gap: 0.04rem 0.6rem; font-size: 0.62rem; letter-spacing: 0.02em; color: var(--dim); margin: 0 0 0.25rem; }
 .deco-legend span { white-space: nowrap; }
@@ -131,6 +131,9 @@ main.console .widget-hint { display: none; } /* the ? help covers this; save pho
   main.console .meter { height: 18px; }
   main.console button { padding: 0.8rem 1.1rem; min-height: 48px; font-size: 1.05rem; }
   .large-only { display: block; }
+  /* Graph panels fill their area — flex column so the SVG takes all remaining
+     height after the title/legend/readouts. Desktop-only (see note above). */
+  .panel.graph-panel { display: flex; flex-direction: column; }
 }
 
 /* --- Controls --- */
