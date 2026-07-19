@@ -272,7 +272,7 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
     briefing: 'A standing salvage run along the Europa lane: clear the rocks, tractor in what drifts by, and answer the odd distress beacon. Five minutes, no heroics — just bring the haul home intact.',
     arrivalName: 'Europa Relay',
     rating: 'standard',
-    destination: { kind: 'station', color: '#7fd4ff' },
+    destination: { kind: 'planet', color: '#7fd4ff' },
     kind: 'generated',
     targetSeconds: pacing.targetSeconds,
     parTime: pacing.parTime,
