@@ -151,6 +151,16 @@ cloud-migration design; the standalone migration doc was pruned).
   `docs/console-complexity-analysis.md`.
 - Keep gameplay randomness on the seeded per-run RNG (`this.rng` in game.ts),
   never `Math.random` — reproducibility from (missionId, seed) is a feature.
+- **Never gate UI state-sync on a boolean that one event must clear.** A control
+  that suppresses its server-state sync while the player is touching it (sliders,
+  hold buttons, drag handles) must use a **self-healing timestamp**, not a
+  `dragging = true/false` flag. A `pointerup` can go missing — released off the
+  element, cancelled touch, pointer stolen — and a latched flag then freezes the
+  control's sync *permanently*: it displays a stale value while the server holds
+  another, and because a range input dragged back to the value it already shows
+  fires no `input` event, the control becomes uncommandable. This shipped once
+  (helm throttle) and nearly shipped twice (`holdToSteer` would have nudged
+  forever). Also stop held-repeat timers on `blur`/`visibilitychange`.
 - Reconnection is a first-class requirement: any new client page must go
   through `Net`/`initStation` (or preserve their sticky-`playerId` behavior)
   so phones that drop Wi-Fi can resume their seat mid-mission.

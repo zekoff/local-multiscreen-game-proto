@@ -147,3 +147,57 @@ helm-heavy crew, possibly seed noise. **The Cruise 8-unit pool is NOT lab-valida
 needs real play (or a new Cruise lab profile) to confirm.
 
 Missions: Europa (default), Shakedown Cruise, Free Flight (debug). Crew Chief frozen (WIP).
+
+---
+
+# OPEN WORK (carried forward — read this before picking up new work)
+
+Ordered roughly by how much they'd bite. Nothing here is in progress.
+
+### 1. Join order clobbers per-seat difficulty (bug; affects reconnection)
+`join()` in `src/engine/game.ts` does `if (ASSIST[difficulty]) s.difficulty = difficulty`,
+so a player's own join-URL difficulty **overwrites the captain's ready-room pick**
+whenever they join *after* launch. The serious half is reconnection: a phone that
+drops Wi-Fi mid-mission and resumes its seat silently resets that seat's mode —
+a Cruise player can come back as Officer (or vice versa) mid-fight. Reconnection
+is a first-class requirement in this codebase, so this should be fixed properly:
+the launch-time per-seat difficulty should win for the duration of a run, and a
+resuming `playerId` should keep the seat's current mode rather than restamping it.
+Found while verifying the Cruise/Officer split; **not caused by it** (the clobber
+predates the split — it just had no visible consequence when difficulty was only a
+rate multiplier).
+
+### 2. `SPEED_CALIB` is global, but the human/bot gap is per-mission
+The 260 → 390 recalibration fixed Europa (skilled 341s → 231s ⇒ ~305s human, on
+its 5-minute target) but also shortened everything else: **first-flight skilled
+137s → 90s**. A single global constant can't be correct for every mission, because
+humans lose time to mission-specific work — a salvage loop means stopping to tow,
+a shakedown doesn't. If the tutorial should keep its old length, add a **per-mission
+speed override** rather than moving the global again.
+
+### 3. Cruise's 8-unit power pool is not lab-validated
+Every lab bot crew joins as Officer, so `npm run lab` never exercises the Cruise
+profile at all. The 8-point pool (4 locked + 4 free) rests on design intent plus a
+headless spot-check. Confirm with real play, or add a Cruise crew profile to the
+lab so the sweep covers it.
+
+### 4. Main-screen contact labels overlap when contacts cluster
+Made more visible by the living-room label scale-up. The top HUD threat list is
+still the authoritative priority readout, so this is cosmetic — but label
+collision-avoidance (or hiding labels for tightly-packed contacts) would help the
+captain read the field.
+
+### 5. `2h-helm-eng` scored 52 → 43 in the Europa sweep
+Noticed when the Cruise/Officer split landed; every other crew profile held or
+improved. Plausibly the stronger Officer drift on a helm-heavy crew, plausibly
+seed noise — never isolated. Worth a targeted sweep if helm difficulty gets
+touched again.
+
+### Deliberately frozen / deferred (not bugs)
+- **Crew Chief** — frozen WIP, disabled in the lobby, re-enabled with `?debug`.
+- **Solar flare** — removed from Europa procgen and the debug panel; the engine
+  executor is intact but uninvoked (it doesn't fire correctly yet).
+- **Maneuvering Burn** — the third proposed Officer helm widget (limited-charge
+  lateral thruster burn); considered and explicitly deferred.
+- **The weapons scope as a `defineWidget` widget** — it kept its class API through
+  the Canvas2D port; converting it is a separate refactor.
