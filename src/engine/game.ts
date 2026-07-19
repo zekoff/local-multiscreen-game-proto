@@ -23,8 +23,9 @@ export type SeatId = 'helm' | 'engineering' | 'weapons' | 'crewchief' | 'main' |
 export type Audience = 'crew' | 'helm' | 'engineering' | 'weapons' | 'crewchief';
 // Two engagement settings. 'officer' is the default and the balance target
 // (formerly 'normal'); 'cruise' is the lighter workload (formerly 'chill').
-// The old three-state chill/normal/intense collapsed to these two — Cruise may
-// later also drop widgets on some consoles (deferred forward work).
+// The old three-state chill/normal/intense collapsed to these two. Cruise no
+// longer just runs the same console slower — it hands some widgets to the CPU
+// and adds aids to others (see AIDS below).
 export type Difficulty = 'cruise' | 'officer';
 export type { SystemId } from './mission.js';
 
@@ -33,10 +34,62 @@ export type { SystemId } from './mission.js';
 // (construction, crew map) don't re-hardcode the four names.
 const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief'];
 
-// Difficulty multiplies the burden a station must handle (drift rate for helm,
+// --- Per-difficulty console profile -----------------------------------------
+//
+// Per-role difficulty must stay a PARAMETER, not a separate code path (a core
+// design pillar — docs/design/02-architecture.md). Cruise's aids are structural
+// (CPU assistance, locked power pips, harmless breakers), so every one of them
+// is declared HERE as data and read at the touch points. There is deliberately
+// no `if (difficulty === 'cruise')` anywhere else in the engine.
+//
+// `rate` multiplies the burden a station must handle (drift rate for helm,
 // breaker trip rate for engineering, asteroid spawn rate for weapons). Officer
-// is the 1.0 baseline everything is tuned against; Cruise lightens the load.
-const DIFF_MULT: Record<Difficulty, number> = { cruise: 0.6, officer: 1 };
+// is the 1.0 baseline everything is tuned against. Cruise KEEPS the discount
+// only where its aid is purely visual (helm); where a structural aid already
+// replaces the workload (engineering's harmless trips, weapons' CPU scope) the
+// discount is withdrawn, so Cruise stays busy but low-stakes.
+type AidProfile = {
+  autoScope: boolean;      // weapons: the CPU runs target+fire at maximum strength
+  powerTotal: number;      // engineering: size of the allocatable pool
+  powerFloor: number;      // engineering: per-system minimum the engineer can't remove
+  breakerPenalty: number;  // engineering: eff() multiplier while a breaker is tripped
+  steerAids: boolean;      // helm: painted alignment band + on-the-gate label (client-side)
+  courseHold: boolean;     // helm: the Course Hold auto-centering toggle
+  driftTrim: boolean;      // helm: the Drift Trim control (officer's earned counterpart)
+  comms: boolean;          // helm: the Comms hail-for-early-ID widget
+  // Course drift: bias amplitude and how often it re-rolls. Officer's bias is
+  // STRONGER but changes LESS often — a standing pressure the pilot can null out
+  // with the trim, rather than noise no fixed control could answer.
+  drift: { amp: number; every: { min: number; max: number } };
+  rate: Record<'helm' | 'engineering' | 'weapons' | 'crewchief', number>;
+};
+
+const AIDS: Record<Difficulty, AidProfile> = {
+  cruise: {
+    autoScope: true,
+    powerTotal: 8,        // 4 locked (one per system) + 4 free to split
+    powerFloor: 1,
+    breakerPenalty: 1,    // a tripped breaker still demands a reset, but costs no function
+    steerAids: true,
+    courseHold: true,
+    driftTrim: false,
+    comms: false,
+    drift: { amp: 2.5, every: { min: 6, max: 14 } },
+    rate: { helm: 0.6, engineering: 1, weapons: 1, crewchief: 0.6 },
+  },
+  officer: {
+    autoScope: false,
+    powerTotal: 7,        // the shipped pool: nothing locked, 7 free to split
+    powerFloor: 0,
+    breakerPenalty: 0.5,  // a tripped system limps at half effectiveness
+    steerAids: false,
+    courseHold: false,
+    driftTrim: true,
+    comms: true,
+    drift: { amp: 4.5, every: { min: 18, max: 30 } }, // stronger, and stands far longer
+    rate: { helm: 1, engineering: 1, weapons: 1, crewchief: 1 },
+  },
+};
 
 // Powered systems (allocated by engineering from the shared pool). Sensors and
 // tractor are engineering-powered but *operated* from other consoles (weapons
@@ -46,14 +99,14 @@ const DIFF_MULT: Record<Difficulty, number> = { cruise: 0.6, officer: 1 };
 const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors'];
 
 // Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
-// Pool raised 6 -> 7 post-playtest ("one more engine allocation point"): the
-// extra unit lands on engines in the default split. Per-system cap stays 4, so
-// speed/turn normalization (eff/POWER_MAX) is untouched.
+// The POOL SIZE is no longer a constant — it's per-difficulty (`powerTotal` in
+// AIDS above: 7 under Officer, 8 under Cruise where one pip per system is locked
+// on). History: raised 6 -> 7 post-playtest ("one more engine allocation point").
 // Tractor was briefly a fifth powered system (pool 8) but that added an odd,
-// exploitable channel (always dump weapons/pump tractor while towing). It's now
-// folded back into WEAPONS power (shared emitter), so the pool returns to 7 over
-// the original four systems.
-const POWER_TOTAL = 7;      // total power units engineering can allocate
+// exploitable channel (always dump weapons/pump tractor while towing); it's now
+// folded back into WEAPONS power (shared emitter) over the original four systems.
+// The per-system CAP stays a constant, so speed/turn normalization (eff/POWER_MAX)
+// is untouched by any of that.
 const POWER_MAX = 4;        // max units a single system can hold
 
 // Laser: no battery bank and no fixed cooldown. `charge` (0-100) is simply the
@@ -153,14 +206,15 @@ const SENSOR_PULSE_COOLDOWN = 80; // long cooldown => ~1-2 pulses per mission
 // --- Tractor beam / cargo hold. The tractor shares the WEAPONS emitter: the
 // Weapons console aims and latches it (own agency — no other seat gates it),
 // engineering's WEAPONS power drives the reel, and firing the laser is blocked
-// while latched (the gunner's own "tow or shoot?" call). Latch onto a DETECTED
-// non-hostile contact (pod / mineral) within tractor range; the ship reels it
-// into the hold over REEL_SECS. Alignment is forgiving: the latch holds anywhere
-// within a wide ARC of the contact's bearing (helm can swing back and forth),
-// and the reel goes FASTER the more closely the helm is lined up. Reel progress
-// PERSISTS across releases (a partial pull isn't wasted) — it only bleeds away
-// slowly while unlatched, and the contact is lost if it drifts past the ship.
-const TRACTOR_RANGE = 9;            // seconds-to-impact within which a contact can be latched
+// while latched (the gunner's own "tow or shoot?" call). Latch onto any DETECTED
+// non-hostile contact (pod / mineral); the ship reels it into the hold over
+// REEL_SECS. There is NO distance limit — the beam reaches as far as sensors do,
+// so the gunner can commit to a contact the moment it's identified. The ARC is
+// the sole spatial constraint, and it's what keeps the helm in the loop: the
+// latch holds anywhere within a wide arc of the contact's bearing (the pilot can
+// swing back and forth), and the reel goes FASTER the more closely they're lined
+// up. Reel progress PERSISTS across releases (a partial pull isn't wasted) — it
+// only bleeds away slowly while unlatched.
 const TRACTOR_ARC = 60;             // |alignment - contact bearing| within which the latch holds (wide/forgiving)
 const TRACTOR_REEL_SECS = 6;        // base seconds to reel a latched contact into the hold (at perfect alignment)
 const TRACTOR_MIN_POWER = 1;        // effective WEAPONS power needed to hold a latch at all
@@ -251,6 +305,21 @@ const HULL_BREACH_MAX = 50;   // repair only operates/heals while hull is below 
 const SEAL_BOND_TIME = 8;     // seconds of sustained sealing per completed bond
 const SEAL_CHUNK = 8;         // hull % restored per bond (→ ~1%/s while sealing)
 const SEAL_DECAY = 0.25;      // bond progress lost per second when not sealing
+
+// --- Helm drift trim (Officer). Each notch cancels TRIM_STEP of drift bias, so
+// the range covers the strongest bias the officer profile can roll (amp 4.5) with
+// room to spare. The residual is reported as a coarse BUCKET, never a signed
+// number: the pilot must find the setting, and can only see how close they are.
+const TRIM_STEP = 0.5;             // drift units cancelled per notch
+const TRIM_RANGE = 12;             // notches available either side of centre
+const TRIM_TRIMMED = 0.35;         // |residual| at/below this reads TRIMMED
+const TRIM_LIGHT = 1.6;            // ...and below this reads LIGHT; above is HEAVY
+
+// --- Helm comms (Officer). Opening a channel costs attention: it takes a few
+// seconds to raise a contact and the transmitter then needs a beat before the
+// next hail, so comms complements sensors rather than replacing them.
+const HAIL_TIME = 3;               // seconds to raise a contact
+const HAIL_COOLDOWN = 10;          // seconds the transmitter is tied up afterwards
 
 // --- Nav gates: fly-through targets the helm lines up on. The pass window
 // widens with engine power (thrust authority makes the ship easier to aim),
@@ -548,7 +617,23 @@ export class Game {
 
   // --- Helm course-hold (P#12): weak auto-centering the helm can toggle to
   // look up during quiet stretches. Disengages on manual input; never chases gates.
+  // A CRUISE aid — Officer trims the drift by hand instead (see helmTrim).
   courseHold = false;
+
+  // --- Helm drift trim (Officer): the earned counterpart to Course Hold. The
+  // course carries a slow hidden bias; setting the trim against it cancels the
+  // bias, and the ship holds course hands-off until the bias next re-rolls.
+  // Course Hold grants centering for free; this makes the pilot find it.
+  helmTrim = 0;                 // commanded trim notches, -TRIM_RANGE..TRIM_RANGE
+
+  // --- Helm comms (Officer): hail a detected-but-unidentified contact. A rescue
+  // pod's distress beacon answers; anything else is silence. A second, HUMAN
+  // channel for the identify step that engineering's sensors otherwise own — so
+  // the helm can call "hold fire, that's a pod" before the sensor ID resolves.
+  private hailTargetId: number | null = null; // contact the channel is open to
+  private hailProgress = 0;                   // 0..1 toward the reply
+  private hailCd = 0;                         // seconds until the transmitter is free
+  private hailResult: { label: string; kind: string; answered: boolean } | null = null;
 
   // --- Engineering power preset (P#11): one saved power split the engineer can
   // stash ("save") and re-apply in one tap ("load"). null until first saved.
@@ -669,7 +754,7 @@ export class Game {
     s.playerId = playerId;
     s.name = name || s.name || seat;
     s.connected = true;
-    if (DIFF_MULT[difficulty]) s.difficulty = difficulty;
+    if (AIDS[difficulty]) s.difficulty = difficulty;
     this.event(resuming ? `${s.name} reconnected to ${seat}` : `${s.name} took the ${seat} station`);
     return { ok: true };
   }
@@ -719,8 +804,16 @@ export class Game {
     return !this.seats[seat].connected;
   }
 
+  // The aid profile a seat is playing under. Every structural difference
+  // between Cruise and Officer is read from here (see AIDS).
+  private aids(seat: SeatId): AidProfile {
+    return AIDS[this.seats[seat].difficulty] ?? AIDS.officer;
+  }
+
+  // The burden multiplier for a seat's ambient event rate (drift, trips, spawns).
   private diff(seat: SeatId): number {
-    return DIFF_MULT[this.seats[seat].difficulty];
+    const rate = this.aids(seat).rate;
+    return seat in rate ? rate[seat as keyof typeof rate] : 1;
   }
 
   // --- Phase transitions ---
@@ -751,7 +844,7 @@ export class Game {
     if (difficulties) {
       for (const s of Object.keys(difficulties) as SeatId[]) {
         const d = difficulties[s];
-        if (this.seats[s] && d && DIFF_MULT[d]) this.seats[s].difficulty = d;
+        if (this.seats[s] && d && AIDS[d]) this.seats[s].difficulty = d;
       }
     }
     // Mission pace (ready-room setting): a real-time multiplier on the whole
@@ -766,7 +859,7 @@ export class Game {
     this.hull = 100;
     this.shieldRaised = false;
     this.shieldStrength = SHIELD_MAX;
-    this.power = { engines: 2, shields: 1, weapons: 2, sensors: 2 }; // default split spends the full pool (7): more sensors for earlier detection
+    this.power = this.defaultPowerSplit(); // spends the whole pool, respecting the profile's per-system floor
     this.breakers = { engines: null, shields: null, weapons: null, sensors: null };
     this.throttle = 0;
     this.alignment = 0;
@@ -831,6 +924,11 @@ export class Game {
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
+    this.helmTrim = 0;
+    this.hailTargetId = null;
+    this.hailProgress = 0;
+    this.hailCd = 0;
+    this.hailResult = null;
     this.stats = { destroyed: 0, impacts: 0, dodged: 0, breakersTripped: 0, gatesPassed: 0, gatesMissed: 0, warpsUsed: 0, pulsesUsed: 0 };
     this.tel = freshTelemetry();
     this.alignAbsSum = 0;
@@ -888,9 +986,14 @@ export class Game {
         this.alignment = clamp(this.alignment + this.turnStep() * (a.dir as number), -100, 100);
       } else if (a.kind === 'warp' || a.kind === 'evasive') {
         this.doWarp();
-      } else if (a.kind === 'hold' && typeof a.on === 'boolean') {
+      } else if (a.kind === 'hold' && typeof a.on === 'boolean' && this.aids('helm').courseHold) {
+        // Course Hold is a CRUISE aid — an Officer helm trims by hand instead.
         this.courseHold = a.on;
         this.consoleEvent('helm', this.courseHold ? 'Course-hold engaged.' : 'Course-hold released.');
+      } else if (a.kind === 'trim' && typeof a.value === 'number' && this.aids('helm').driftTrim) {
+        this.helmTrim = clamp(Math.round(a.value), -TRIM_RANGE, TRIM_RANGE);
+      } else if (a.kind === 'hail' && typeof a.id === 'number' && this.aids('helm').comms) {
+        this.doHail(a.id as number);
       }
     } else if (seat === 'engineering') {
       if (a.kind === 'power' && SYSTEMS.includes(a.system as SystemId) && (a.delta === -1 || a.delta === 1)) {
@@ -910,21 +1013,25 @@ export class Game {
         this.sealing = !!a.on && this.hull < HULL_BREACH_MAX;
       }
     } else if (seat === 'weapons') {
-      if (a.kind === 'target' && typeof a.id === 'number') {
+      // Cruise hands the SCOPE to the CPU: targeting, firing, and the fire-mode
+      // governor aren't this player's to drive. The deflector screen and the
+      // tractor beam below stay theirs.
+      const scopeIsTheirs = !this.aids('weapons').autoScope;
+      if (a.kind === 'target' && typeof a.id === 'number' && scopeIsTheirs) {
         // Can only lock a contact the sensors have actually detected.
         const t = this.asteroids.find((x) => x.id === a.id);
         if (t && this.targetable(t)) {
           this.targetId = a.id as number;
           this.recordAcquire(a.id as number);
         }
-      } else if (a.kind === 'fire') {
+      } else if (a.kind === 'fire' && scopeIsTheirs) {
         this.fire();
       } else if (a.kind === 'shields' && typeof a.raised === 'boolean') {
         this.shieldRaised = a.raised;
         // Renamed the crew-facing verb to "deflector screen" so it stops
         // colliding with engineering's "shield power" callout (playtest note).
         this.consoleEvent('weapons', this.shieldRaised ? 'Deflector screen up.' : 'Deflector screen down.');
-      } else if (a.kind === 'governor' && (a.mode === 'standard' || a.mode === 'snapshot')) {
+      } else if (a.kind === 'governor' && (a.mode === 'standard' || a.mode === 'snapshot') && scopeIsTheirs) {
         // Mode cycling is a routine gunner action — no log/toast (it's too
         // granular for the captain's log; the weapons console shows the mode).
         this.governor = a.mode;
@@ -945,12 +1052,38 @@ export class Game {
   }
 
   private adjustPower(system: SystemId, delta: number) {
+    // Pool size and the per-system floor come from the engineering seat's aid
+    // profile: Cruise locks one pip per system (which the engineer can't remove)
+    // and hands out a bigger pool to split.
+    const { powerTotal, powerFloor } = this.aids('engineering');
     const total = SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
     const next = this.power[system] + delta;
-    if (next < 0 || next > POWER_MAX) return;
-    if (delta > 0 && total >= POWER_TOTAL) return; // no free units in the budget
+    if (next < powerFloor || next > POWER_MAX) return;
+    if (delta > 0 && total >= powerTotal) return; // no free units in the budget
     this.power[system] = next;
     this.tel.powerChanges++;
+  }
+
+  // The opening allocation for a run: spend the whole pool, weighted the way the
+  // default split always has been (more sensors for earlier detection). Written
+  // as a spend-down so it satisfies the floor and the pool size at any profile.
+  private defaultPowerSplit(): Record<SystemId, number> {
+    const { powerTotal, powerFloor } = this.aids('engineering');
+    const split: Record<SystemId, number> = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+    for (const s of SYSTEMS) split[s] = powerFloor;
+    // Priority order for the free units above the floor (mirrors the shipped 7-unit
+    // default of engines 2 / weapons 2 / sensors 2 / shields 1).
+    const want: Record<SystemId, number> = { engines: 2, weapons: 2, sensors: 2, shields: 1 };
+    let spare = powerTotal - SYSTEMS.reduce((sum, s) => sum + split[s], 0);
+    for (const s of ['engines', 'weapons', 'sensors', 'shields'] as SystemId[]) {
+      while (spare > 0 && split[s] < Math.max(want[s], powerFloor) && split[s] < POWER_MAX) { split[s]++; spare--; }
+    }
+    // Any pool left over (Cruise's 8th unit) goes to sensors — the allocation the
+    // crew feels most, and the one an engineer would spend a spare unit on.
+    for (const s of ['sensors', 'engines', 'weapons', 'shields'] as SystemId[]) {
+      while (spare > 0 && split[s] < POWER_MAX) { split[s]++; spare--; }
+    }
+    return split;
   }
 
   private resetBreaker(system: SystemId) {
@@ -975,7 +1108,11 @@ export class Game {
     this.shieldRaised = false;
     this.shieldStrength = 0;
     this.charge = 0;
-    this.power = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
+    // Scatter the allocation down to the profile's floor — zero under Officer
+    // (re-power from scratch), one pip per system under Cruise, whose locked pips
+    // are exactly the "this can never go dark" promise the aid makes.
+    const floor = this.aids('engineering').powerFloor;
+    for (const s of SYSTEMS) this.power[s] = floor;
     // A warp jump also drops any tractor latch and scatters the hold's contents
     // stay put — but the beam breaks (the ship is somewhere else now).
     this.tractorLatched = false;
@@ -1004,12 +1141,15 @@ export class Game {
     this.consoleEvent('engineering', 'Active sensor pulse — all contacts lit up.');
   }
 
-  // Re-apply the saved power preset (P#11), respecting the pool + per-system cap.
+  // Re-apply the saved power preset (P#11), respecting the pool, the per-system
+  // cap, and the profile's per-system floor.
   private loadPreset() {
     if (!this.savedPreset) { this.consoleEvent('engineering', 'No power preset saved yet.'); return; }
-    const total = SYSTEMS.reduce((sum, s) => sum + clamp(this.savedPreset![s] ?? 0, 0, POWER_MAX), 0);
-    if (total > POWER_TOTAL) return; // saved split no longer fits the pool (defensive)
-    for (const s of SYSTEMS) this.power[s] = clamp(this.savedPreset[s] ?? 0, 0, POWER_MAX);
+    const { powerTotal, powerFloor } = this.aids('engineering');
+    const at = (s: SystemId) => clamp(this.savedPreset![s] ?? 0, powerFloor, POWER_MAX);
+    const total = SYSTEMS.reduce((sum, s) => sum + at(s), 0);
+    if (total > powerTotal) return; // saved split no longer fits the pool (defensive)
+    for (const s of SYSTEMS) this.power[s] = at(s);
     this.tel.powerChanges++;
     this.consoleEvent('engineering', 'Power preset loaded.');
   }
@@ -1042,7 +1182,7 @@ export class Game {
     if (this.cargo.length >= this.holdCapacity) { this.consoleEvent('weapons', 'Cargo hold full — jettison to make room.'); return; }
     if (this.eff('weapons') < TRACTOR_MIN_POWER) { this.consoleEvent('weapons', 'Tractor beam has no power — Engineering must feed WEAPONS.'); return; }
     const t = this.tractorTargetId !== null ? this.asteroids.find((a) => a.id === this.tractorTargetId) : null;
-    if (!t || !this.targetable(t) || t.impactIn > TRACTOR_RANGE) { this.consoleEvent('weapons', 'No contact in tractor range.'); return; }
+    if (!t || !this.targetable(t)) { this.consoleEvent('weapons', 'No contact on the beam.'); return; }
     // Only latch a contact we've actually classified as towable — no grabbing an
     // un-identified blip (it might be a rock, or nothing). Matches serialize()'s
     // `tractorable` flag the tow widget gates its button on.
@@ -1211,7 +1351,10 @@ export class Game {
   // rather than an urgent repair). Fractional eff is fine: every consumer is
   // continuous math (charge rate, turn authority, regen, ranges).
   private eff(system: SystemId): number {
-    const breaker = this.breakers[system] !== null ? 0.5 : 1;
+    // How much a tripped breaker costs comes from the engineering seat's profile:
+    // half effectiveness under Officer, nothing at all under Cruise (where the
+    // trip is still a job to clear, just not a penalty while it stands).
+    const breaker = this.breakers[system] !== null ? this.aids('engineering').breakerPenalty : 1;
     // Wear lightly derates a system (gentle — the Crew Chief keeps it trimmed).
     const trim = 1 - WEAR_EFF_PENALTY * this.wear[system];
     return this.power[system] * breaker * trim;
@@ -1507,7 +1650,11 @@ export class Game {
     const victim = candidates[Math.floor(this.rng() * candidates.length)];
     this.breakers[victim] = 0;
     this.stats.breakersTripped++;
-    this.consoleEvent('engineering', `Breaker tripped: ${victim} at half power!`);
+    // The consequence differs by profile, so the callout has to as well — under
+    // Cruise the system keeps running and the trip is purely a reset to clear.
+    this.consoleEvent('engineering', this.aids('engineering').breakerPenalty < 1
+      ? `Breaker tripped: ${victim} at half power!`
+      : `Breaker tripped: ${victim} — reset required.`);
   }
 
   // --- Simulation tick (dt in seconds) ---
@@ -1531,15 +1678,24 @@ export class Game {
     this.warpCd = Math.max(0, this.warpCd - dt);
     this.sensorPulseCd = Math.max(0, this.sensorPulseCd - dt);
 
-    // Course drift: a slowly-changing bias plus jitter, scaled by the
-    // mission's drift pressure and the helm seat's difficulty.
+    // Course drift: a slowly-changing bias plus jitter, scaled by the mission's
+    // drift pressure and the helm seat's difficulty. The bias amplitude and how
+    // often it re-rolls come from the helm profile — Officer's bias is stronger
+    // but stands for far longer, which is what makes it worth trimming out;
+    // Cruise keeps the shipped weak-and-restless bias it has no trim to answer.
+    const drift = this.aids('helm').drift;
     const driftScale = m.driftScale * this.diff('helm');
     this.driftBiasTimer -= dt;
     if (this.driftBiasTimer <= 0) {
-      this.driftBias = (this.rng() * 2 - 1) * 2.5 * driftScale;
-      this.driftBiasTimer = 6 + this.rng() * 8;
+      this.driftBias = (this.rng() * 2 - 1) * drift.amp * driftScale;
+      this.driftBiasTimer = range(this.rng, drift.every);
     }
-    this.alignment = clamp(this.alignment + (this.driftBias + (this.rng() * 2 - 1) * 2.0) * dt, -100, 100);
+    // Trim cancels bias one notch at a time; the jitter term is deliberately
+    // OUTSIDE it — texture no fixed control can null out, so a trimmed ship still
+    // wanders a little and the pilot never gets to stop watching entirely.
+    this.alignment = clamp(this.alignment + (this.driftResidual() + (this.rng() * 2 - 1) * 2.0) * dt, -100, 100);
+    // Comms: advance an open channel, cool the transmitter down.
+    this.updateComms(dt);
 
     // Auto-helm: at the baseline it cruises easy and weakly steers back on
     // course, barely chasing rings (a human earns those slipstream rewards). A
@@ -1657,81 +1813,29 @@ export class Game {
     // Emergency Warp zeroes it) toward a sensible default, so an unmanned
     // engineer can't leave the ship dead in the water.
     if (this.auto('engineering')) {
-      const target: Record<SystemId, number> = { engines: 2, weapons: 2, shields: 1, sensors: 2 }; // mirrors the default split (sums to 7)
-      let spare = POWER_TOTAL - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
+      const target = this.defaultPowerSplit(); // the same opening split, at whatever pool/floor this profile runs
+      let spare = this.aids('engineering').powerTotal - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
       for (const s of SYSTEMS) {
         while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
       }
     }
 
-    // Auto-weapons: every shot lands, but only after a deliberate 1-2s pause
-    // once the laser is charged and a target is in range — the CPU's cost is
-    // TIME, not aim. A human engineer pumping weapon power shortens the wait
-    // between shots, so the bot gunner visibly benefits from crew support.
+    // Auto-weapons. Two separable jobs, because Cruise splits them: the SCOPE
+    // (acquire + fire) can run on CPU for a seat a human is sitting at, while
+    // that human keeps the deflector screen and the tractor beam.
     if (this.auto('weapons')) {
-      // Only detected ROCKS are engaged — the cautious bot never fires on pods,
-      // minerals, or ghosts (that safety is the important invariant on rescue /
-      // salvage missions; a human gunner is the one who must confirm and choose).
-      const acquirable = this.asteroids.filter((a) => this.targetable(a) && a.kind === 'rock');
-      const closest = acquirable.length > 0
-        ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
-        : null;
-      // Shield doctrine: raise only for a real volley (2+ rocks inside the threat
-      // window). Once there's no live volley, drop after a short linger to
-      // recharge — even if non-imminent contacts remain on the board (the old
-      // "wait for ZERO contacts" rule meant shields never lowered while a field
-      // kept spawning rocks). The auto-raise is gated on strength >= 40%, so once
-      // exhausted the deflector recharges to a useful level before going back up.
-      const imminent = acquirable.filter((a) => a.impactIn <= AUTO_SHIELD_THREAT_WINDOW).length;
-      if (imminent >= AUTO_SHIELD_THREAT_COUNT) {
-        this.autoShieldClearAt = null; // live volley: cancel any pending drop
-        if (this.shieldStrength >= SHIELD_MAX * 0.4) this.shieldRaised = true;
-      } else if (this.shieldRaised) {
-        // No live volley: linger a beat, then drop.
-        if (this.autoShieldClearAt === null) {
-          this.autoShieldClearAt = this.missionTime + AUTO_SHIELD_LINGER;
-        } else if (this.missionTime >= this.autoShieldClearAt) {
-          this.shieldRaised = false;
-          this.autoShieldClearAt = null;
-        }
-      }
-      // A SKILLED bot (debug) snapshots small rocks — firing at partial charge to
-      // clear the sky faster — and switches back to a full STANDARD shot for a
-      // large hazard; the baseline bot never touches the governor and always
-      // waits for a full charge. (fire() reads this.governor.)
-      const skilledGunner = this.botOverBase >= 0.5;
-      const snapSmall = skilledGunner && !!closest && !isLargeRock(closest.size);
-      if (skilledGunner && closest) this.governor = snapSmall ? 'snapshot' : 'standard';
-      const fireReady = this.governor === 'snapshot' ? this.charge >= SNAPSHOT_CHARGE : this.charge >= 100;
-      // Deliberate fire: once (ready && target in range) first holds, roll the
-      // pause, then pull the trigger when the clock reaches it. Any break in the
-      // condition (target destroyed/impacted, charge gone) re-arms it.
-      if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && fireReady) {
-        this.targetId = closest.id;
-        this.recordAcquire(closest.id);
-        if (this.autoFireAt === null) {
-          // Debug crew-skill scales the deliberate fire pause (the bot gunner's
-          // main cost is TIME): baseline (0.6) = the shipped 1-2s, optimal ≈ 0.
-          this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY) * (2 - this.botCs);
-        } else if (this.missionTime >= this.autoFireAt) {
-          this.fire();
-          this.autoFireAt = null;
-        }
-      } else {
-        this.autoFireAt = null;
-      }
-      // Opportunistic tow: the tractor is independent of the laser now, so the
-      // bot can tow AND still fire. Auto-latch only a CONFIRMED RESCUE POD inside
-      // the arc — saving lives is unambiguous, so the bot acts on it. Salvage/ore
-      // is a human judgment call, so the bot leaves it alone (it never grabs an
-      // un-identified or merely-valuable contact).
-      const rockThreat = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE;
-      if (!this.tractorLatched && !rockThreat && this.cargo.length < this.holdCapacity && this.eff('weapons') >= TRACTOR_MIN_POWER) {
-        const cand = this.asteroids.find((a) =>
-          a.kind === 'pod' && a.identified &&
-          a.impactIn <= TRACTOR_RANGE && Math.abs(this.alignment - a.bearing) <= TRACTOR_ARC);
-        if (cand) { this.tractorTargetId = cand.id; this.setTractorLatch(true); }
-      }
+      // Unmanned: the CPU runs the whole console at the bot-quality knob. The
+      // call order (shields, then the gunner, then the tow) is the shipped
+      // sequence and must stay that way — the bots are the regression suite, and
+      // re-ordering these silently moves the balance baseline.
+      this.autoShieldDoctrine();
+      this.autoGunner(this.botCs, this.botOverBase);
+      this.autoTow();
+    } else if (this.aids('weapons').autoScope) {
+      // Manned, Cruise: the CPU runs ONLY the scope, and at maximum strength (the
+      // values botCs/botOverBase take at crewSkill 1.0 — no reaction lag, snapshot
+      // use on small rocks). Shields and tractor stay the player's.
+      this.autoGunner(1 / 0.6, 1);
     }
 
     // No auto Crew Chief in the fiction: when the seat is unmanned, automated
@@ -1963,6 +2067,159 @@ export class Game {
         ? `IMPACT: ${this.label(a)} hit the hull for ${Math.round(remaining)} damage!`
         : `${this.label(a)} absorbed by shields.`,
     );
+  }
+
+  // --- Helm: drift trim + comms ---
+
+  // The drift the ship is actually experiencing: the hidden bias, less whatever
+  // the pilot has trimmed out. Officer nulls this by hand; on Cruise (no trim
+  // control) helmTrim stays 0 and this is simply the bias.
+  private driftResidual(): number {
+    return this.driftBias + this.helmTrim * TRIM_STEP;
+  }
+
+  // How the residual is REPORTED — a coarse bucket, never the signed value.
+  // The pilot can tell they're converging without being handed the answer.
+  private trimBucket(): 'trimmed' | 'light' | 'heavy' {
+    const r = Math.abs(this.driftResidual());
+    return r <= TRIM_TRIMMED ? 'trimmed' : r <= TRIM_LIGHT ? 'light' : 'heavy';
+  }
+
+  // Open a channel to a contact. Only a DETECTED but still UNIDENTIFIED contact
+  // is worth hailing — that's the window this widget exists to work inside.
+  private doHail(id: number) {
+    if (this.hailCd > 0 || this.hailTargetId !== null) return; // transmitter busy
+    const t = this.asteroids.find((a) => a.id === id);
+    if (!t || !this.targetable(t) || t.identified) return;
+    this.hailTargetId = id;
+    this.hailProgress = 0;
+    this.hailResult = null;
+    this.consoleEvent('helm', `Hailing ${this.label(t)} — opening a channel…`);
+  }
+
+  // Advance an open hail. A rescue pod's beacon answers and the contact is
+  // IDENTIFIED for the whole crew (the point: the helm can call it before
+  // sensors resolve it). Everything else returns silence — informative, but
+  // ambiguous between rock, ore, and sensor ghost.
+  private updateComms(dt: number) {
+    this.hailCd = Math.max(0, this.hailCd - dt);
+    if (this.hailTargetId === null) return;
+    const t = this.asteroids.find((a) => a.id === this.hailTargetId);
+    if (!t || !this.targetable(t)) {
+      // The contact left the board mid-hail (destroyed, impacted, culled).
+      this.hailTargetId = null;
+      this.hailProgress = 0;
+      this.hailCd = HAIL_COOLDOWN;
+      this.consoleEvent('helm', 'Channel lost — contact is gone.');
+      return;
+    }
+    this.hailProgress += dt / HAIL_TIME;
+    if (this.hailProgress < 1) return;
+    const answered = t.kind === 'pod';
+    if (answered) {
+      t.identified = true;
+      this.pushFx({ kind: 'sensorContact' });
+      // Crew-wide: this is the moment the bridge learns there are people out
+      // there, so it belongs on the main screen, not just the helm console.
+      this.event(`${this.label(t)} answers our hail — RESCUE POD, survivors aboard. Hold fire.`, true);
+    } else {
+      this.consoleEvent('helm', `${this.label(t)} does not answer — no one aboard.`);
+    }
+    this.hailResult = { label: this.label(t), kind: answered ? 'pod' : 'silent', answered };
+    this.hailTargetId = null;
+    this.hailProgress = 0;
+    this.hailCd = HAIL_COOLDOWN;
+  }
+
+  // The CPU gunner: run the SCOPE (acquire a target, then fire). Every shot
+  // lands, but only after a deliberate pause once the laser is charged and a
+  // target is in range — the CPU's cost is TIME, not aim. A human engineer
+  // pumping weapon power shortens the wait between shots, so the CPU gunner
+  // visibly benefits from crew support.
+  //
+  // Bot quality arrives as ARGUMENTS rather than being read off this.crewSkill,
+  // because two callers want different strengths: an unmanned seat runs at the
+  // debug crew-skill knob, while a manned Cruise seat runs at maximum.
+  //   `cs`   — reaction-speed scale (1.0 = the shipped baseline bot)
+  //   `over` — 0..1 gate on the ACTIVE optimal behaviors (snapshot use)
+  private autoGunner(cs: number, over: number) {
+    // Only detected ROCKS are engaged — the cautious gunner never fires on pods,
+    // minerals, or ghosts (that safety is the important invariant on rescue /
+    // salvage missions; a human gunner is the one who must confirm and choose).
+    const acquirable = this.asteroids.filter((a) => this.targetable(a) && a.kind === 'rock');
+    const closest = acquirable.length > 0
+      ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
+      : null;
+    // A SKILLED gunner snapshots small rocks — firing at partial charge to clear
+    // the sky faster — and switches back to a full STANDARD shot for a large
+    // hazard; the baseline bot never touches the governor and always waits for a
+    // full charge. (fire() reads this.governor.)
+    const skilledGunner = over >= 0.5;
+    const snapSmall = skilledGunner && !!closest && !isLargeRock(closest.size);
+    if (skilledGunner && closest) this.governor = snapSmall ? 'snapshot' : 'standard';
+    const fireReady = this.governor === 'snapshot' ? this.charge >= SNAPSHOT_CHARGE : this.charge >= 100;
+    // Deliberate fire: once (ready && target in range) first holds, roll the
+    // pause, then pull the trigger when the clock reaches it. Any break in the
+    // condition (target destroyed/impacted, charge gone) re-arms it.
+    if (closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE && fireReady) {
+      this.targetId = closest.id;
+      this.recordAcquire(closest.id);
+      if (this.autoFireAt === null) {
+        // Crew-skill scales the deliberate fire pause (the CPU gunner's main cost
+        // is TIME): baseline = the shipped 1-2s, maximum ≈ 0.
+        this.autoFireAt = this.missionTime + range(this.rng, AUTO_WEAPONS_FIRE_DELAY) * (2 - cs);
+      } else if (this.missionTime >= this.autoFireAt) {
+        this.fire();
+        this.autoFireAt = null;
+      }
+    } else {
+      this.autoFireAt = null;
+    }
+  }
+
+  // Deflector doctrine for an UNMANNED weapons console. Deliberately NOT run for
+  // a manned Cruise seat — the screen is one of the two jobs that player keeps.
+  private autoShieldDoctrine() {
+    const acquirable = this.asteroids.filter((a) => this.targetable(a) && a.kind === 'rock');
+    // Shield doctrine: raise only for a real volley (2+ rocks inside the threat
+    // window). Once there's no live volley, drop after a short linger to
+    // recharge — even if non-imminent contacts remain on the board (the old
+    // "wait for ZERO contacts" rule meant shields never lowered while a field
+    // kept spawning rocks). The auto-raise is gated on strength >= 40%, so once
+    // exhausted the deflector recharges to a useful level before going back up.
+    const imminent = acquirable.filter((a) => a.impactIn <= AUTO_SHIELD_THREAT_WINDOW).length;
+    if (imminent >= AUTO_SHIELD_THREAT_COUNT) {
+      this.autoShieldClearAt = null; // live volley: cancel any pending drop
+      if (this.shieldStrength >= SHIELD_MAX * 0.4) this.shieldRaised = true;
+    } else if (this.shieldRaised) {
+      // No live volley: linger a beat, then drop.
+      if (this.autoShieldClearAt === null) {
+        this.autoShieldClearAt = this.missionTime + AUTO_SHIELD_LINGER;
+      } else if (this.missionTime >= this.autoShieldClearAt) {
+        this.shieldRaised = false;
+        this.autoShieldClearAt = null;
+      }
+    }
+  }
+
+  // The opportunistic tow for an UNMANNED weapons console. Also not run for a
+  // manned Cruise seat — the beam is that player's other kept job.
+  private autoTow() {
+    const acquirable = this.asteroids.filter((a) => this.targetable(a) && a.kind === 'rock');
+    const closest = acquirable.length > 0
+      ? [...acquirable].sort((a, b) => a.impactIn - b.impactIn)[0]
+      : null;
+    // The tractor is independent of the laser, so the bot can tow AND still fire.
+    // Auto-latch only a CONFIRMED RESCUE POD inside the arc — saving lives is
+    // unambiguous, so the bot acts on it. Salvage/ore is a human judgment call,
+    // so the bot leaves it alone (it never grabs an un-identified or merely
+    // valuable contact).
+    const rockThreat = !!closest && closest.impactIn <= AUTO_WEAPONS_REACT_RANGE;
+    if (!this.tractorLatched && !rockThreat && this.cargo.length < this.holdCapacity && this.eff('weapons') >= TRACTOR_MIN_POWER) {
+      const cand = this.asteroids.find((a) =>
+        a.kind === 'pod' && a.identified && Math.abs(this.alignment - a.bearing) <= TRACTOR_ARC);
+      if (cand) { this.tractorTargetId = cand.id; this.setTractorLatch(true); }
+    }
   }
 
   // Maintain the tractor. While latched, reel the held contact aboard (faster
@@ -2324,7 +2581,11 @@ export class Game {
       ? round1(this.acquireLatencies.reduce((s, v) => s + v, 0) / this.acquireLatencies.length)
       : 0;
     const onCoursePct = this.missionTime > 0 ? round2(this.onCourseTime / this.missionTime) : 0;
-    const avgPowerUtil = this.telSamples > 0 ? round2(this.powerUtilSum / this.telSamples / POWER_TOTAL) : 0;
+    // Normalized against the pool this run actually ran on, so Cruise's larger
+    // pool doesn't inflate the engineer's utilization score.
+    const avgPowerUtil = this.telSamples > 0
+      ? round2(this.powerUtilSum / this.telSamples / this.aids('engineering').powerTotal)
+      : 0;
     // Captain coordination: the crew outcomes a good caller drives — defense,
     // gate discipline, and how fast contacts get handed to weapons (a low
     // latency, normalized against a ~6s "slow" reference, reads as tight comms).
@@ -2527,13 +2788,50 @@ export class Game {
       // Weapons governor mode + helm course-hold (self-documenting console state).
       governor: this.governor,
       courseHold: this.courseHold,
+      // --- Per-console aid profile, so each client renders the mode it's playing
+      // rather than hard-coding rules the engine owns. Seat difficulty is already
+      // serialized under `seats`; this is the resolved consequence of it.
+      aids: {
+        // Engineering: pool size, the per-system locked floor, and whether a
+        // tripped breaker actually costs anything.
+        powerTotal: this.aids('engineering').powerTotal,
+        powerFloor: this.aids('engineering').powerFloor,
+        breakerPenalty: this.aids('engineering').breakerPenalty,
+        // Weapons: the scope is CPU-driven (no targeting/fire controls).
+        autoScope: this.aids('weapons').autoScope,
+        // Helm: which of the four steering controls this pilot has.
+        steerAids: this.aids('helm').steerAids,
+        courseHold: this.aids('helm').courseHold,
+        driftTrim: this.aids('helm').driftTrim,
+        comms: this.aids('helm').comms,
+      },
+      // Helm drift trim: the commanded notches, the range the control spans, and
+      // how close the pilot is — a COARSE bucket, never the signed bias.
+      trim: {
+        value: this.helmTrim,
+        range: TRIM_RANGE,
+        residual: this.trimBucket(),
+      },
+      // Helm comms: the open channel (if any), its progress, transmitter
+      // cooldown, and the last reply received.
+      comms: {
+        hailing: this.hailTargetId,
+        progress: round2(this.hailProgress),
+        cooldownIn: round1(this.hailCd),
+        last: this.hailResult,
+      },
       // Crew Chief: tractor + hold + damage-control board.
       tractor: {
         power: this.eff('weapons'),
         targetId: this.tractorTargetId,
         latched: this.tractorLatched,
         reel: round2(this.tractorReel),
-        range: TRACTOR_RANGE,
+        // The beam has no distance limit — the ARC is the constraint the gunner
+        // manages (with the helm), so that's what the widget reads out.
+        arc: TRACTOR_ARC,
+        offset: this.tractorTargetId !== null
+          ? Math.round(Math.abs(this.alignment - (this.asteroids.find((a) => a.id === this.tractorTargetId)?.bearing ?? this.alignment)))
+          : 0,
       },
       cargo: this.cargo.map((c) => ({ id: c.id, label: c.label, kind: c.kind, mass: c.mass, value: c.value })),
       holdCapacity: this.holdCapacity,
@@ -2583,7 +2881,10 @@ export class Game {
         // both before sensor ID. Rocks stay UNKNOWN until close (VISUAL_RANGE).
         visualKind: a.impactIn <= (a.kind === 'pod' ? POD_VISUAL_RANGE : a.kind === 'mineral' ? MINERAL_VISUAL_RANGE : VISUAL_RANGE) ? a.kind : 'unknown',
         identified: a.identified, mass: a.mass,
-        tractorable: a.identified && (a.kind === 'pod' || a.kind === 'mineral') && a.impactIn <= TRACTOR_RANGE,
+        // Latchable: identified as a pod/ore. No distance term — the beam reaches
+        // as far as sensors do; only the arc (a live, helm-driven condition) gates
+        // the actual latch, and setTractorLatch reports that in its own words.
+        tractorable: a.identified && (a.kind === 'pod' || a.kind === 'mineral'),
         bearing: Math.round(a.bearing),
         // A phantom (boarders' sensor spoof) reads as a real blip on the weapons
         // SCOPE but is nothing physical — the main screen must NOT draw it (there's

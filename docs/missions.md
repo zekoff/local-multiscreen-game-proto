@@ -17,8 +17,11 @@ A `MissionDef` has three layers:
 2. **Ambient pacing** — ranges (`spawnEvery`, `impactIn`, `asteroidDmg`,
    `breakerEvery`, optional `gateEvery`), caps (`maxAsteroids`), and scales
    (`driftScale`, `speedScale`, `parTime`). This is the mission's baseline
-   pressure; per-seat difficulty multipliers stack on top of it, preserving the
-   design pillar that player difficulty is a parameter, not a code path.
+   pressure; per-seat difficulty stacks on top of it (the `rate` multipliers in
+   the `AIDS` table, `game.ts`), preserving the design pillar that player
+   difficulty is a parameter, not a code path. Note that difficulty now also
+   changes *which controls a console has* — also declared in that same table, so
+   a mission never needs to know which mode a seat is on.
    **Mission length** is a single knob: `targetSeconds` (the duration of a
    well-executed run). Rather than hand-set `speedScale`/`parTime`, spread
    `pacingFor(targetSeconds)` (from `mission.ts`) into the def — it derives both

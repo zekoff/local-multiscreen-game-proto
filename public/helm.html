@@ -29,6 +29,54 @@
           "deco1 emergency deco2";
       }
     }
+    /* --- Mode split (see AIDS in src/engine/game.ts) ------------------------
+       CRUISE keeps the painted steering aids and Course Hold. OFFICER flies
+       without either and gets two earned controls instead: Drift Trim (inside
+       the alignment panel — it IS steering) and Comms (its own cell). Both sets
+       live in the DOM; the mode class decides which is shown, because the page
+       is loaded from the lobby before the difficulty is known. */
+    main.helm #comms-widget { grid-area: comms; display: flex; flex-direction: column; }
+    main.helm.mode-officer #align-zone,
+    main.helm.mode-officer #hold-btn { display: none; }
+    main.helm.mode-cruise #trim-widget,
+    main.helm.mode-cruise #comms-widget { display: none; }
+    /* Officer phone layout: speed / throttle / align+trim / comms / emergency,
+       still one screen with no scroll (the Emergency blurb is dropped below). */
+    main.helm.mode-officer {
+      grid-template-areas:
+        "speed    speed"
+        "throttle throttle"
+        "align    align"
+        "comms    comms"
+        "emergency emergency";
+    }
+    main.helm.mode-officer #warp-note { display: none; }
+    @media (min-width: 860px) and (min-height: 620px) {
+      main.helm.mode-officer {
+        grid-template-areas:
+          "align throttle  deco3"
+          "align speed     deco3"
+          "align comms     comms"
+          "deco1 emergency deco2";
+      }
+      main.helm.mode-officer #warp-note { display: block; }
+    }
+    /* Drift Trim sits inside the alignment panel, so it carries no card chrome.
+       It also has to EARN its space: the gate readout below it is the officer's
+       only remaining steering guidance, so the trim block stays compact enough
+       that the readout is never pushed out of the panel on a phone. */
+    #trim-widget .widget.panel { border: none; background: none; padding: 0.35rem 0 0; }
+    #trim-widget .widget-hint { display: none; } /* the status line below says it better */
+    main.helm.mode-officer #gate-readout { margin-top: 0.4rem; }
+    .trim-readout { font-family: monospace; font-size: 1.05rem; margin-bottom: 0.35rem; }
+    .trim-scale { position: relative; height: 10px; border-radius: 5px; background: #131a2c;
+                  border: 1px solid var(--panel-edge); margin-bottom: 0.5rem; overflow: hidden; }
+    .trim-fill { position: absolute; top: 0; bottom: 0; background: var(--accent); }
+    .trim-centre { width: 100%; margin-top: 0.4rem; }
+    .trim-status { margin-top: 0.35rem; min-height: 1.2em; }
+    .comms-status { font-size: 0.9rem; margin-bottom: 0.5rem; }
+    .comms-candidates { display: flex; flex-direction: column; gap: 0.3rem; }
+    .comms-reply { margin-top: 0.5rem; font-size: 0.85rem; min-height: 1.2em; }
   </style>
 </head>
 <body>
@@ -68,15 +116,23 @@
       <!-- Course-hold (P#12): weak auto-centering so the pilot can look up on a
            quiet stretch. Releases the instant you steer manually. -->
       <button id="hold-btn" style="width:100%; margin-top:0.6rem;">Course Hold</button>
+      <!-- Officer's earned counterpart to Course Hold: trim out the drift bias
+           by hand. Mounted here because it IS steering. -->
+      <div id="trim-widget"></div>
       <!-- Next fly-through nav gate / obstacle / divert: line up (or steer clear) -->
       <p id="gate-readout" style="margin-top:0.75rem; text-align:center; color:var(--dim); min-height:1.4em;"></p>
     </div>
+
+    <!-- Comms (Officer): hail an unidentified contact for an early ID. Its
+         layout lives in the stylesheet, NOT inline — an inline display would
+         outrank the mode-cruise hide rule and leak the widget into Cruise. -->
+    <div id="comms-widget"></div>
 
     <!-- Emergency Warp: jump clear of all threats, at a heavy systems cost -->
     <div class="panel" style="grid-area:emergency">
       <h2>Emergency</h2>
       <button class="danger" id="warp-btn" style="width:100%">Emergency Warp</button>
-      <p style="color:var(--dim); font-size:0.8rem; margin-top:0.5rem;">
+      <p id="warp-note" style="color:var(--dim); font-size:0.8rem; margin-top:0.5rem;">
         Jumps clear of every threat — but scatters all power, drops shields &amp; weapons,
         trips every breaker, and throws you off course. Last resort.</p>
     </div>
@@ -128,6 +184,9 @@
     import { createAudio } from '/js/audio.js';
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
+    import { mountWidgets } from '/js/widget.js';
+    import { driftTrim } from '/js/widgets/drift-trim.js';
+    import { comms } from '/js/widgets/comms.js';
     import { spark, makeSignal, renderCrew, tacticalLog } from '/js/deco.js';
 
     // Live decorative chrome (large screens): heading trace, bridge status, log.
@@ -148,7 +207,9 @@
 
     const throttle = document.getElementById('throttle');
     const warpBtn = document.getElementById('warp-btn');
+    const consoleEl = document.querySelector('main.helm'); // carries the mode class
     let draggingThrottle = false;
+    let trimHost = null, commsHost = null; // Officer-only widget hosts
 
     const intents = createIntents();
     const net = initStation({
@@ -158,6 +219,14 @@
       render(state) {
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
+        // Which controls this pilot has (see AIDS in src/engine/game.ts). Cruise
+        // keeps the painted band + Course Hold; Officer flies without them and
+        // works the Drift Trim and Comms widgets instead.
+        const aids = state.aids || { steerAids: true, courseHold: true, driftTrim: false, comms: false };
+        consoleEl.classList.toggle('mode-officer', !aids.steerAids);
+        consoleEl.classList.toggle('mode-cruise', !!aids.steerAids);
+        if (aids.driftTrim && trimHost) trimHost.render(state);
+        if (aids.comms && commsHost) commsHost.render(state);
         // Live deco: heading trace (course drift), real readouts, bridge status.
         // Traces: real heading (alignment) + real throttle + synthetic inertial load.
         helmGraph(state.alignment ?? 0, state.throttle ?? 0, helmInertial());
@@ -190,12 +259,16 @@
         // line) so the helm has to actively swing onto it; with no gate, the
         // band just marks the on-course zone around 0. A tripped engines breaker
         // halves engine power (mirrors eff() in src/engine/game.ts).
-        const effEngines = state.power.engines * (state.breakers.engines ? 0.5 : 1);
+        // A tripped breaker only derates the system when the mode says so (see
+        // breakerPenalty in AIDS) — mirrors eff() in src/engine/game.ts.
+        const brkPen = state.aids ? state.aids.breakerPenalty : 0.5;
+        const effEngines = state.power.engines * (state.breakers.engines ? brkPen : 1);
         const win = 12 + 18 * (effEngines / 4);
         // Inline engine-power readout (no separate power panel on this console).
         const ep = state.power.engines, eTrip = state.breakers.engines;
+        const tripNote = brkPen < 1 ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ' <span style="color:var(--warn)">(breaker out)</span>';
         document.getElementById('eng-power').innerHTML = ep > 0
-          ? `Engine power <b style="color:var(--accent)">${ep}</b>${eTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — speed + turn authority`
+          ? `Engine power <b style="color:var(--accent)">${ep}</b>${eTrip ? tripNote : ''} — speed + turn authority`
           : '<b style="color:var(--bad)">NO ENGINE POWER</b> — ask Engineering';
         const gates = state.gates || [];
         const next = gates.length ? gates.reduce((a, b) => (a.reachIn < b.reachIn ? a : b)) : null;
@@ -205,8 +278,12 @@
         zone.style.left = `${((center - half + 100) / 200 * 100).toFixed(1)}%`;
         zone.style.width = `${(2 * half / 200 * 100).toFixed(1)}%`;
         const lined = Math.abs(state.alignment - center) <= half;
-        document.getElementById('align-state').textContent = lined ? (next ? 'on the gate' : 'on course') : 'off line';
-        document.getElementById('align-state').style.color = lined ? 'var(--good)' : 'var(--warn)';
+        // The lock label is a Cruise aid — it reads the answer out. An Officer
+        // pilot judges the line from the bar and the readout below it. (The
+        // painted zone band is hidden by CSS; this is its text counterpart.)
+        const stateEl = document.getElementById('align-state');
+        stateEl.textContent = !aids.steerAids ? '' : lined ? (next ? 'on the gate' : 'on course') : 'off line';
+        stateEl.style.color = lined ? 'var(--good)' : 'var(--warn)';
         // Next nav gate readout: closest gate, its bearing, and steering hint.
         // A debris field takes over the line — throttle discipline is this
         // console's call and outranks ring-chasing while the hull is scraping.
@@ -256,6 +333,12 @@
             : 'Emergency Warp';
       },
     });
+
+    // Officer-only widgets. Mounted unconditionally (the mode isn't known until
+    // the first snapshot arrives) and shown/hidden by the mode class; render()
+    // only feeds them when this pilot actually has them.
+    trimHost = mountWidgets(document.getElementById('trim-widget'), [driftTrim], { net, intents, audio, seat: 'helm' });
+    commsHost = mountWidgets(document.getElementById('comms-widget'), [comms], { net, intents, audio, seat: 'helm' });
 
     // Throttle sends on change; track dragging so render() doesn't stomp it.
     // The servo confirmation sounds once on RELEASE (change), not per input
@@ -342,7 +425,9 @@
         '<b>Throttle</b> sets speed. Hold <b>Port / Starboard</b> to turn.',
         'The ship turns faster when <b>engine power</b> is higher (ask Engineering) and when the <b>throttle is lower</b>. A <b>heavy cargo hold</b> (Crew Chief) makes you sluggish.',
         'Steer onto a <b>slipstream ring&rsquo;s</b> position for a speed boost. Steer <b>OFF</b> a <b>large obstacle&rsquo;s</b> bearing to miss it.',
-        '<b>Course Hold</b> gently keeps you on course so you can look up on a quiet stretch — it releases the moment you steer.',
+        '<b>Cruise</b> paints a guide band on the course bar (sit inside it) and gives you <b>Course Hold</b>, which gently keeps you on course so you can look up on a quiet stretch — it releases the moment you steer.',
+        '<b>Officer</b> flies without those. Instead you get <b>Drift Trim</b>: the ship carries a slow pull that holds for a while, and trimming against it until the readout says TRIMMED cancels it out — the ship then holds course on its own until the pull changes. Watch which way you slide, trim the other way.',
+        '<b>Officer</b> also gets <b>Comms</b>. Sensors spot a contact long before they identify it — in that gap you can <b>hail</b> it. A rescue pod answers; a rock says nothing. That lets you call "hold fire, that\'s a pod" before Engineering\'s sensors resolve it.',
         'A <b>divert</b> call opens a side objective on a bearing — swing onto it to answer, or hold course to press on. Your call.',
         'When the <b>Crew Chief is towing</b>, hold your line steady or the tractor beam breaks.',
         '<b>Emergency Warp</b> escapes all threats but knocks every system out and throws you off course. Last resort.',

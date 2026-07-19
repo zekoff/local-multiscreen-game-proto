@@ -92,7 +92,7 @@
            varied skill levels on one crew). "Crew default" leaves whatever the
            player chose on their own join screen untouched. -->
       <div class="label" style="margin-bottom:0.3rem;">Console difficulty</div>
-      <div id="difficulty-row" style="display:flex; gap:0.5rem; margin-bottom:0.7rem;">
+      <div id="difficulty-row" style="display:flex; gap:0.5rem; margin-bottom:0.35rem;">
         <label style="flex:1; color:var(--dim); font-size:0.8rem;">Helm
           <select id="diff-helm" class="diff-select"><option value="">crew default</option><option value="cruise">cruise</option><option value="officer">officer</option></select>
         </label>
@@ -106,6 +106,14 @@
           <select id="diff-crewchief" class="diff-select"><option value="">crew default</option><option value="cruise">cruise</option><option value="officer">officer</option></select>
         </label>
       </div>
+      <!-- Cruise is no longer "the same console, slower" — it changes what each
+           station actually operates, so the ready room says so out loud. -->
+      <p style="color:var(--dim); font-size:0.75rem; margin-bottom:0.7rem; line-height:1.45;">
+        <b>Cruise</b> adds aids: helm gets painted steering guides + Course Hold,
+        engineering gets a bigger budget with a locked pip per system and harmless
+        breaker trips, weapons hands targeting and firing to the computer (the player
+        keeps deflector + tractor). <b>Officer</b> runs every station by hand.
+      </p>
       <!-- Mission speed: a real-time multiplier on the whole simulation.
            Slower = more thinking time for a learning crew. -->
       <div class="label" style="margin-bottom:0.3rem;">Mission speed</div>

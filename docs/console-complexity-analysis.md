@@ -7,18 +7,31 @@ much each station has to *do* and *think about*, map the cross-console
 dependencies, and note balance shifts. This is a design-load analysis, not a
 verdict — the real signal comes from watching people play.
 
+> **Superseded in part (2026-07-19).** The Cruise/Officer split means the
+> per-console load below now describes **Officer**; Cruise runs a different set of
+> controls at each station (see `docs/status.md` and the `AIDS` table in
+> `game.ts`). The load figures here have not been re-measured for Cruise — the
+> lab's bot crews all run Officer, so a Cruise sweep needs a new lab profile.
+
 ## The current bridge (4 crew consoles + a captain)
 
 - **Helm** — throttle, hold-to-steer alignment, nav-gate/slipstream chasing,
-  course-hold trim, Emergency Warp. Holds the tow line steady when Weapons is
-  towing.
-- **Engineering** — the 7-point power grid across Engines / Shields / Weapons /
-  Sensors (max 4 each), breaker restores (now inline on each power row), the
-  sensor pulse, power presets. Lowest tap rate, highest decision density.
+  Emergency Warp. Holds the tow line steady when Weapons is towing.
+  *Officer* adds **Drift Trim** (null out a standing course bias by hand) and
+  **Comms** (hail an unidentified contact; only a rescue pod answers), and drops
+  the painted steering band, the lock label, and Course Hold — all of which
+  *Cruise* keeps instead.
+- **Engineering** — the power grid across Engines / Shields / Weapons / Sensors
+  (max 4 each): **7 points, nothing locked, tripped systems at half** under
+  Officer; **8 points with one locked pip per system and harmless trips** under
+  Cruise. Plus breaker restores (inline on each power row), the sensor pulse,
+  power presets. Lowest tap rate, highest decision density.
 - **Weapons** — target lock (forward-arc scope), laser recharge + governor
   (standard vs snapshot), the deflector screen (shields as a managed resource),
-  **and the tractor beam** (shares the laser emitter — you can't fire while
-  latched). The mechanical hotspot.
+  **and the tractor beam**. The mechanical hotspot — *unless* the seat is on
+  Cruise, where the CPU runs the scope and the player's job narrows to deflector
+  + tractor. The tractor has **no range limit** (the arc is the only spatial
+  constraint), so its contact list is an approach board of every acquired contact.
 - **Crew Chief** — deck-ops: commit crew to trim system wear, patch the hull,
   fight typed emergencies. **Frozen (WIP) for the current playtest** — it lags
   the other consoles in fun/usability and is disabled in the lobby (re-enable

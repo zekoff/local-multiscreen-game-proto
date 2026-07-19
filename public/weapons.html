@@ -37,6 +37,25 @@
           "deco1 deflector deco2";
       }
     }
+    /* CRUISE: the CPU owns the scope, so the Phaser Bank (fire + governor) is
+       gone entirely and the player's two remaining jobs — deflector and tractor —
+       take the space. The scope still renders: watching it is the point. */
+    main.weapons.mode-cruise #bank-panel { display: none; }
+    main.weapons.mode-cruise {
+      grid-template-areas:
+        "scope     scope"
+        "deflector tractor";
+    }
+    @media (min-width: 860px) and (min-height: 620px) {
+      main.weapons.mode-cruise {
+        grid-template-areas:
+          "scope deflector tractor"
+          "scope deco3     tractor"
+          "deco1 deco2     deco2";
+      }
+    }
+    /* Auto-track banner on the scope: states plainly that fire control is on CPU. */
+    .auto-track { color: var(--good); font-size: 0.78rem; letter-spacing: 0.08em; }
   </style>
 </head>
 <body>
@@ -51,14 +70,14 @@
     <!-- Incoming asteroid contacts: radar scope, tap a blip to target it.
          Kept the biggest element (sensor: bigger is better). -->
     <div class="panel" style="grid-area:scope; display:flex; flex-direction:column;">
-      <h2>Sensor Contacts</h2>
+      <h2>Sensor Contacts <span id="scope-mode" class="auto-track"></span></h2>
       <div id="scope-mount" style="flex:1; min-height:0; width:100%; aspect-ratio:9 / 5; margin:0 auto;"></div>
       <p id="scope-empty" style="color:var(--dim); text-align:center; margin-top:0.3rem">No contacts.</p>
       <p id="scope-target" style="text-align:center; margin-top:0.3rem"></p>
     </div>
 
     <!-- Weapon charge and fire control -->
-    <div class="panel" style="grid-area:bank">
+    <div class="panel" id="bank-panel" style="grid-area:bank">
       <h2>Phaser Bank</h2>
       <p class="label" id="wpn-power" style="margin-bottom:0.35rem"></p>
       <div class="meter" style="margin-bottom:0.55rem; position:relative"><div id="charge-bar"></div><div id="snap-tick"></div></div>
@@ -161,6 +180,7 @@
     let prevTargetId = null;
     let prevReady = false;
 
+    const consoleEl = document.querySelector('main.weapons'); // carries the mode-cruise class
     const scopeEmptyEl = document.getElementById('scope-empty');
     const scopeTargetEl = document.getElementById('scope-target');
     const fireBtn = document.getElementById('fire-btn');
@@ -184,9 +204,16 @@
         document.getElementById('wpn-temp').textContent = `${Math.round(360 + (state.charge ?? 0) * 0.85)} K`;
         renderCrew(wpnCrewEl, state, 'weapons');
         wpnLog.tick(state.missionTime ?? 0);
+        // Cruise hands the SCOPE to the CPU (the engine ignores target/fire/
+        // governor from this seat). The scope keeps rendering — situational
+        // awareness is the whole point — but it stops taking taps, and the fire
+        // control panel is hidden entirely. Deflector + tractor stay the player's.
+        const autoScope = !!(state.aids && state.aids.autoScope);
+        consoleEl.classList.toggle('mode-cruise', autoScope);
+        document.getElementById('scope-mode').textContent = autoScope ? '— AUTO-TRACK' : '';
         // The scope scene reads this on its own update loop; tapping a blip
         // calls back here with the id, same action any target-list UI would send.
-        scopeScene.onTarget = (id) => { net.action({ kind: 'target', id }); audio.tapTick(); };
+        scopeScene.onTarget = autoScope ? null : (id) => { net.action({ kind: 'target', id }); audio.tapTick(); };
         scopeScene.setState(state);
         // Weapons-local SFX: laser (from the fx stream), a lock chime when a new
         // contact is acquired, and a soft chime the moment the bank recharges.
@@ -257,13 +284,17 @@
         // Inline power readouts: Engineering's allocation shown right where it
         // matters (drives laser recharge + tractor reel, and shield regen), with
         // a NO-POWER call — no separate power panel needed on this console.
+        // A trip only halves the system under Officer; under Cruise it costs no
+        // performance, so the note must not claim otherwise (see AIDS).
+        const brkPen = state.aids ? state.aids.breakerPenalty : 0.5;
+        const tripNote = brkPen < 1 ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ' <span style="color:var(--warn)">(breaker out)</span>';
         const wp = state.power.weapons, wTrip = state.breakers.weapons;
         document.getElementById('wpn-power').innerHTML = wp > 0
-          ? `Weapon power <b style="color:var(--accent)">${wp}</b>${wTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — drives recharge + tractor`
+          ? `Weapon power <b style="color:var(--accent)">${wp}</b>${wTrip ? tripNote : ''} — drives recharge + tractor`
           : '<b style="color:var(--bad)">NO WEAPON POWER</b> — ask Engineering';
         const sp = state.power.shields, sTrip = state.breakers.shields;
         document.getElementById('shd-power').innerHTML = sp > 0
-          ? `Shield power <b style="color:var(--accent)">${sp}</b>${sTrip ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ''} — regen rate`
+          ? `Shield power <b style="color:var(--accent)">${sp}</b>${sTrip ? tripNote : ''} — regen rate`
           : '<b style="color:var(--bad)">NO SHIELD POWER</b> — regen stalled';
       },
     });
@@ -333,7 +364,9 @@
         'The scope is a <b>forward arc</b> out the front window — contacts sit where they are relative to your bow (port ↔ starboard) and slide toward you as they close. <b>Tap a blip</b> to target it, then <b>FIRE</b> when charged. Shots always hit.',
         '<b>Fire Mode</b>: STANDARD waits for a full charge and full damage. <b>SNAPSHOT</b> fires at 40% and cracks <b>most</b> rocks fast — but a genuinely <b>big</b> rock shrugs it off and needs a full shot. You can\'t tell size on the scope; the <b>captain</b> calls the big ones from the viewscreen. The gauge tick shows when a snapshot is ready.',
         'Contacts read <b>UNKNOWN</b> until sensors identify them. A <b>RESCUE POD</b> looks like a rock at range — <b>never fire on a pod</b> (the console will refuse it). Confirm before you shoot.',
-        'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> is managed right here alongside the laser: latch a pod/salvage in the arc to reel it in. It runs <b>independently — you can tow AND fire</b>. Weapon power drives both.',
+        'The laser <b>recharges faster with more weapon power</b>. The <b>tractor beam</b> is managed right here alongside the laser and runs <b>independently — you can tow AND fire</b>. Weapon power drives both.',
+        'The tractor has <b>no range limit</b> — it reaches as far as sensors do, so the contact list shows <b>everything acquired</b>, nearest first. Rows you can\'t latch yet are greyed with the reason and go live as sensors resolve them. What you DO have to manage is the <b>arc</b>: the contact must be within about 60° of the bow, so ask the <b>helm</b> to bring the nose around and hold the line.',
+        'On <b>Cruise</b> the computer runs the scope — targeting and firing are automatic (the panel reads AUTO-TRACK) and your job is the <b>deflector screen</b> and the <b>tractor beam</b>. On <b>Officer</b> you run all of it.',
         'The <b>deflector screen</b> blocks damage but drains while up, and only recharges while down.',
         'The <b>captain</b> reads speed and threat on the main screen and calls priorities.',
       ],

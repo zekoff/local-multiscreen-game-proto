@@ -4,10 +4,24 @@
 // progress persists across releases (partial ring), and alignment is forgiving —
 // the helm can swing within a wide arc, closer = faster. Built on the portable
 // widget abstraction so it can be re-homed later.
+//
+// The beam has NO distance limit: it reaches as far as sensors do, so this list
+// shows every ACQUIRED contact — an approach board, not a menu that pops into
+// existence. Rows that can't be latched yet are shown disabled with the reason,
+// and go live the moment sensors resolve them. That matters most under Cruise,
+// where the CPU owns the scope and this is the gunner's main contact readout.
 
 import { defineWidget, el } from '../widget.js';
 
 const KIND_ICON = { pod: 'POD', mineral: 'ORE', rock: 'ROCK', ghost: '?', unknown: '·' };
+
+// Why a contact can't be latched right now (null = it can). The engine enforces
+// all of this too — this is just the console explaining itself.
+function blockReason(c) {
+  if (!c.identified) return 'unidentified';
+  if (c.kind !== 'pod' && c.kind !== 'mineral') return 'not towable';
+  return null;
+}
 
 export const towBeam = defineWidget({
   id: 'tow-beam',
@@ -55,12 +69,18 @@ export const towBeam = defineWidget({
 
     return {
       render(state) {
-        const t = state.tractor || { power: 0, latched: false, reel: 0, targetId: null, range: 9 };
+        const t = state.tractor || { power: 0, latched: false, reel: 0, targetId: null, arc: 60, offset: 0 };
         latched = t.latched;
         selectedId = intents && intents.get('tractor-target') !== undefined ? intents.get('tractor-target') : t.targetId;
         const powered = t.power >= 1;
+        // The ARC is the constraint the gunner actually manages now (with the
+        // helm) — there's no range to read out, so show the bow offset instead.
+        const arc = t.arc || 60;
+        const inArc = selectedId !== null && (t.offset || 0) <= arc;
         status.innerHTML = powered
-          ? `Beam power <b style="color:var(--accent)">${t.power.toFixed(1)}</b> · range ${t.range}s`
+          ? `Beam power <b style="color:var(--accent)">${t.power.toFixed(1)}</b>` + (selectedId !== null
+              ? ` · bow ${t.offset || 0}° / ${arc}° <b style="color:${inArc ? 'var(--good)' : 'var(--bad)'}">${inArc ? 'IN ARC' : 'OUT OF ARC'}</b>`
+              : ' · unlimited reach')
           : `<b style="color:var(--bad)">NO BEAM POWER</b> — ask Engineering for WEAPONS power`;
 
         // Show the reel ring whenever there's progress (latched OR a held partial
@@ -69,8 +89,11 @@ export const towBeam = defineWidget({
         reelWrap.style.display = (latched || reel > 0) ? '' : 'none';
         reelFill.style.width = `${Math.round(reel * 100)}%`;
 
-        // Candidate list: identified pods/minerals in range (state flags them).
-        const cands = (state.asteroids || []).filter((a) => a.tractorable);
+        // Candidate list: EVERY acquired contact, nearest first. Latchable ones
+        // are live; the rest sit disabled with their reason.
+        const cands = (state.asteroids || [])
+          .filter((a) => a.targetable)
+          .sort((a, b) => a.impactIn - b.impactIn);
         if (latched) {
           list.innerHTML = '';
           const held = (state.asteroids || []).find((a) => a.id === t.targetId);
@@ -83,19 +106,27 @@ export const towBeam = defineWidget({
           latchBtn.textContent = reel > 0 ? 'Re-latch Beam' : 'Latch Beam';
           latchBtn.classList.add('primary');
           latchBtn.classList.remove('danger');
-          latchBtn.disabled = !powered || selectedId === null;
-          // Rebuild candidate buttons.
-          const ids = cands.map((c) => c.id).join(',');
+          // Only a latchable selection can arm the button.
+          const selected = cands.find((c) => c.id === selectedId);
+          latchBtn.disabled = !powered || !selected || blockReason(selected) !== null;
+          // Rebuild candidate buttons. The key carries each row's BLOCKED state
+          // as well as its id — otherwise a row that becomes latchable (sensors
+          // just resolved it) would keep its stale disabled rendering.
+          const ids = cands.map((c) => `${c.id}:${blockReason(c) || 'ok'}`).join(',');
           if (list.dataset.ids !== ids) {
             list.dataset.ids = ids;
             list.innerHTML = '';
             if (cands.length === 0) {
-              list.appendChild(el('div', 'label', 'No pods or salvage in tractor range.'));
+              list.appendChild(el('div', 'label', 'No contacts on sensors.'));
             } else {
               for (const c of cands) {
+                const why = blockReason(c);
                 const b = el('button', 'target-btn');
                 b.dataset.id = c.id;
-                b.innerHTML = `<span>${KIND_ICON[c.kind] || '·'} ${c.label}</span><span class="eta">${c.impactIn.toFixed(0)}s · m${c.mass}</span>`;
+                b.disabled = why !== null;
+                // Blocked rows read out WHY instead of the mass they'd tow.
+                const right = why ? why : `m${c.mass}`;
+                b.innerHTML = `<span>${KIND_ICON[c.kind] || '·'} ${c.label}</span><span class="eta">${c.impactIn.toFixed(0)}s · ${right}</span>`;
                 list.appendChild(b);
               }
             }

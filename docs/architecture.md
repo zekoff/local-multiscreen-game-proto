@@ -127,12 +127,26 @@ logic without a browser.
     baseline mission, and a human at any console is meaningfully better —
     including a human engineer, whose weapon-power pumping shortens the bot
     gunner's recharge wait. This makes any subset of stations playable.
+    The bot logic is split into `autoShieldDoctrine()` / `autoGunner(cs, over)` /
+    `autoTow()`, called in that fixed order; `autoGunner` takes bot quality as
+    arguments so a **manned Cruise weapons seat** can run it at maximum strength
+    while its player keeps the deflector and tractor.
+  - *Per-seat difficulty:* `AIDS[difficulty]` (top of `game.ts`) is the single
+    table declaring what each mode changes — CPU scope on weapons, the power pool
+    / locked floor / breaker penalty on engineering, which steering controls the
+    helm has, the drift profile, and the per-seat event-rate multipliers. Read via
+    `aids(seat)`; serialized under `aids` so clients render the mode. Cruise
+    withdraws its rate discount where a structural aid already replaces the work
+    (engineering, weapons) and keeps it where the aid is only visual (helm).
 - **Actions** — validated per seat in `action(seat, a)`; a helm client cannot
   send engineering actions. Auto-assist uses the same internal code paths as
   human actions (e.g. `fire()`), so behavior is identical.
-- **Interdependence** (the coordination engine): engineering allocates **7
-  power units across four systems** (engines, shields, weapons, **sensors**;
-  max 4 each), and tripped breakers halve a system until reset. Breakers trip
+- **Interdependence** (the coordination engine): engineering allocates a pool of
+  **power units across four systems** (engines, shields, weapons, **sensors**;
+  max 4 each) — **7 under Officer, 8 under Cruise with one pip locked on per
+  system** (`powerTotal`/`powerFloor` in `AIDS`). A tripped breaker halves the
+  system under Officer and costs nothing under Cruise (`breakerPenalty`), but
+  always needs the reset gesture either way. Breakers trip
   mainly when a rock hits the hull (fully-shielded hits don't trip anything);
   the ambient random-trip timer is a rarer background pressure. Each system is
   a live tradeoff:

@@ -239,6 +239,11 @@ select {
 /* Allocated to a system whose breaker is tripped: still spoken for, running
    at half effect — outlined in the accent but hollow, not filled. */
 .pip.tripped { background: transparent; border: 2px solid var(--accent); opacity: 0.75; }
+/* A LOCKED pip (Cruise): permanently allocated, can't be pulled back. Reads as
+   part of the chassis rather than part of the budget — inset and desaturated, so
+   the engineer's eye goes to the pips they can actually move. */
+.pip.locked { background: #4a5568; border-color: #5a6478; box-shadow: inset 0 2px 4px rgba(0,0,0,0.45); }
+.pip.locked.on { background: #7d8db3; border-color: #7d8db3; }
 
 /* --- Governor toggle (weapons) --- */
 .gov-btn { font-size: 0.9rem; }
@@ -249,6 +254,16 @@ select {
 .target-btn.selected { border-color: var(--accent); background: #2a2010; }
 .target-btn .eta { font-family: monospace; }
 .target-btn .eta.urgent { color: var(--bad); }
+/* A contact that's acquired but not yet latchable: present on the board, plainly
+   inert, with its reason in the right-hand slot. It goes live in place. */
+.target-btn:disabled { opacity: 0.45; }
+.target-btn:disabled .eta { color: var(--dim); font-style: italic; }
+/* The list lives in a narrow column, and a blocked row carries a longer
+   right-hand label ("not towable") than a live one ("m2") — keep both halves on
+   one line each rather than letting them wrap into each other. */
+.tractor-candidates .target-btn { gap: 0.5rem; font-size: 0.88rem; align-items: baseline; }
+.tractor-candidates .target-btn > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tractor-candidates .target-btn .eta { white-space: nowrap; font-size: 0.8rem; }
 
 /* --- Crew Chief: tractor / cargo / damage control --- */
 .tractor-status { font-size: 0.95rem; margin-bottom: 0.6rem; }

@@ -196,7 +196,13 @@
     // weapons scope; the tractor now draws from WEAPONS power (shared emitter).
     const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors'];
     const POWER_MAX = 4;
-    const POWER_TOTAL = 7; // keep in sync with POWER_TOTAL in src/engine/game.ts
+    // Pool size, the per-system locked floor, and what a tripped breaker costs
+    // are all per-difficulty now (see AIDS in src/engine/game.ts) and arrive on
+    // every snapshot. Officer: 7 units, nothing locked, a trip halves the system.
+    // Cruise: 8 units with one locked pip each, and a trip costs no function.
+    let powerTotal = 7;
+    let powerFloor = 0;
+    let breakerPenalty = 0.5;
 
     // Build each power row once; render() updates state. The row holds BOTH the
     // pip controls (− on the LEFT, then label+pips, then +) and its breaker
@@ -244,14 +250,25 @@
     // on every snapshot AND directly from the +/- click handler so a tap
     // lands visually before the next broadcast.
     function paintPips(sys) {
+      // A trip only DEGRADES the system when the profile says it does. Under
+      // Cruise the pips stay solid (the system is still running at full strength;
+      // the trip is a job to clear, not a penalty), which is the aid made visible.
+      const degrades = breakerPenalty < 1;
       const tripped = intents.has(`brk-${sys}`) ? false : lastBreakers[sys];
+      const shown = shownPower(sys);
       const pips = document.querySelectorAll(`#pips-${sys} .pip`);
       pips.forEach((p, i) => {
-        p.classList.toggle('on', !tripped && i < shownPower(sys));
-        p.classList.toggle('tripped', tripped && i < shownPower(sys));
+        p.classList.toggle('on', !(tripped && degrades) && i < shown);
+        p.classList.toggle('tripped', tripped && degrades && i < shown);
+        // The locked pips can't be removed — mark them so "you can't take this
+        // one back" is legible from the row itself.
+        p.classList.toggle('locked', i < powerFloor);
       });
+      // The minus button dies at the floor rather than silently refusing.
+      const minus = document.querySelector(`.pwr-btn[data-sys="${sys}"][data-delta="-1"]`);
+      if (minus) minus.disabled = shown <= powerFloor;
       const used = SYSTEMS.reduce((sum, s) => sum + shownPower(s), 0);
-      document.getElementById('power-free').textContent = `${POWER_TOTAL - used} spare`;
+      document.getElementById('power-free').textContent = `${powerTotal - used} spare`;
     }
 
     const net = initStation({
@@ -266,8 +283,13 @@
         // half), real readouts, bridge status, ambient log.
         {
           const p = state.power, b = state.breakers;
-          const eff = SYSTEMS.reduce((s, k) => s + p[k] * (b[k] ? 0.5 : 1), 0);
-          const load = Math.round((eff / 7) * 100);
+          // Mirrors eff() in src/engine/game.ts — including the per-mode breaker
+          // penalty, so under Cruise (where a trip costs nothing) the bus load
+          // line correctly doesn't dip when a breaker goes.
+          const pen = state.aids ? state.aids.breakerPenalty : 0.5;
+          const pool = state.aids ? state.aids.powerTotal : 7;
+          const eff = SYSTEMS.reduce((s, k) => s + p[k] * (b[k] ? pen : 1), 0);
+          const load = Math.round((eff / pool) * 100);
           // Traces: real bus load + real drive+sensor draw + synthetic core temp / flux.
           engGraph(load, Math.round(((p.engines + p.sensors) / 8) * 100), engCoreTemp(), engFlux());
           document.getElementById('eng-load').textContent = `${load}%`;
@@ -276,6 +298,12 @@
           engLog.tick(state.missionTime ?? 0);
         }
         renderDamageControl(state);
+        // Pool / floor / breaker cost come from this seat's aid profile.
+        if (state.aids) {
+          powerTotal = state.aids.powerTotal ?? powerTotal;
+          powerFloor = state.aids.powerFloor ?? powerFloor;
+          breakerPenalty = state.aids.breakerPenalty ?? breakerPenalty;
+        }
         lastPower = state.power;
         for (const sys of SYSTEMS) {
           lastBreakers[sys] = !!state.breakers[sys];
@@ -292,6 +320,14 @@
           prevBreakers[sys] = tripped;
           // The row shows its breaker restore (in place of the pip controls) while tripped.
           document.getElementById(`row-${sys}`).classList.toggle('tripped', tripped);
+          // The consequence differs by mode, so the tripped label has to as well:
+          // Officer loses half the system, Cruise just owes a reset.
+          if (tripped) {
+            const label = document.querySelector(`#brk-${sys} .brk-label`);
+            if (label) label.textContent = breakerPenalty < 1
+              ? `${sys}: TRIPPED — HALF POWER`
+              : `${sys}: TRIPPED — RESET REQUIRED`;
+          }
         }
         // Sensors: current detection range + pulse cooldown. An ion storm
         // halves the range — flag it loudly, this console owns the response.
@@ -407,9 +443,10 @@
           <text x="264" y="80" fill="#7d8db3" text-anchor="middle">2. TAP ×3 = FIXED</text>
         </svg>`,
       lines: [
-        'You have <b>7 power points</b> across four systems (max 4 each). Moving them is your main job.',
+        'You have a pool of <b>power points</b> to split across four systems (max 4 each). Moving them is your main job — the header shows how many are <b>spare</b>.',
         '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate (and it feeds the tractor beam). <b>Sensors</b> = how early contacts are detected AND identified. <b>Shields</b> = shield recharge (only while lowered).',
-        '<b>Breakers</b> trip when rocks hit the hull. When a system trips, its power row turns into the restore control — slide to arm, then tap 3 times. A tripped system runs at half power until restored.',
+        '<b>Breakers</b> trip when rocks hit the hull. When a system trips, its power row turns into the restore control — slide to arm, then tap 3 times.',
+        'On <b>Officer</b> you hold <b>7 points</b>, nothing is locked, and a tripped system runs at <b>half power</b> until you restore it. On <b>Cruise</b> you hold <b>8</b> with <b>one pip locked on per system</b> (greyed — it can\'t be pulled back, so nothing ever goes dark), and a trip costs you <b>no performance at all</b>: it still needs clearing, but the system keeps running while it\'s down.',
         'The <b>Sensor Pulse</b> reveals AND identifies every contact at once and cuts through ion storms (long cooldown).',
         '<b>Damage Control</b>: if the hull drops <b>below 50%</b>, hull breaches open. Tap <b>Deploy Nanites</b>, then <b>HOLD Seal Breach</b> — each nanite bond that completes patches the hull a chunk (~1%/s). It costs no power, but you can\'t balance systems while you\'re holding it, and it only pulls you back to 50% (not to full).',
         '<b>Save/Load Preset</b> stashes a power split (e.g. a combat setup) so you can snap back to it in one tap.',
@@ -430,11 +467,14 @@
       // it. Block the +tap entirely when there's no spare (per-system cap is
       // checked below). The server stays authoritative; this is purely UI.
       const used = SYSTEMS.reduce((sum, s) => sum + shownPower(s), 0);
-      if (delta > 0 && used >= POWER_TOTAL) return;
+      if (delta > 0 && used >= powerTotal) return;
+      // Same guard at the floor: a locked pip must not flicker off before the
+      // server refuses the removal.
+      if (delta < 0 && shownPower(sys) <= powerFloor) return;
       net.action({ kind: 'power', system: sys, delta });
       audio.powerClick();
       const next = shownPower(sys) + delta;
-      if (next >= 0 && next <= POWER_MAX) {
+      if (next >= powerFloor && next <= POWER_MAX) {
         intents.set(`power-${sys}`, next, (s) => s.power[sys] === next);
         paintPips(sys); // land the tap visually before the next broadcast
       }

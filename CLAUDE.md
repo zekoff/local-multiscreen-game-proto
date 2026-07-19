@@ -122,10 +122,25 @@ cloud-migration design; the standalone migration doc was pruned).
   (each page consumes only its own `fx` kinds via `public/js/fx-audio.js`).
 - Actions are validated per seat; never let one station's client mutate
   another station's controls.
-- Per-role difficulty must stay a *parameter* (multiplier), not a separate
-  code path; that's a core design pillar (see `docs/design/02-architecture.md`).
-  The same rule applies to mission tuning (MissionDef knobs) and, later,
-  persistent-ship upgrades (see `docs/design/07-persistence.md`).
+- Per-role difficulty must stay a *parameter*, not a separate code path; that's a
+  core design pillar (see `docs/design/02-architecture.md`). Concretely: every
+  Cruise-vs-Officer difference lives in the **`AIDS` table** at the top of
+  `game.ts` and is read through `aids(seat)` at the touch points — there is no
+  `if (difficulty === 'cruise')` anywhere in the engine, and new mode differences
+  must be added as a **field on that table**, never as a branch. The resolved
+  profile is serialized under `aids` so clients render the mode rather than
+  re-deriving its rules (engineering reads `powerTotal`/`powerFloor`/
+  `breakerPenalty`; helm reads `steerAids`/`courseHold`/`driftTrim`/`comms`;
+  weapons reads `autoScope`). Cruise is not "the same console, slower" — it hands
+  the weapons scope to the CPU, locks a power pip per system on a bigger pool, and
+  makes tripped breakers cost no function. The same parameter rule applies to
+  mission tuning (MissionDef knobs) and, later, persistent-ship upgrades
+  (see `docs/design/07-persistence.md`).
+- The auto-assist bots ARE the regression suite. `autoShieldDoctrine()` /
+  `autoGunner(cs, over)` / `autoTow()` are called in that order from `tick()`;
+  re-ordering them or letting them read bot quality off `this.crewSkill` instead
+  of their arguments silently moves the balance baseline that smoke and lab are
+  pinned to. `autoGunner` is the one a *manned* Cruise weapons seat also runs.
 - Mission outcomes are non-binary by design — don't collapse the debrief
   scoring to win/lose.
 - The debrief record must stay self-contained (mission, seed, crew
