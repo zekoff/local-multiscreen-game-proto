@@ -51,6 +51,19 @@ class SpaceScene extends Phaser.Scene {
     this.stationPos = null;     // last-drawn station screen pos {x,y,r} (docking target)
     this.dockers = [];          // decorative ships docking into a background station
     this.dockTimer = 0;
+    // Per-mission procedural backdrop (sun, ringed planet, capital ships,
+    // comets, buoys), rebuilt when the mission changes; seeded for stability.
+    this.backdropKey = '';
+    this.backdrop = null;
+    // In-scene mission title card (fades in/out once per run).
+    this.titleFor = null;
+    this.titleStart = null;
+    // Localized shield-hit ripples { x, y, t } on the bow arc.
+    this.shieldRipples = [];
+    this.prevShieldFlash = 0;
+    this.contactPool = [];      // reusable {img, glow} for contact pooling
+    this.gradeColor = 0x000000; // per-mission color-grade tint
+    this.gradeAlpha = 0;
   }
 
   preload() {
@@ -81,15 +94,23 @@ class SpaceScene extends Phaser.Scene {
 
     // Graphics layers (immediate-mode, cleared+redrawn each frame), depth-ordered
     // to roughly match the canvas draw order. Additive layers give the glow read.
+    this.gBack = this.add.graphics().setDepth(-2);   // procedural backdrop (sun/planet/ships/comets)
+    this.gBackAdd = this.add.graphics().setDepth(-1).setBlendMode(Phaser.BlendModes.ADD); // sun glow / comet tails
     this.gStars = this.add.graphics().setDepth(0);
     this.gGates = this.add.graphics().setDepth(5);   // gates + obstacles (behind bodies)
-    this.gRings = this.add.graphics().setDepth(14);  // range/threat rings + tractor
-    this.gAdd = this.add.graphics().setDepth(16).setBlendMode(Phaser.BlendModes.ADD); // lasers, slipstream, explosion glow
-    this.gWash = this.add.graphics().setDepth(30);   // full-screen flashes / vignette / shield arc / blackout
+    this.gRings = this.add.graphics().setDepth(14);  // range/threat rings + tractor + target brackets
+    this.gAdd = this.add.graphics().setDepth(16).setBlendMode(Phaser.BlendModes.ADD); // lasers, slipstream, explosion glow, muzzle
+    this.gWash = this.add.graphics().setDepth(30);   // full-screen flashes / vignette / shield arc / blackout / grade
 
     // Destination body (station/planet) with an additive glow behind it.
     this.destGlow = this.add.image(0, 0, 'glow').setDepth(6).setBlendMode(Phaser.BlendModes.ADD).setVisible(false);
     this.destImg = this.add.image(0, 0, 'station').setDepth(7).setVisible(false);
+
+    // In-scene mission title card (mission name + arrival), fades in/out at start.
+    this.titleText = this.add.text(0, 0, '', { fontFamily: 'system-ui, sans-serif', fontStyle: '700', align: 'center' })
+      .setOrigin(0.5, 0.5).setDepth(28).setResolution(Math.min(3, window.devicePixelRatio || 1)).setVisible(false);
+    this.titleSub = this.add.text(0, 0, '', { fontFamily: 'monospace', align: 'center' })
+      .setOrigin(0.5, 0.5).setDepth(28).setResolution(Math.min(3, window.devicePixelRatio || 1)).setVisible(false);
 
     // Starfield + debris in normalized perspective coords (same math as canvas).
     this.stars = Array.from({ length: STAR_COUNT }, () => this.resetStar({}, true));
@@ -105,9 +126,11 @@ class SpaceScene extends Phaser.Scene {
       if (typeof cam.enableFilters === 'function') cam.enableFilters();
       const fl = cam.filters?.internal;
       if (fl?.addGlow) fl.addGlow(0xffffff, 1.1, 0, 1, false);
+      // Subtle barrel/lens distortion (a viewport "port glass" curve) — modulated
+      // up with speed and damage in update() for a lens/chromatic feel.
+      if (fl?.addBarrel) this.barrel = fl.addBarrel(1.04);
       if (fl?.addVignette) fl.addVignette(0.5, 0.5, 0.9, 0.35);
     } catch { /* Filter API unavailable in this Phaser build — additive blend still glows */ }
-
   }
 
   // Zoom the camera by dpr so the scene authors in CSS px while the backing
@@ -217,8 +240,14 @@ class SpaceScene extends Phaser.Scene {
     this.gRings.clear();
     this.gAdd.clear();
     this.gWash.clear();
+    this.gBack.clear();
+    this.gBackAdd.clear();
     this.beginTexts();
 
+    this.updateGrade(latest, active);            // per-mission color-grade tint
+    this.updateBarrel(normSpeed, fx.hullFlash);  // lens distortion up with speed/damage
+    if (this.gradeAlpha > 0) this.fullRect(this.gWash, this.gradeColor, this.gradeAlpha, w, h);
+    this.drawBackdrop(latest, dt, w, h, yawPx, active); // procedural sun/planet/ships/comets/buoys
     this.drawNebula(latest, w, h, yawPx);
     this.drawStars(dt, cx, cy, projScale, normSpeed, w, h);
 
@@ -252,8 +281,11 @@ class SpaceScene extends Phaser.Scene {
       if (latest.viewImpaired) this.drawBlackout(w, h);
       if (slipstream) this.drawSlipstream(w, h);
     }
+    if (active) this.updateShieldRipples(latest, dt, w, h); // localized bow shield-hit ripples
     this.drawGateFlash(w, h);
     this.drawFlashes(w, h);
+    this.drawWarpTunnel(w, h, cx, cy); // radial streak tunnel during an emergency warp
+    this.drawTitleCard(latest, w, h, time, active); // in-scene mission intro card
     // Arrival cinematic: ramp the whole viewscreen to black as the ship dollies
     // into the station — kept drawing through the debrief hand-off so it stays
     // dark under the debrief overlay.
@@ -267,6 +299,160 @@ class SpaceScene extends Phaser.Scene {
     if (alpha <= 0) return;
     g.fillStyle(colorInt, alpha);
     g.fillRect(-w, -h, w * 3, h * 3);
+  }
+
+  // --- Per-mission color grade: a subtle full-screen tint (Europa cold blue, a
+  // planet destination warmer) drawn as a low-alpha wash each frame. -------
+  updateGrade(latest, active) {
+    if (!active || !latest?.mission) { this.gradeAlpha = 0; return; }
+    const id = latest.mission.id || '';
+    const dest = latest.mission.destination;
+    if (id.startsWith('gen:europa')) { this.gradeColor = 0x2a4a80; this.gradeAlpha = 0.11; }
+    else if (dest?.kind === 'planet') { this.gradeColor = 0x7a5a2a; this.gradeAlpha = 0.06; }
+    else { this.gradeColor = 0x2f4a72; this.gradeAlpha = 0.05; }
+  }
+
+  // Lens/barrel distortion: a touch more curve at speed, a brief punch on a hull
+  // hit (a lens-shock / chromatic feel).
+  updateBarrel(normSpeed, hullFlash) {
+    if (!this.barrel) return;
+    const amt = 1.03 + normSpeed * 0.05 + Math.min(0.12, hullFlash * 0.18);
+    try { this.barrel.amount = amt; } catch { /* controller shape differs in this build */ }
+  }
+
+  // --- Procedural backdrop: a small coherent set of distant objects chosen +
+  // placed per mission (seeded, stable), in reasonable far-away proportions. --
+  seededScene(id) {
+    let h = 2166136261 >>> 0;
+    for (const c of id) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+    const rand = () => { h = (h * 1664525 + 1013904223) >>> 0; return h / 2 ** 32; };
+    const cold = id.startsWith('gen:europa');
+    const s = {};
+    s.sun = { x: 0.1 + rand() * 0.8, y: 0.07 + rand() * 0.2, r: 9 + rand() * 7,
+      col: cold ? [200, 224, 255] : [255, 236, 200], depth: 0.12 };
+    if (rand() > 0.35) s.world = { x: 0.12 + rand() * 0.76, y: 0.12 + rand() * 0.28,
+      r: 24 + rand() * 30, ringed: rand() > 0.45, key: `planet${Math.floor(rand() * 3)}`, depth: 0.22 };
+    s.comets = Array.from({ length: Math.floor(rand() * 2.6) }, () => ({
+      y: 0.1 + rand() * 0.5, speed: (0.02 + rand() * 0.03) * (rand() < 0.5 ? -1 : 1),
+      phase: rand(), len: 26 + rand() * 34, col: cold ? [180, 220, 255] : [255, 230, 200] }));
+    s.caps = Array.from({ length: Math.floor(rand() * 2.4) }, () => ({
+      y: 0.14 + rand() * 0.38, speed: (0.008 + rand() * 0.012) * (rand() < 0.5 ? -1 : 1),
+      phase: rand(), len: 30 + rand() * 24, col: ['#9fb4e0', '#c8a882', '#8fd6ff'][Math.floor(rand() * 3)] }));
+    return s;
+  }
+
+  drawBackdrop(latest, dt, w, h, yawPx, active) {
+    const id = active ? latest?.mission?.id : null;
+    if (!id) { if (this.worldImg) this.worldImg.setVisible(false); return; }
+    if (id !== this.backdropKey) { this.backdropKey = id; this.backdrop = this.seededScene(id); }
+    const s = this.backdrop; if (!s) return;
+    const g = this.gBack, ga = this.gBackAdd, tNow = performance.now() / 1000;
+    const c3 = (a) => Phaser.Display.Color.GetColor(a[0], a[1], a[2]);
+
+    // Sun: bright core + additive glow + faint flare cross.
+    const sun = s.sun, sx = sun.x * w + yawPx * sun.depth, sy = sun.y * h, sc = c3(sun.col);
+    ga.fillStyle(sc, 0.5); ga.fillCircle(sx, sy, sun.r * 0.8);
+    ga.fillStyle(sc, 0.12); ga.fillCircle(sx, sy, sun.r * 3.2);
+    ga.lineStyle(1, sc, 0.22);
+    ga.lineBetween(sx - sun.r * 4, sy, sx + sun.r * 4, sy);
+    ga.lineBetween(sx, sy - sun.r * 3, sx, sy + sun.r * 3);
+
+    // A distant world (planet sprite) with an optional ring.
+    if (s.world) {
+      const wx = s.world.x * w + yawPx * s.world.depth, wy = s.world.y * h, r = s.world.r;
+      if (!this.worldImg) this.worldImg = this.add.image(0, 0, s.world.key).setDepth(-2);
+      this.worldImg.setTexture(s.world.key).setVisible(true).setPosition(wx, wy).setDisplaySize(r * 2, r * 2).setAlpha(0.85);
+      if (s.world.ringed) { g.lineStyle(2, 0xb9c6e0, 0.45); g.strokeEllipse(wx, wy, r * 3, r * 0.8); }
+    } else if (this.worldImg) this.worldImg.setVisible(false);
+
+    // Comets: a bright head + additive tail drifting across.
+    for (const cm of s.comets) {
+      const x = (((cm.phase + cm.speed * tNow) % 1.2) + 1.2) % 1.2 * w, y = cm.y * h, dir = cm.speed > 0 ? -1 : 1;
+      ga.lineStyle(1.5, c3(cm.col), 0.45);
+      ga.lineBetween(x, y, x + dir * cm.len, y - cm.len * 0.14);
+      ga.fillStyle(0xffffff, 0.8); ga.fillCircle(x, y, 1.6);
+    }
+
+    // Capital ships: elongated dark hulls with a running light, far off.
+    for (const cap of s.caps) {
+      const x = (((cap.phase + cap.speed * tNow) % 1) + 1) % 1 * w + yawPx * 0.18, y = cap.y * h;
+      g.fillStyle(0x0e1626, 0.9); g.fillRect(x, y, cap.len, 4);
+      g.fillStyle(hexInt(cap.col), 0.55); g.fillRect(x, y + 1, cap.len, 1.4);
+      const blink = 0.4 + 0.6 * ((Math.sin(tNow * 2 + cap.phase * 7) + 1) / 2);
+      ga.fillStyle(0xbfe0ff, blink); ga.fillRect(x + (cap.speed > 0 ? cap.len : -1.5), y, 1.6, 1.6);
+    }
+
+    // Buoys near a background station: a couple of blinking marker lights.
+    if (this.stationPos && latest.mission?.destination?.kind === 'station') {
+      const st = this.stationPos;
+      for (let i = 0; i < 2; i++) {
+        const a = tNow * 0.3 + i * Math.PI;
+        const bx = st.x + Math.cos(a) * st.r * 2.4, by = st.y + Math.sin(a) * st.r * 1.2;
+        const blink = (Math.sin(tNow * 3 + i * 2) + 1) / 2;
+        ga.fillStyle(0x6ad39a, 0.3 + blink * 0.5); ga.fillCircle(bx, by, 1.5);
+      }
+    }
+  }
+
+  // Localized bow shield-hit ripple: on an ABSORBED impact (shieldFlash rising
+  // edge) a bright ring expands on the shield arc at the nearest contact's bearing.
+  updateShieldRipples(latest, dt, w, h) {
+    if (fx.shieldFlash > this.prevShieldFlash + 0.2) {
+      const near = (latest.asteroids || []).filter((a) => a.targetable).sort((a, b) => a.impactIn - b.impactIn)[0];
+      const b = near ? Phaser.Math.Clamp((near.bearing - displayAlignment()) / 100, -1, 1) : 0;
+      this.shieldRipples.push({ b, t: 0 });
+      if (this.shieldRipples.length > 4) this.shieldRipples.shift();
+    }
+    this.prevShieldFlash = fx.shieldFlash;
+    if (!latest.shields?.raised) { this.shieldRipples.length = 0; return; }
+    const cxs = w / 2, cys = h * 1.18, rad = h * 0.62, g = this.gWash;
+    for (let i = this.shieldRipples.length - 1; i >= 0; i--) {
+      const rp = this.shieldRipples[i];
+      rp.t += dt / 0.5;
+      if (rp.t >= 1) { this.shieldRipples.splice(i, 1); continue; }
+      const ang = -Math.PI / 2 + rp.b * 0.5 * Math.PI;
+      const px = cxs + Math.cos(ang) * rad, py = cys + Math.sin(ang) * rad;
+      g.lineStyle(2.5 * (1 - rp.t), 0xbfe4ff, (1 - rp.t) * 0.8);
+      g.strokeCircle(px, py, 6 + rp.t * 34);
+    }
+  }
+
+  // Emergency-warp jump tunnel: radial white streaks rush outward into the
+  // white-out (drawn additively during warpFlash).
+  drawWarpTunnel(w, h, cx, cy) {
+    if (fx.warpFlash <= 0.02) return;
+    const k = fx.warpFlash, g = this.gAdd, n = 26, now = performance.now() / 1000;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + now;
+      const r0 = Math.min(w, h) * (0.05 + (1 - k) * 0.3);
+      const r1 = r0 + Math.min(w, h) * 0.5 * k;
+      g.lineStyle(1 + k * 2, 0xdfeeff, k * 0.7);
+      g.lineBetween(w / 2 + Math.cos(a) * r0, h / 2 + Math.sin(a) * r0, w / 2 + Math.cos(a) * r1, h / 2 + Math.sin(a) * r1);
+    }
+  }
+
+  // In-scene mission intro title card: the mission name + destination fades in
+  // then out over the first ~5s of a run.
+  drawTitleCard(latest, w, h, time, active) {
+    if (!active || !latest.mission) {
+      this.titleFor = null; this.titleStart = null;
+      this.titleText.setVisible(false); this.titleSub.setVisible(false);
+      return;
+    }
+    if (this.titleFor !== latest.mission.id) {
+      this.titleFor = latest.mission.id;
+      this.titleStart = time;
+      this.titleText.setText((latest.mission.name || 'MISSION').toUpperCase());
+      this.titleSub.setText(latest.mission.arrivalName ? `→ ${latest.mission.arrivalName.toUpperCase()}` : '');
+    }
+    const e = (time - this.titleStart) / 1000;
+    let a = 0;
+    if (e < 0.8) a = e / 0.8; else if (e < 3.5) a = 1; else if (e < 5) a = 1 - (e - 3.5) / 1.5;
+    const vis = a > 0.01;
+    this.titleText.setVisible(vis).setAlpha(a).setPosition(w / 2, h * 0.42)
+      .setFontSize(Math.round(Math.min(46, w * 0.06))).setColor('#eaf2ff');
+    this.titleSub.setVisible(vis).setAlpha(a * 0.85).setPosition(w / 2, h * 0.42 + 34)
+      .setFontSize(15).setColor('#8fb4e0');
   }
 
   drawNebula(latest, w, h, yawPx) {
@@ -377,6 +563,14 @@ class SpaceScene extends Phaser.Scene {
       this.destImg.setTint(hexInt(colorHex));
       this.destImg.setVisible(true).setPosition(px, py).setDisplaySize(r * 2.6, r * 2.6)
         .setRotation((performance.now() / 6000) % (Math.PI * 2));
+      // Docking approach: the station's lights power up as the ship arrives.
+      if (arr > 0) {
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2 + performance.now() / 2000;
+          this.gAdd.fillStyle(0xffe6a0, 0.25 + arr * 0.6);
+          this.gAdd.fillCircle(px + Math.cos(a) * r * 0.9, py + Math.sin(a) * r * 0.45, 1.5 + arr * 2.5);
+        }
+      }
       // Remember where the station is so docking traffic can fly into it.
       this.stationPos = { x: px, y: py, r };
     }
@@ -448,16 +642,22 @@ class SpaceScene extends Phaser.Scene {
       const vk = a.visualKind || 'unknown';
       let c = this.contacts.get(a.id);
       if (!c) {
-        // Additive glow halo behind the body (matches the canvas rock/pod glow —
-        // this is what makes a contact read against the dark starfield).
-        const glow = this.add.image(0, 0, 'glow').setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
-        const img = this.add.image(0, 0, ASTEROID_KEYS[a.id % 4]).setDepth(10);
-        c = { img, glow };
+        // Pool the sprite pair — reuse a hidden one when available (perf: avoids
+        // create/destroy churn as contacts stream through).
+        c = this.contactPool.pop();
+        if (!c) {
+          const glow = this.add.image(0, 0, 'glow').setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+          const img = this.add.image(0, 0, ASTEROID_KEYS[a.id % 4]).setDepth(10);
+          c = { img, glow };
+        }
         this.contacts.set(a.id, c);
       }
       const shape = astShapeFor(a.id);
       c.img.setPosition(px, py).setVisible(true).setAlpha(fadeA);
       c.glow.setPosition(px, py).setVisible(true);
+      // Target-lock brackets when Weapons has this contact acquired — animated
+      // corner brackets that snap on and rotate slowly.
+      if (a.id === latest.targetId && showLabels) this.drawBrackets(px, py, Math.max(r, 12) + 8, fadeA);
 
       if (vk === 'pod') {
         const rr = Math.max(14, r);
@@ -517,12 +717,32 @@ class SpaceScene extends Phaser.Scene {
       }
     }
     for (const [id, c] of this.contacts) {
-      if (!seen.has(id)) { c.img.destroy(); c.glow.destroy(); this.contacts.delete(id); }
+      if (!seen.has(id)) {
+        c.img.setVisible(false); c.glow.setVisible(false);
+        this.contacts.delete(id);
+        this.contactPool.push(c);
+        if (this.contactPool.length > 40) { const x = this.contactPool.shift(); x.img.destroy(); x.glow.destroy(); }
+      }
     }
   }
   clearContacts() {
-    for (const [, c] of this.contacts) { c.img.destroy(); c.glow.destroy(); }
+    for (const [, c] of this.contacts) { c.img.setVisible(false); c.glow.setVisible(false); this.contactPool.push(c); }
     this.contacts.clear();
+  }
+
+  // Animated target-lock corner brackets around an acquired contact.
+  drawBrackets(x, y, r, alpha) {
+    const g = this.gRings;
+    const spin = performance.now() / 900;
+    const arm = Math.max(6, r * 0.35);
+    g.lineStyle(2, 0xffffff, 0.9 * alpha);
+    for (let k = 0; k < 4; k++) {
+      const a = spin + k * (Math.PI / 2) + Math.PI / 4;
+      const cxk = x + Math.cos(a) * r, cyk = y + Math.sin(a) * r;
+      // Two short arms forming an L at each corner, tangent-ish to the ring.
+      g.lineBetween(cxk, cyk, cxk + Math.cos(a + Math.PI / 2) * arm, cyk + Math.sin(a + Math.PI / 2) * arm);
+      g.lineBetween(cxk, cyk, cxk - Math.cos(a + Math.PI / 2) * arm, cyk - Math.sin(a + Math.PI / 2) * arm);
+    }
   }
 
   // Decorative traffic for a background-station mission (e.g. Europa): small
@@ -579,15 +799,34 @@ class SpaceScene extends Phaser.Scene {
 
   drawLasers(w, h, yawPx) {
     const originY = h * 0.98;
+    const g = this.gAdd;
     for (const l of lasers) {
       const p = cachedAstPos(l.id, w, h, yawPx);
       let tx = p.x; const ty = p.y;
       if (!l.hit) tx += (l.id % 2 ? 1 : -1) * 40;
       const alpha = Math.max(0, l.life / 0.28);
+      const fresh = l.life / 0.28; // 1 at fire -> 0
       const originX = w / 2 + (l.id % 2 ? 22 : -22);
-      this.gAdd.lineStyle(3.5, l.hit ? 0xff5a5a : 0xffb478, alpha);
-      this.gAdd.lineBetween(originX, originY, tx, ty);
-      if (!l.hit && l.life < 0.14) this.gAdd.fillStyle(0xffb478, alpha), this.gAdd.fillCircle(tx, ty, 4);
+      // Muzzle flash at the cannon — a bright additive burst, brightest at fire.
+      g.fillStyle(0xffe0c0, alpha * 0.9);
+      g.fillCircle(originX, originY, 3 + fresh * 9);
+      // Beam.
+      g.lineStyle(3.5, l.hit ? 0xff5a5a : 0xffb478, alpha);
+      g.lineBetween(originX, originY, tx, ty);
+      if (l.hit) {
+        // Impact sparks at the hit point — a bright core + a radial spark burst.
+        g.fillStyle(0xfff0d0, alpha);
+        g.fillCircle(tx, ty, 3 + fresh * 4);
+        g.lineStyle(1.5, 0xffd090, alpha * 0.9);
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2 + l.id;
+          const sr = 6 + (1 - fresh) * 14;
+          g.lineBetween(tx, ty, tx + Math.cos(a) * sr, ty + Math.sin(a) * sr);
+        }
+      } else if (l.life < 0.14) {
+        g.fillStyle(0xffb478, alpha);
+        g.fillCircle(tx, ty, 4);
+      }
     }
   }
 
@@ -651,17 +890,22 @@ class SpaceScene extends Phaser.Scene {
     }
   }
 
+  // Slipstream: a bright forward tunnel of streaks rushing outward from the
+  // reticle, plus a soft central glow — the gate reward, felt.
   drawSlipstream(w, h) {
-    const cx = w / 2, cy = h / 2;
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * Math.PI * 2 + (performance.now() / 900) % (Math.PI * 2);
-      const r0 = Math.min(w, h) * 0.12;
-      const r1 = Math.min(w, h) * (0.5 + (i % 3) * 0.14);
-      const peak = 0.05 + (i % 3) * 0.03;
-      this.gAdd.lineStyle(1 + (i % 2), 0xa3deff, peak);
-      this.gAdd.lineBetween(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.82,
+    const cx = w / 2, cy = h / 2, g = this.gAdd, now = performance.now() / 1000;
+    const N = 16;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + (now * 0.5) % (Math.PI * 2);
+      const r0 = Math.min(w, h) * (0.08 + (i % 3) * 0.02);
+      const r1 = Math.min(w, h) * (0.42 + (i % 4) * 0.1);
+      const peak = 0.09 + (i % 3) * 0.05;
+      g.lineStyle(1 + (i % 2) * 1.5, 0xa3deff, peak);
+      g.lineBetween(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.82,
         cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.82);
     }
+    g.fillStyle(0x8fd6ff, 0.05);
+    g.fillCircle(cx, cy, Math.min(w, h) * 0.13);
   }
 
   drawFades(w, h, time) {
