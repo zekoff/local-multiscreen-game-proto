@@ -18,13 +18,23 @@
         "deflector deflector";
     }
     main.weapons #scope-mount { max-width: none; }
+    /* Tractor cell always fills (candidate list flex-grows), so it doesn't jump
+       in size when pods/salvage appear or clear. */
+    main.weapons #tow-widgets .widget.panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    main.weapons .tractor-candidates { flex: 1; min-height: 3.2rem; overflow: hidden; }
+    /* Button differentiation within the red theme: FIRE + STANDARD stay red,
+       SNAPSHOT reads amber (quick/partial), the tractor Latch reads teal (beam). */
+    main.weapons #gov-snapshot.on { background: var(--warn); border-color: var(--warn); color: #06090f; }
+    main.weapons #tow-widgets button.primary { background: #123230; border-color: #3fd6c8; color: #86ecdd; }
+    main.weapons #tow-widgets button.primary:active { background: #3fd6c8; color: #06181a; }
     @media (min-width: 860px) and (min-height: 620px) {
       main.weapons {
         grid-template-columns: 1.5fr 1fr 1fr;
+        /* Functional + decorative interleaved (not all-functional-then-deco). */
         grid-template-areas:
           "scope bank      tractor"
-          "scope deflector tractor"
-          "deco1 deco2     deco3";
+          "scope deco3     tractor"
+          "deco1 deflector deco2";
       }
     }
   </style>
@@ -71,36 +81,25 @@
       <button id="shields-btn" style="width:100%">Screen Up</button>
     </div>
 
-    <!-- Decorative chrome: shown only on large screens, hidden on phones. -->
+    <!-- Decorative chrome: shown only on large screens, hidden on phones.
+         Live data — charge history, real readouts, real bridge status, and the
+         console's own toasts. -->
     <div class="panel large-only" style="grid-area:deco1">
       <h2>Emitter Load</h2>
-      <svg class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
-        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.7"
-          points="0,34 12,30 24,32 36,18 48,22 60,8 72,14 84,26 96,20 108,28 120,24"/>
-        <polyline fill="none" stroke="#4f7bd0" stroke-width="1" opacity="0.5"
-          points="0,40 12,38 24,39 36,34 48,36 60,30 72,33 84,37 96,35 108,38 120,36"/>
+      <svg id="wpn-graph" class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.8" points=""/>
+        <polyline fill="none" stroke="#4f7bd0" stroke-width="1" opacity="0.5" points=""/>
       </svg>
-      <div class="deco-stat"><span>peak draw</span><b>3.4 GW</b></div>
-      <div class="deco-stat"><span>coil temp</span><b>412 K</b></div>
+      <div class="deco-stat"><span>charge</span><b id="wpn-charge">—</b></div>
+      <div class="deco-stat"><span>coil temp</span><b id="wpn-temp">—</b></div>
     </div>
     <div class="panel large-only" style="grid-area:deco2">
       <h2>Tactical Log</h2>
-      <div class="deco-log">
-        <div>› emitter coils nominal</div>
-        <div>› tractor manifold: idle</div>
-        <div>› deflector lattice synced</div>
-        <div>› targeting bus: clear</div>
-        <div>› fire-control online</div>
-      </div>
+      <div id="wpn-tac-log" class="deco-log"></div>
     </div>
     <div class="panel large-only" style="grid-area:deco3">
       <h2>Bridge Status</h2>
-      <div class="deco-crew">
-        <div><span class="dot"></span>Helm — steady</div>
-        <div><span class="dot"></span>Engineering — grid sync</div>
-        <div><span class="dot" style="background:var(--accent)"></span>Weapons — armed</div>
-        <div style="margin-top:0.3rem" class="deco-stat"><span>alert</span><b>CONDITION GREEN</b></div>
-      </div>
+      <div id="wpn-crew" class="deco-crew"></div>
     </div>
   </main>
 
@@ -128,6 +127,16 @@
     import { createIntents } from '/js/optimistic.js';
     import { mountWidgets } from '/js/widget.js';
     import { towBeam } from '/js/widgets/tow.js';
+    import { spark, renderCrew, tacticalLog } from '/js/deco.js';
+
+    // Live decorative chrome (large screens): charge history, bridge status, and
+    // a tactical log of this console's own toasts + ambient flavor.
+    const wpnGraph = spark(document.getElementById('wpn-graph'), { lo: 0, hi: 100 });
+    const wpnCrewEl = document.getElementById('wpn-crew');
+    const wpnLog = tacticalLog(document.getElementById('wpn-tac-log'), [
+      'emitter coils nominal', 'targeting bus clear', 'deflector lattice synced',
+      'fire-control online', 'capacitor bank charged',
+    ]);
 
     // Console-local audio: weapons hears its own laser, target lock, fire-ready
     // chime, and shields raise/lower. The laser is deliberately NOT on the main
@@ -153,7 +162,15 @@
     const net = initStation({
       seat: 'weapons',
       intents,
+      onToast: (text) => wpnLog.push(text), // capture this console's toasts into the tactical log
       render(state) {
+        // Live deco (cheap; the panels are hidden on phones): charge history +
+        // real coil-temp derived from charge, real bridge status, ambient log.
+        wpnGraph(state.charge ?? 0, (state.power.weapons ?? 0) * 25);
+        document.getElementById('wpn-charge').textContent = `${Math.round(state.charge ?? 0)}%`;
+        document.getElementById('wpn-temp').textContent = `${Math.round(360 + (state.charge ?? 0) * 0.85)} K`;
+        renderCrew(wpnCrewEl, state, 'weapons');
+        wpnLog.tick(state.missionTime ?? 0);
         // The scope scene reads this on its own update loop; tapping a blip
         // calls back here with the id, same action any target-list UI would send.
         scopeScene.onTarget = (id) => { net.action({ kind: 'target', id }); audio.tapTick(); };

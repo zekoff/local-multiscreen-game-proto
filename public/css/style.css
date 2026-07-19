@@ -57,6 +57,11 @@ header h1 { font-size: 1.05rem; letter-spacing: 0.12em; text-transform: uppercas
 .conn-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
 .conn-dot.ok { background: var(--good); }
 
+/* Click-to-copy affordance (room code, join link): tap to copy, brief green ack. */
+.copyable { cursor: pointer; }
+.copyable:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
+.copyable.copied { color: var(--good) !important; }
+
 main { flex: 1; padding: 1rem; overflow-y: auto; max-width: 720px; width: 100%; margin: 0 auto; }
 
 /* --- Panels --- */

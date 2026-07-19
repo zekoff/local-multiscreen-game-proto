@@ -6,7 +6,7 @@
 // contract. This shell only feeds the shared model (snapshot + interpolators)
 // and effects (fx stream) each tick; the renderer reads those and draws.
 
-import { initStation, fmtTime, setHealthBar } from '/js/station.js';
+import { initStation, fmtTime, setHealthBar, clickToCopy } from '/js/station.js';
 import { qrcode } from '/js/vendor/qrcode-generator.mjs';
 import { createAudio } from '/js/audio.js';
 import { readyRoomAmbient } from '/js/fx-audio.js';
@@ -44,7 +44,11 @@ mountHudOverlay({ container: viewscreen }).mount();
 
 // --- Join info (QR + URL) for the lobby overlay ---
 const room = new URLSearchParams(location.search).get('room')?.toUpperCase() || '';
-document.getElementById('big-code').textContent = room;
+const bigCodeEl = document.getElementById('big-code');
+bigCodeEl.textContent = room;
+clickToCopy(bigCodeEl, () => room); // tap the big room code to copy it
+const joinUrlEl = document.getElementById('join-url');
+clickToCopy(joinUrlEl, () => joinUrlEl.textContent); // tap the join link to copy it
 fetch(`/api/room-info?code=${room}`)
   .then((r) => r.json())
   .then((info) => {
@@ -52,7 +56,7 @@ fetch(`/api/room-info?code=${room}`)
     qr.addData(info.joinUrl);
     qr.make();
     document.getElementById('qr').src = qr.createDataURL(6, 4);
-    document.getElementById('join-url').textContent = info.joinUrl;
+    joinUrlEl.textContent = info.joinUrl;
   })
   .catch(() => {});
 

@@ -22,10 +22,11 @@
     @media (min-width: 860px) and (min-height: 620px) {
       main.helm {
         grid-template-columns: 1.3fr 1fr 1fr;
+        /* Functional + decorative interleaved. */
         grid-template-areas:
-          "align throttle  speed"
-          "align emergency emergency"
-          "deco1 deco2     deco3";
+          "align throttle  deco3"
+          "align speed     deco3"
+          "deco1 emergency deco2";
       }
     }
   </style>
@@ -80,35 +81,23 @@
         trips every breaker, and throws you off course. Last resort.</p>
     </div>
 
-    <!-- Decorative chrome: large screens only (hidden on phones). -->
+    <!-- Decorative chrome: large screens only (hidden on phones). Live data. -->
     <div class="panel large-only" style="grid-area:deco1">
       <h2>Heading Trace</h2>
-      <svg class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
+      <svg id="helm-graph" class="deco-graph" viewBox="0 0 120 44" preserveAspectRatio="none">
         <line x1="0" y1="22" x2="120" y2="22" stroke="var(--panel-edge)" stroke-width="1"/>
-        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.7"
-          points="0,22 15,18 30,26 45,20 60,14 75,24 90,19 105,23 120,21"/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.8" points=""/>
       </svg>
-      <div class="deco-stat"><span>drift</span><b>±0.4°/s</b></div>
-      <div class="deco-stat"><span>inertial lock</span><b>NOMINAL</b></div>
+      <div class="deco-stat"><span>off-axis</span><b id="helm-drift">—</b></div>
+      <div class="deco-stat"><span>velocity</span><b id="helm-vel">—</b></div>
     </div>
     <div class="panel large-only" style="grid-area:deco2">
       <h2>Flight Log</h2>
-      <div class="deco-log">
-        <div>› inertial dampers online</div>
-        <div>› helm bus responsive</div>
-        <div>› course plot updated</div>
-        <div>› thruster gimbals free</div>
-        <div>› nav beacon acquired</div>
-      </div>
+      <div id="helm-log" class="deco-log"></div>
     </div>
     <div class="panel large-only" style="grid-area:deco3">
       <h2>Bridge Status</h2>
-      <div class="deco-crew">
-        <div><span class="dot" style="background:var(--accent)"></span>Helm — conn</div>
-        <div><span class="dot"></span>Engineering — grid sync</div>
-        <div><span class="dot"></span>Weapons — armed</div>
-        <div style="margin-top:0.3rem" class="deco-stat"><span>alert</span><b>CONDITION GREEN</b></div>
-      </div>
+      <div id="helm-crew" class="deco-crew"></div>
     </div>
   </main>
 
@@ -132,6 +121,15 @@
     import { createAudio } from '/js/audio.js';
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
+    import { spark, renderCrew, tacticalLog } from '/js/deco.js';
+
+    // Live decorative chrome (large screens): heading trace, bridge status, log.
+    const helmGraph = spark(document.getElementById('helm-graph'), { lo: -100, hi: 100 });
+    const helmCrewEl = document.getElementById('helm-crew');
+    const helmLog = tacticalLog(document.getElementById('helm-log'), [
+      'inertial dampers online', 'helm bus responsive', 'course plot updated',
+      'thruster gimbals free', 'nav beacon acquired',
+    ]);
 
     // Helm-local audio: the nav-gate pass/miss chimes and a subtle blip on each
     // steering nudge. (Music + ship-wide booms live on the main screen.)
@@ -147,9 +145,16 @@
     const net = initStation({
       seat: 'helm',
       intents,
+      onToast: (text) => helmLog.push(text),
       render(state) {
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
+        // Live deco: heading trace (course drift), real readouts, bridge status.
+        helmGraph(state.alignment ?? 0);
+        document.getElementById('helm-drift').textContent = `${Math.abs(state.alignment ?? 0).toFixed(0)}° ${(state.alignment ?? 0) > 0 ? 'STBD' : 'PORT'}`;
+        document.getElementById('helm-vel').textContent = (state.speed ?? 0).toFixed(1);
+        renderCrew(helmCrewEl, state, 'helm');
+        helmLog.tick(state.missionTime ?? 0);
         document.getElementById('speed').textContent = state.speed.toFixed(1);
         // Mission-configurable readout: parsecs count down to 0 at dock, or a
         // failure-clock countdown on missions that define one.

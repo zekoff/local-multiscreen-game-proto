@@ -17,7 +17,7 @@ import { Net } from './net.js';
 //                  Reconciled against every snapshot BEFORE render(state), so
 //                  pages can paint commanded values instantly and let the
 //                  authoritative state take over when it confirms.
-export function initStation({ seat, render, onJoined, startPayload, intents }) {
+export function initStation({ seat, render, onJoined, startPayload, intents, onToast }) {
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   const name = params.get('name') || '';
@@ -27,7 +27,9 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
     return null;
   }
 
-  document.querySelector('.room-code').textContent = room;
+  const roomCodeEl = document.querySelector('.room-code');
+  roomCodeEl.textContent = room;
+  clickToCopy(roomCodeEl, () => room); // tap the header code to copy it
   const connDot = document.querySelector('.conn-dot');
   const lobbyOverlay = document.getElementById('lobby-overlay');
   const debriefOverlay = document.getElementById('debrief-overlay');
@@ -61,6 +63,9 @@ export function initStation({ seat, render, onJoined, startPayload, intents }) {
   let lastDebriefSeed = null; // populate the debrief log once per run (keeps scroll position)
   const MAX_TOASTS = 3; // keep the corner stack short; drop the oldest beyond this
   function toast(text) {
+    // Hand the toast to any console-local listener (e.g. a tactical-log widget)
+    // before it fades from the corner.
+    try { onToast?.(text); } catch { /* a listener must never break toasts */ }
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = text;
@@ -245,4 +250,28 @@ export function setChargeBar(barEl, pct, ready) {
 // Score band color, shared by the debrief grade on every station.
 export function scoreColor(score) {
   return score >= 70 ? 'var(--good)' : score >= 40 ? 'var(--warn)' : 'var(--bad)';
+}
+
+// Make an element copy text to the clipboard on click (vs highlight-and-copy),
+// with a brief visual ack. `getText` returns the string to copy; defaults to the
+// element's own text. Used for the room code and the lobby join link.
+export function clickToCopy(el, getText) {
+  if (!el) return;
+  el.classList.add('copyable');
+  if (!el.title) el.title = 'Click to copy';
+  el.addEventListener('click', async () => {
+    const text = (getText ? getText() : el.textContent || '').trim();
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else { // http/insecure-context fallback
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } finally { ta.remove(); }
+      }
+      el.classList.add('copied');
+      setTimeout(() => el.classList.remove('copied'), 1000);
+    } catch { /* clipboard blocked — nothing to do */ }
+  });
 }
