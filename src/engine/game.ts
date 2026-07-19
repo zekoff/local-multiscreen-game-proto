@@ -1111,14 +1111,13 @@ export class Game {
   private debugSpawn(what: string) {
     const m = this.mission;
     if (!m) return;
-    const near = { min: 12, max: 18 };
+    // All debug contacts spawn at the mission's own distance band (m.impactIn),
+    // so a debug spawn matches the distance the crew actually sees in real play.
     switch (what) {
       case 'rock': this.spawnContact('rock', m.impactIn, m.asteroidDmg); this.event('[debug] Spawned a rock.'); break;
-      case 'pod': this.spawnContact('pod', near, { min: 0, max: 0 }); this.event('[debug] Spawned a rescue pod.'); break;
-      // Salvage spawns at the SAME distance as rocks (mission impactIn) — in real
-      // play it uses m.impactIn too, so debug matches what the crew actually sees.
+      case 'pod': this.spawnContact('pod', m.impactIn, { min: 0, max: 0 }); this.event('[debug] Spawned a rescue pod.'); break;
       case 'mineral': this.spawnContact('mineral', m.impactIn, { min: 0, max: 0 }); this.event('[debug] Spawned salvage.'); break;
-      case 'ghost': this.spawnContact('ghost', near, { min: 0, max: 0 }); this.event('[debug] Spawned a sensor ghost.'); break;
+      case 'ghost': this.spawnContact('ghost', m.impactIn, { min: 0, max: 0 }); this.event('[debug] Spawned a sensor ghost.'); break;
       case 'gate': this.spawnGate(); break;
       case 'obstacle': this.applyEventAction({ type: 'spawnObstacle', label: 'DEBUG MASS', reachIn: { min: 10, max: 15 }, dmg: OBSTACLE_DMG_DEFAULT }); break;
       case 'divert': this.applyEventAction({ type: 'spawnDivert', name: 'DEBUG BEACON', seconds: 30, reward: 12 }); break;
