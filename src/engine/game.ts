@@ -144,8 +144,10 @@ const AUTO_ENG_RESET_AGE = 4;        // seconds a breaker stays tripped before a
 // detect-before-ID gap and the low-vs-high-power investment curve intact.
 const SENSOR_BASE = 15;         // detection range (s) at zero sensor power
 const SENSOR_PER_POWER = 3;     // extra detection range (s) per effective sensor power unit
-const SENSOR_ID_BASE = 7.5;     // identification range (s) at zero sensor power (well inside detection)
-const SENSOR_ID_PER_POWER = 4.5; // extra ID range (s) per sensor power — ID scales harder than detection
+const SENSOR_ID_BASE = 5.6;     // identification range (s) at zero sensor power (well inside detection)
+const SENSOR_ID_PER_POWER = 3.4; // extra ID range (s) per sensor power — ID scales harder than detection
+// (ID band pulled in ~25% from the old 7.5/4.5 across all power levels — a
+// contact must close further before sensors resolve its class.)
 const SENSOR_PULSE_COOLDOWN = 80; // long cooldown => ~1-2 pulses per mission
 
 // --- Tractor beam / cargo hold. The tractor shares the WEAPONS emitter: the

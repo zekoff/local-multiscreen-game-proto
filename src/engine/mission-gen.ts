@@ -116,7 +116,7 @@ export function generateMission(params: GenParams): MissionDef {
       id: `gen-rescue-${i}`,
       at: { progress: mark },
       actions: [
-        { type: 'log', text: 'Adrift escape pod on the scope — survivors aboard. Confirm and tow it in.' },
+        // No pre-announce — the pod is only called out once sensors ID it.
         { type: 'spawnContact', kind: 'pod', impactIn: { min: 16, max: 22 } },
         { type: 'spawnContact', kind: 'ghost' },
       ],
@@ -226,7 +226,9 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
   events.push({
     id: 'europa-lifeboat', at: { time: batch1 + 3 },
     actions: [
-      { type: 'log', text: 'A lifeboat is adrift in that mess — survivors aboard. Confirm it and tow it out, do NOT fire on it.' },
+      // No pre-announce: the pod spawns as an unresolved contact — the captain
+      // must spot the silhouette and sensors must ID it before it's called out
+      // as a rescue pod (the engine fires that toast at ID range).
       { type: 'spawnContact', kind: 'pod', impactIn: { min: 30, max: 38 } }, // slow drift: plenty of time to tow
     ],
   });
