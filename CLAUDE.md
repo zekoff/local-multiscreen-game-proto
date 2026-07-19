@@ -70,7 +70,12 @@ cloud-migration design; the standalone migration doc was pruned).
   changes must land in both, or clients break on one of them.
 - `public/` — zero-build static clients served by both transports.
   `js/net.js` (reconnecting WS client), `js/station.js` (shared shell +
-  meter/grade helpers), one HTML page per station, `mainscreen.html`/
+  meter/grade helpers + `clickToCopy`/`onToast`). Crew consoles use a responsive
+  `<main class="console">` grid (CSS in `css/style.css`) that fits a phone with no
+  scroll and, on a larger screen, grows controls + reveals `.large-only`
+  **decorative-but-live** chrome from `js/deco.js` (rolling data graphs, a
+  cross-console Bridge Status, and a tactical log of captured toasts). One HTML
+  page per station, `mainscreen.html`/
   `js/mainscreen.js` (the DOM/net shell: captain HUD, ship HUD, lobby/debrief,
   music, + client-side QR from `js/vendor/qrcode-generator.mjs`). The **viewscreen
   itself is a Phaser 4 scene** (`js/main-view/phaser-renderer.js`: starfield,

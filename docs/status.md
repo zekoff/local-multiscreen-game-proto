@@ -2,37 +2,36 @@
 
 This file should contain only the most recent status of the project -- usually the last major prompt with completed work.
 
-## Most recent: Phaser sole renderer + gameplay/visual pass (2026-07-18)
+## Most recent: consoles + main-screen polish pass (2026-07-18)
 
-The main-screen viewscreen is a **Phaser 4 scene** and the Canvas 2D renderer has
-been **retired** (Phaser is the only renderer). Committed to `main`.
+Building on the Phaser sole-renderer work, a large gameplay/visual/UX pass.
 
-**Rendering (`public/js/main-view/`):** `mainscreen.js` is the DOM/net shell;
-the space view is `phaser-renderer.js` reading a shared `model.js` / `effects.js`
-layer; clean HUD chrome (reticle, banners) is a 2D overlay (`hud-overlay.js`).
-The scene renders at **device pixel ratio** (crisp text/sprites on hi-dpi), uses
-**CC0 sprites** under `public/assets/space/` (main-screen only; `CREDITS.md`),
-and has a camera Glow filter + vignette. Recent additions: arrival dolly-to-
-station cinematic (fade to black under the debrief), speed-reactive starfield
-with ghostly trails (stationary at throttle 0, ~3× at max), pod silhouette that
-only turns green "RESCUE POD" once sensor-identified, tiny→large station growth,
-docking traffic for station missions, intensified ion storm, wider asteroid size
-spread, steady debris-scour rumble, shield arc gone at 0%.
+**Engine (`src/engine/`):**
+- Rescue pods are announced **only at sensor-ID range** (removed the scripted
+  pre-announce mission logs); sensor **ID band pulled in ~25%** (acquire band
+  unchanged).
+- Tractor beam is **independent of the laser** — tow AND fire at once (removed the
+  fire() latch guard).
+- Earlier in the pass: shield lower/raise doctrine fixes, CPU-helm priority
+  (pods→salvage→rings→course), `mission.speedScale` serialized.
 
-**Engine (`src/engine/game.ts`):** shields lower immediately at 0% (human & auto)
-and the auto doctrine drops them after a short linger whenever no live volley
-(fixing "shields never lower while a field keeps spawning"), auto-raise gated
-≥40% (human raise unrestricted). CPU helm priority: pods → salvage → rings →
-course. `serialize().mission` gained `speedScale` for the starfield.
+**Consoles (responsive, one-screen):** each `<main class="console">` fits a phone
+with no scroll and, on a larger screen, grows the controls and reveals
+**decorative-but-live chrome** (`public/js/deco.js`): rolling sparkline graphs of
+real per-station data, sensible readouts, a **cross-console Bridge Status** from
+real seat state, and a **tactical log** of the console's own toasts (via a new
+`initStation` `onToast` hook) + ambient flavor. Functional and decorative widgets
+are **interleaved** on large screens. Weapons: laser + tractor side by side,
+tractor fills its cell, button differentiation (FIRE/STANDARD red, SNAPSHOT amber,
+Latch teal). **Click-to-copy** on the room code + join link.
 
-**Missions:** the selectable set is now just **Europa Salvage Loop (default),
-Shakedown Cruise, Free Flight**; the other authored missions + gen presets were
-removed. Smoke tests run `gen:europa` (both transports arrive, score 58,
-deterministic). Lab sweeps the 3-mission catalog clean.
+**Main screen (`phaser-renderer.js`):** procedural per-mission backdrop (sun,
+ringed planet, comets, capital ships, buoys), target-lock brackets, muzzle flash +
+impact sparks, warp jump-tunnel + improved slipstream, localized shield-hit ripple,
+per-mission color grading, lens/barrel distortion, in-scene mission title card,
+docking-lights polish, contact-sprite pooling. Star speed doubled at max, trails
+trimmed. See `docs/mainscreen-visual-roadmap.md` for what's shipped vs remaining.
 
-**Misc:** `public/favicon.svg` added + linked on all pages. A proposed backlog of
-further graphical work lives in `docs/mainscreen-visual-roadmap.md`.
-
-Note: `CLAUDE.md`'s "zero-build / no asset files" line now carves out the main
-screen (Phaser bundle + CC0 sprites); audio stays procedural. Not yet deployed
-this pass — deploy on the owner's word.
+Missions: **Europa Salvage Loop (default), Shakedown Cruise, Free Flight** only.
+Deployed to Cloudflare. `CLAUDE.md`'s "zero-build / no asset files" line carves out
+the main screen (Phaser bundle + CC0 sprites); audio stays procedural.

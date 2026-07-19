@@ -1,63 +1,40 @@
-# Main-screen visual roadmap (proposed)
+# Main-screen visual roadmap
 
-A backlog of graphical improvements for the Phaser viewscreen
-(`public/js/main-view/phaser-renderer.js`), for the owner to prioritize. Nothing
-here is committed work — it's a menu. All of it should respect the design
-pillars: **stylized, clean, cinematic — chrome/juice yes, greebles/clutter no.**
-The Phaser 4 Filter system (`camera.filters.internal` → `addGlow`, `addVignette`,
-`addBlur`, `addColorMatrix`, `addBarrel`, `addDisplacement`, …) already in the
-bundle is the main lever for most of the "effects" items.
+Graphical improvements for the Phaser viewscreen (`public/js/main-view/phaser-renderer.js`).
+Respect the design pillars: **stylized, clean, cinematic — chrome/juice yes,
+greebles/clutter no.** The Phaser 4 Filter system (`camera.filters.internal` →
+`addGlow`, `addVignette`, `addBarrel`, `addBlur`, `addColorMatrix`,
+`addDisplacement`, …) is the lever for most effects.
 
-## Effects
+## Shipped
 
-- **Engine/thruster glow** at the bow (bottom-center) that brightens and
-  lengthens with throttle — reinforces the new speed read.
-- **Muzzle flash** at the laser origin + **impact sparks** where a shot lands
-  (particle burst using the `spark`/`flame` textures).
-- **Localized shield-hit ripple**: instead of a full-screen blue wash, a bright
-  arc flares at the point on the bow shield where a hit is absorbed.
-- **Explosion shockwave / heat-haze ring** — an expanding thin ring + a brief
-  `addDisplacement` distortion pulse on the fireball.
-- **Warp-tunnel** streak on Emergency Warp: a radial star-streak tunnel that
-  collapses to a white flash (elevates the current flat white flash).
-- **Low-hull embers/smoke** drifting up across the viewport as ambient dread
-  below ~25% hull.
-- **Chromatic aberration / lens distortion** (`addColorMatrix` + `addBarrel`) at
-  very high speed or heavy damage — subtle, momentary.
-- **God-rays / volumetric glow** from the destination star or station.
+- **Bloom/Glow + vignette** camera filters; additive-blend effect layers.
+- **Muzzle flash** at the cannon + **radial impact sparks** on a laser hit.
+- **Localized shield-hit ripple** on the bow arc at the incoming contact's bearing.
+- **Emergency-warp jump tunnel** (radial streaks into the white-out) + a brighter
+  **tunnelled slipstream** with a central glow.
+- **Lens/barrel distortion** filter, modulated up with speed + hull damage
+  (a lens/chromatic feel).
+- **Procedural per-mission backdrop** (seeded, stable, far-away proportions):
+  distant **sun** with a flare cross, optional **ringed planet/moon**, **comets**
+  with tails, far **capital ships** with running lights, **buoys** near a station.
+- **Target-lock brackets**: animated rotating corner brackets on the acquired contact.
+- **Per-mission color grading** (Europa cold blue, planet destinations warmer).
+- **In-scene mission-intro title card** (name + destination) fading in/out at start.
+- **Docking-sequence polish**: the station's lights power up during the arrival dolly.
+- **Speed-reactive starfield** with ghostly trails; **debris-scour rumble**;
+  **intensified ion storm**; device-pixel-ratio crisp text/sprites.
+- **Performance**: contact-sprite pooling; capped backdrop object counts; dpr capped at 2.
 
-## Space objects
+## Remaining ideas
 
-- **Distant sun** with a soft lens flare, parallaxing slower than the nebula.
-- **Capital ships / freighters** on scripted lanes — larger, detailed vessels
-  crossing far off (a step up from the current dot traffic and the docking
-  shuttles).
-- **Comets / ice shards** with tails (fits Europa's icy theme).
-- **Ringed planet / moon** backdrop as an alternate parallax layer.
-- **Jump-gate / wormhole** object for warp beats.
-- **Buoys / patrol drones** with blinking lights near the station.
-
-## HUD (kept clean — these live in the hud-overlay, not the scene)
-
-- **Target-lock brackets** that animate/snap onto the acquired contact.
-- **Bearing/compass strip** along the top edge: tick marks for the destination,
-  next gate, and identified threats by bearing.
-- **Screen-edge threat arrows** for off-screen inbound rocks (like today's
-  off-screen objective chevron, but for hazards).
-- **Damage-direction indicator**: a brief red arc on the edge the hit came from.
-- **Optional CRT/scanline vignette** toggle for a "viewscreen" texture.
-- **Animated range-to-destination ticker** that counts down on final approach.
-
-## Other
-
-- **Dynamic camera**: a slow push-in when threat is high, a gentle idle sway on
-  quiet stretches (subtle — must not induce motion sickness).
-- **Per-mission color grading** via `addColorMatrix` — Europa cold blue, others
-  warmer — for instant mood.
-- **In-scene mission-intro title card** (mission name + briefing) rendered over
-  the starfield before the lobby hands off.
-- **Docking-sequence polish**: the station's lights power up / a bay door opens
-  as the arrival dolly completes.
-- **Performance**: pack the CC0 sprites into a texture atlas; pool contact
-  sprites instead of create/destroy per contact; cap the device-pixel-ratio and
-  particle counts on low-end GPUs.
+- **Effects**: throttle-reactive engine/thruster glow at the bow; explosion
+  shockwave ring + a brief displacement pulse; drifting embers/smoke at low hull;
+  volumetric god-rays / a proper lens flare on the sun.
+- **Space objects**: a dedicated jump-gate/wormhole object for warp beats; larger,
+  detailed freighters (beyond the current far-off hulls); ice shards.
+- **HUD** (would live in `hud-overlay.js`): a top bearing/compass strip
+  (gates/destination/threats by bearing); screen-edge threat arrows for off-screen
+  rocks; a damage-direction indicator; an optional CRT/scanline viewscreen texture.
+- **Other**: a subtle dynamic camera (slow push-in on high threat, idle sway);
+  a texture atlas for the CC0 sprites; per-GPU quality tiers.
