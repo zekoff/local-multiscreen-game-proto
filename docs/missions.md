@@ -41,8 +41,11 @@ A `MissionDef` has three layers:
    - `spawnRate` / `calm` / `setMaxAsteroids` — reshape ambient spawn pressure
    - `spawnGate` — a scripted nav gate (slipstream) on top of `gateEvery`
    - `ionStorm` (halves sensor range), `debrisField` (running hot scours the
-     hull), `setViewImpaired` (black out the forward view), `solarFlare`
-     (announced, then strikes raised systems) — environmental pressure
+     hull), `ghostSwarm` (phantom scope contacts — weapons pressure),
+     `setViewImpaired` (black out the forward view) — environmental pressure.
+     `solarFlare` (announced, then strikes raised systems) exists but is
+     **frozen** (WIP — pulled from procgen and the debug panel until it fires
+     correctly; the engine executor is intact but uninvoked).
    - `spawnObstacle` — a large steer-*around* hazard (topology)
    - `spawnDivert` / `cinematic` — a competing-objective fork / a soft-pause
      dialogue beat on the main screen
@@ -83,8 +86,8 @@ The lobby exposes `gen:short` / `gen:standard` / `gen:long`, plus **Europa
 Salvage Loop** (`gen:europa`) — a fixed-shape procedural *type* with its own
 generator (`generateEuropaSalvageLoop`, resolved specially in
 `resolveMissionStart`): slipstreams, heavy rock batches, drifting salvage, a slow
-lifeboat, ghosts, and one ion storm / debris field / blackout, scored on
-time / salvage / hull.
+lifeboat, ghosts, and **3 hazards** drawn at random (repeats allowed) from a pool
+of ion storm / debris field / ghost swarm / blackout, scored on time / salvage / hull.
 
 ## Reproducibility: (missionId, seed)
 

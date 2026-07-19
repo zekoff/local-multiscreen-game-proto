@@ -13,7 +13,8 @@ export const freeFlight: MissionDef = {
     'sim-debug spawn dropdown to drop rocks, pods, salvage, ghosts, gates, ' +
     'obstacles, fires, boarders, or a solar flare exactly when you want them.',
   arrivalName: 'the test range',
-  rating: 'standard',
+  rating: '', // debug range — no difficulty tag in the picker
+
   destination: { kind: 'planet', color: '#7d8db3' },
   kind: 'authored',
   ...pacingFor(180),

@@ -73,8 +73,10 @@ cloud-migration design; the standalone migration doc was pruned).
   meter/grade helpers + `clickToCopy`/`onToast`). Crew consoles use a responsive
   `<main class="console">` grid (CSS in `css/style.css`) that fits a phone with no
   scroll and, on a larger screen, grows controls + reveals `.large-only`
-  **decorative-but-live** chrome from `js/deco.js` (rolling data graphs, a
-  cross-console Bridge Status, and a tactical log of captured toasts). One HTML
+  **decorative-but-live** chrome from `js/deco.js` (multi-line rolling data
+  graphs — real console data drawn thick, `makeSignal()` synthetic flavor lines
+  drawn thin — a cross-console Bridge Status, and a tactical log of captured
+  toasts; graph panels are desktop-only and never shown on a phone). One HTML
   page per station, `mainscreen.html`/
   `js/mainscreen.js` (the DOM/net shell: captain HUD, ship HUD, lobby/debrief,
   music, + client-side QR from `js/vendor/qrcode-generator.mjs`). The **viewscreen

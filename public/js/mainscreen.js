@@ -98,9 +98,10 @@ const net = initStation({
   },
   onJoined(msg) {
     catalog = msg.catalog || [];
-    // Each mission shows its difficulty rating right in the picker.
+    // Each mission shows its difficulty rating right in the picker — unless the
+    // mission leaves it blank (e.g. the debug range), then just the name.
     missionSelect.innerHTML = catalog
-      .map((c) => `<option value="${c.id}">${c.name} — ${c.rating}</option>`)
+      .map((c) => `<option value="${c.id}">${c.name}${c.rating ? ` — ${c.rating}` : ''}</option>`)
       .join('');
     showMissionDesc();
   },
