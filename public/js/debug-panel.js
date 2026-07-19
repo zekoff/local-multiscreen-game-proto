@@ -11,7 +11,7 @@ const SPEEDS = [0, 0.25, 0.5, 1, 2, 5]; // 0 = pause; 5× is the debug top speed
 const SPAWN_GROUPS = [
   ['Contacts', [['rock', 'Rock'], ['pod', 'Rescue Pod'], ['mineral', 'Salvage'], ['ghost', 'Sensor Ghost']]],
   ['Navigation', [['gate', 'Nav Gate'], ['obstacle', 'Obstacle'], ['divert', 'Divert Beacon']]],
-  ['Hazards', [['ionstorm', 'Ion Storm'], ['debris', 'Debris Field'], ['ghostswarm', 'Ghost Swarm'], ['blackout', 'Blackout (toggle)'], ['flare', 'Solar Flare']]],
+  ['Hazards', [['ionstorm', 'Ion Storm'], ['debris', 'Debris Field'], ['ghostswarm', 'Ghost Swarm'], ['blackout', 'Blackout (toggle)']]],
   ['Emergencies', [['fire', 'Fire'], ['breach', 'Hull Breach'], ['boarders', 'Boarders'], ['leak', 'Coolant Leak']]],
   ['Test', [['damage', 'Hull −30% (test repair)'], ['heal', 'Hull +30%']]],
 ];

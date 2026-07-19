@@ -249,22 +249,18 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
   salvage('europa-salv-3', 262);
   ghost('europa-ghost-4', 275);
 
-  // Procedural HAZARDS: each run draws a different set + placement from the pool
-  // (ion storm / debris field / ghost swarm / blackout / solar flare), so no two
-  // Europa runs feel the same. Four spread slots (between the heavy batches), one
-  // distinct hazard shuffled onto each per seed.
-  const hazardSlots = [jit(50, 5), jit(118, 5), jit(178, 6), jit(245, 5)];
+  // Procedural HAZARDS: each run draws 3 hazards at random (repeats allowed) from
+  // the pool, so no two Europa runs feel the same. (Solar flare is frozen out for
+  // now — it doesn't fire correctly yet.) Three spread slots between the batches.
+  const hazardSlots = [jit(55, 5), jit(128, 6), jit(198, 6)];
   const hazardPool: ((id: string, t: number) => void)[] = [
     (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Charged particle front across the lane — sensors hazing. More sensor power or a pulse cuts through.' }, { type: 'ionStorm', seconds: int(rng, 18, 24) }] }),
     (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Pulverized rock haze ahead — ease the throttle through it or it scours the hull.' }, { type: 'debrisField', seconds: int(rng, 16, 22) }] }),
     (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Sensor grid is ghosting — phantom returns all over the scope. Weapons, confirm a contact before you spend a shot on it.' }, { type: 'ghostSwarm', seconds: int(rng, 22, 28) }] }),
     (id, t) => { const d = int(rng, 14, 18); events.push({ id: `${id}-on`, at: { time: t }, actions: [{ type: 'log', text: 'Forward view lost — fly on the scope until it clears.' }, { type: 'setViewImpaired', on: true }] }); events.push({ id: `${id}-off`, at: { time: t + d }, actions: [{ type: 'setViewImpaired', on: false }] }); },
-    (id, t) => events.push({ id, at: { time: t }, actions: [{ type: 'log', text: 'Solar flare building off the beam — safe posture: shields DOWN, hold fire when it peaks.' }, { type: 'solarFlare', inSeconds: int(rng, 8, 12) }] }),
   ];
-  // Fisher-Yates shuffle (seeded), then drop one distinct hazard on each slot.
-  const order = hazardPool.map((_, i) => i);
-  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  hazardSlots.forEach((t, i) => hazardPool[order[i]](`europa-hazard-${i}`, t));
+  // Pick each slot's hazard independently (repeats allowed) — pure random draw.
+  hazardSlots.forEach((t, i) => hazardPool[Math.floor(rng() * hazardPool.length)](`europa-hazard-${i}`, t));
 
   return {
     id: `gen:europa:${seed}`,
