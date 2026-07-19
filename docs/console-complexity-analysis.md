@@ -9,7 +9,7 @@ verdict — the real signal comes from watching people play.
 
 > **Superseded in part (2026-07-19).** The Cruise/Officer split means the
 > per-console load below now describes **Officer**; Cruise runs a different set of
-> controls at each station (see `docs/status.md` and the `AIDS` table in
+> controls at each station (see `docs/status.md` and the `ASSIST` table in
 > `game.ts`). The load figures here have not been re-measured for Cruise — the
 > lab's bot crews all run Officer, so a Cruise sweep needs a new lab profile.
 

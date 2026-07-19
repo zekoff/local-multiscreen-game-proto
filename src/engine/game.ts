@@ -25,7 +25,7 @@ export type Audience = 'crew' | 'helm' | 'engineering' | 'weapons' | 'crewchief'
 // (formerly 'normal'); 'cruise' is the lighter workload (formerly 'chill').
 // The old three-state chill/normal/intense collapsed to these two. Cruise no
 // longer just runs the same console slower — it hands some widgets to the CPU
-// and adds aids to others (see AIDS below).
+// and adds assists to others (see ASSIST below).
 export type Difficulty = 'cruise' | 'officer';
 export type { SystemId } from './mission.js';
 
@@ -37,7 +37,7 @@ const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief'];
 // --- Per-difficulty console profile -----------------------------------------
 //
 // Per-role difficulty must stay a PARAMETER, not a separate code path (a core
-// design pillar — docs/design/02-architecture.md). Cruise's aids are structural
+// design pillar — docs/design/02-architecture.md). Cruise's assists are structural
 // (CPU assistance, locked power pips, harmless breakers), so every one of them
 // is declared HERE as data and read at the touch points. There is deliberately
 // no `if (difficulty === 'cruise')` anywhere else in the engine.
@@ -48,12 +48,12 @@ const CREW_SEATS: SeatId[] = ['helm', 'engineering', 'weapons', 'crewchief'];
 // only where its aid is purely visual (helm); where a structural aid already
 // replaces the workload (engineering's harmless trips, weapons' CPU scope) the
 // discount is withdrawn, so Cruise stays busy but low-stakes.
-type AidProfile = {
+type AssistProfile = {
   autoScope: boolean;      // weapons: the CPU runs target+fire at maximum strength
   powerTotal: number;      // engineering: size of the allocatable pool
   powerFloor: number;      // engineering: per-system minimum the engineer can't remove
   breakerPenalty: number;  // engineering: eff() multiplier while a breaker is tripped
-  steerAids: boolean;      // helm: painted alignment band + on-the-gate label (client-side)
+  steerAssist: boolean;      // helm: painted alignment band + on-the-gate label (client-side)
   courseHold: boolean;     // helm: the Course Hold auto-centering toggle
   driftTrim: boolean;      // helm: the Drift Trim control (officer's earned counterpart)
   comms: boolean;          // helm: the Comms hail-for-early-ID widget
@@ -64,13 +64,13 @@ type AidProfile = {
   rate: Record<'helm' | 'engineering' | 'weapons' | 'crewchief', number>;
 };
 
-const AIDS: Record<Difficulty, AidProfile> = {
+const ASSIST: Record<Difficulty, AssistProfile> = {
   cruise: {
     autoScope: true,
     powerTotal: 8,        // 4 locked (one per system) + 4 free to split
     powerFloor: 1,
     breakerPenalty: 1,    // a tripped breaker still demands a reset, but costs no function
-    steerAids: true,
+    steerAssist: true,
     courseHold: true,
     driftTrim: false,
     comms: false,
@@ -82,7 +82,7 @@ const AIDS: Record<Difficulty, AidProfile> = {
     powerTotal: 7,        // the shipped pool: nothing locked, 7 free to split
     powerFloor: 0,
     breakerPenalty: 0.5,  // a tripped system limps at half effectiveness
-    steerAids: false,
+    steerAssist: false,
     courseHold: false,
     driftTrim: true,
     comms: true,
@@ -100,7 +100,7 @@ const SYSTEMS: SystemId[] = ['engines', 'shields', 'weapons', 'sensors'];
 
 // Ship-constant tuning (mission-independent; per-mission knobs live in MissionDef).
 // The POOL SIZE is no longer a constant — it's per-difficulty (`powerTotal` in
-// AIDS above: 7 under Officer, 8 under Cruise where one pip per system is locked
+// ASSIST above: 7 under Officer, 8 under Cruise where one pip per system is locked
 // on). History: raised 6 -> 7 post-playtest ("one more engine allocation point").
 // Tractor was briefly a fifth powered system (pool 8) but that added an odd,
 // exploitable channel (always dump weapons/pump tractor while towing); it's now
@@ -754,7 +754,7 @@ export class Game {
     s.playerId = playerId;
     s.name = name || s.name || seat;
     s.connected = true;
-    if (AIDS[difficulty]) s.difficulty = difficulty;
+    if (ASSIST[difficulty]) s.difficulty = difficulty;
     this.event(resuming ? `${s.name} reconnected to ${seat}` : `${s.name} took the ${seat} station`);
     return { ok: true };
   }
@@ -805,14 +805,14 @@ export class Game {
   }
 
   // The aid profile a seat is playing under. Every structural difference
-  // between Cruise and Officer is read from here (see AIDS).
-  private aids(seat: SeatId): AidProfile {
-    return AIDS[this.seats[seat].difficulty] ?? AIDS.officer;
+  // between Cruise and Officer is read from here (see ASSIST).
+  private assist(seat: SeatId): AssistProfile {
+    return ASSIST[this.seats[seat].difficulty] ?? ASSIST.officer;
   }
 
   // The burden multiplier for a seat's ambient event rate (drift, trips, spawns).
   private diff(seat: SeatId): number {
-    const rate = this.aids(seat).rate;
+    const rate = this.assist(seat).rate;
     return seat in rate ? rate[seat as keyof typeof rate] : 1;
   }
 
@@ -844,7 +844,7 @@ export class Game {
     if (difficulties) {
       for (const s of Object.keys(difficulties) as SeatId[]) {
         const d = difficulties[s];
-        if (this.seats[s] && d && AIDS[d]) this.seats[s].difficulty = d;
+        if (this.seats[s] && d && ASSIST[d]) this.seats[s].difficulty = d;
       }
     }
     // Mission pace (ready-room setting): a real-time multiplier on the whole
@@ -986,13 +986,13 @@ export class Game {
         this.alignment = clamp(this.alignment + this.turnStep() * (a.dir as number), -100, 100);
       } else if (a.kind === 'warp' || a.kind === 'evasive') {
         this.doWarp();
-      } else if (a.kind === 'hold' && typeof a.on === 'boolean' && this.aids('helm').courseHold) {
+      } else if (a.kind === 'hold' && typeof a.on === 'boolean' && this.assist('helm').courseHold) {
         // Course Hold is a CRUISE aid — an Officer helm trims by hand instead.
         this.courseHold = a.on;
         this.consoleEvent('helm', this.courseHold ? 'Course-hold engaged.' : 'Course-hold released.');
-      } else if (a.kind === 'trim' && typeof a.value === 'number' && this.aids('helm').driftTrim) {
+      } else if (a.kind === 'trim' && typeof a.value === 'number' && this.assist('helm').driftTrim) {
         this.helmTrim = clamp(Math.round(a.value), -TRIM_RANGE, TRIM_RANGE);
-      } else if (a.kind === 'hail' && typeof a.id === 'number' && this.aids('helm').comms) {
+      } else if (a.kind === 'hail' && typeof a.id === 'number' && this.assist('helm').comms) {
         this.doHail(a.id as number);
       }
     } else if (seat === 'engineering') {
@@ -1016,7 +1016,7 @@ export class Game {
       // Cruise hands the SCOPE to the CPU: targeting, firing, and the fire-mode
       // governor aren't this player's to drive. The deflector screen and the
       // tractor beam below stay theirs.
-      const scopeIsTheirs = !this.aids('weapons').autoScope;
+      const scopeIsTheirs = !this.assist('weapons').autoScope;
       if (a.kind === 'target' && typeof a.id === 'number' && scopeIsTheirs) {
         // Can only lock a contact the sensors have actually detected.
         const t = this.asteroids.find((x) => x.id === a.id);
@@ -1055,7 +1055,7 @@ export class Game {
     // Pool size and the per-system floor come from the engineering seat's aid
     // profile: Cruise locks one pip per system (which the engineer can't remove)
     // and hands out a bigger pool to split.
-    const { powerTotal, powerFloor } = this.aids('engineering');
+    const { powerTotal, powerFloor } = this.assist('engineering');
     const total = SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
     const next = this.power[system] + delta;
     if (next < powerFloor || next > POWER_MAX) return;
@@ -1068,7 +1068,7 @@ export class Game {
   // default split always has been (more sensors for earlier detection). Written
   // as a spend-down so it satisfies the floor and the pool size at any profile.
   private defaultPowerSplit(): Record<SystemId, number> {
-    const { powerTotal, powerFloor } = this.aids('engineering');
+    const { powerTotal, powerFloor } = this.assist('engineering');
     const split: Record<SystemId, number> = { engines: 0, shields: 0, weapons: 0, sensors: 0 };
     for (const s of SYSTEMS) split[s] = powerFloor;
     // Priority order for the free units above the floor (mirrors the shipped 7-unit
@@ -1111,7 +1111,7 @@ export class Game {
     // Scatter the allocation down to the profile's floor — zero under Officer
     // (re-power from scratch), one pip per system under Cruise, whose locked pips
     // are exactly the "this can never go dark" promise the aid makes.
-    const floor = this.aids('engineering').powerFloor;
+    const floor = this.assist('engineering').powerFloor;
     for (const s of SYSTEMS) this.power[s] = floor;
     // A warp jump also drops any tractor latch and scatters the hold's contents
     // stay put — but the beam breaks (the ship is somewhere else now).
@@ -1145,7 +1145,7 @@ export class Game {
   // cap, and the profile's per-system floor.
   private loadPreset() {
     if (!this.savedPreset) { this.consoleEvent('engineering', 'No power preset saved yet.'); return; }
-    const { powerTotal, powerFloor } = this.aids('engineering');
+    const { powerTotal, powerFloor } = this.assist('engineering');
     const at = (s: SystemId) => clamp(this.savedPreset![s] ?? 0, powerFloor, POWER_MAX);
     const total = SYSTEMS.reduce((sum, s) => sum + at(s), 0);
     if (total > powerTotal) return; // saved split no longer fits the pool (defensive)
@@ -1272,7 +1272,7 @@ export class Game {
       case 'breach': this.startEmergency('breach', 1); break;
       case 'boarders': this.startEmergency('boarders', 1); break;
       case 'leak': this.startEmergency('leak', 1); break;
-      // Test aids: knock the hull down (past shields) or heal it back up.
+      // Test helpers: knock the hull down (past shields) or heal it back up.
       case 'damage': this.hull = Math.max(1, this.hull - 30); this.event('[debug] Hull −30% (test Damage Control).'); break;
       case 'heal': this.hull = Math.min(100, this.hull + 30); this.event('[debug] Hull +30%.'); break;
       default: break;
@@ -1354,7 +1354,7 @@ export class Game {
     // How much a tripped breaker costs comes from the engineering seat's profile:
     // half effectiveness under Officer, nothing at all under Cruise (where the
     // trip is still a job to clear, just not a penalty while it stands).
-    const breaker = this.breakers[system] !== null ? this.aids('engineering').breakerPenalty : 1;
+    const breaker = this.breakers[system] !== null ? this.assist('engineering').breakerPenalty : 1;
     // Wear lightly derates a system (gentle — the Crew Chief keeps it trimmed).
     const trim = 1 - WEAR_EFF_PENALTY * this.wear[system];
     return this.power[system] * breaker * trim;
@@ -1652,7 +1652,7 @@ export class Game {
     this.stats.breakersTripped++;
     // The consequence differs by profile, so the callout has to as well — under
     // Cruise the system keeps running and the trip is purely a reset to clear.
-    this.consoleEvent('engineering', this.aids('engineering').breakerPenalty < 1
+    this.consoleEvent('engineering', this.assist('engineering').breakerPenalty < 1
       ? `Breaker tripped: ${victim} at half power!`
       : `Breaker tripped: ${victim} — reset required.`);
   }
@@ -1683,7 +1683,7 @@ export class Game {
     // often it re-rolls come from the helm profile — Officer's bias is stronger
     // but stands for far longer, which is what makes it worth trimming out;
     // Cruise keeps the shipped weak-and-restless bias it has no trim to answer.
-    const drift = this.aids('helm').drift;
+    const drift = this.assist('helm').drift;
     const driftScale = m.driftScale * this.diff('helm');
     this.driftBiasTimer -= dt;
     if (this.driftBiasTimer <= 0) {
@@ -1814,7 +1814,7 @@ export class Game {
     // engineer can't leave the ship dead in the water.
     if (this.auto('engineering')) {
       const target = this.defaultPowerSplit(); // the same opening split, at whatever pool/floor this profile runs
-      let spare = this.aids('engineering').powerTotal - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
+      let spare = this.assist('engineering').powerTotal - SYSTEMS.reduce((sum, s) => sum + this.power[s], 0);
       for (const s of SYSTEMS) {
         while (spare > 0 && this.power[s] < target[s]) { this.power[s]++; spare--; }
       }
@@ -1831,7 +1831,7 @@ export class Game {
       this.autoShieldDoctrine();
       this.autoGunner(this.botCs, this.botOverBase);
       this.autoTow();
-    } else if (this.aids('weapons').autoScope) {
+    } else if (this.assist('weapons').autoScope) {
       // Manned, Cruise: the CPU runs ONLY the scope, and at maximum strength (the
       // values botCs/botOverBase take at crewSkill 1.0 — no reaction lag, snapshot
       // use on small rocks). Shields and tractor stay the player's.
@@ -2584,7 +2584,7 @@ export class Game {
     // Normalized against the pool this run actually ran on, so Cruise's larger
     // pool doesn't inflate the engineer's utilization score.
     const avgPowerUtil = this.telSamples > 0
-      ? round2(this.powerUtilSum / this.telSamples / this.aids('engineering').powerTotal)
+      ? round2(this.powerUtilSum / this.telSamples / this.assist('engineering').powerTotal)
       : 0;
     // Captain coordination: the crew outcomes a good caller drives — defense,
     // gate discipline, and how fast contacts get handed to weapons (a low
@@ -2791,19 +2791,19 @@ export class Game {
       // --- Per-console aid profile, so each client renders the mode it's playing
       // rather than hard-coding rules the engine owns. Seat difficulty is already
       // serialized under `seats`; this is the resolved consequence of it.
-      aids: {
+      assist: {
         // Engineering: pool size, the per-system locked floor, and whether a
         // tripped breaker actually costs anything.
-        powerTotal: this.aids('engineering').powerTotal,
-        powerFloor: this.aids('engineering').powerFloor,
-        breakerPenalty: this.aids('engineering').breakerPenalty,
+        powerTotal: this.assist('engineering').powerTotal,
+        powerFloor: this.assist('engineering').powerFloor,
+        breakerPenalty: this.assist('engineering').breakerPenalty,
         // Weapons: the scope is CPU-driven (no targeting/fire controls).
-        autoScope: this.aids('weapons').autoScope,
+        autoScope: this.assist('weapons').autoScope,
         // Helm: which of the four steering controls this pilot has.
-        steerAids: this.aids('helm').steerAids,
-        courseHold: this.aids('helm').courseHold,
-        driftTrim: this.aids('helm').driftTrim,
-        comms: this.aids('helm').comms,
+        steerAssist: this.assist('helm').steerAssist,
+        courseHold: this.assist('helm').courseHold,
+        driftTrim: this.assist('helm').driftTrim,
+        comms: this.assist('helm').comms,
       },
       // Helm drift trim: the commanded notches, the range the control spans, and
       // how close the pilot is — a COARSE bucket, never the signed bias.

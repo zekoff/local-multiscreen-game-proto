@@ -197,7 +197,7 @@
     const SYSTEMS = ['engines', 'shields', 'weapons', 'sensors'];
     const POWER_MAX = 4;
     // Pool size, the per-system locked floor, and what a tripped breaker costs
-    // are all per-difficulty now (see AIDS in src/engine/game.ts) and arrive on
+    // are all per-difficulty now (see ASSIST in src/engine/game.ts) and arrive on
     // every snapshot. Officer: 7 units, nothing locked, a trip halves the system.
     // Cruise: 8 units with one locked pip each, and a trip costs no function.
     let powerTotal = 7;
@@ -286,8 +286,8 @@
           // Mirrors eff() in src/engine/game.ts — including the per-mode breaker
           // penalty, so under Cruise (where a trip costs nothing) the bus load
           // line correctly doesn't dip when a breaker goes.
-          const pen = state.aids ? state.aids.breakerPenalty : 0.5;
-          const pool = state.aids ? state.aids.powerTotal : 7;
+          const pen = state.assist ? state.assist.breakerPenalty : 0.5;
+          const pool = state.assist ? state.assist.powerTotal : 7;
           const eff = SYSTEMS.reduce((s, k) => s + p[k] * (b[k] ? pen : 1), 0);
           const load = Math.round((eff / pool) * 100);
           // Traces: real bus load + real drive+sensor draw + synthetic core temp / flux.
@@ -299,10 +299,10 @@
         }
         renderDamageControl(state);
         // Pool / floor / breaker cost come from this seat's aid profile.
-        if (state.aids) {
-          powerTotal = state.aids.powerTotal ?? powerTotal;
-          powerFloor = state.aids.powerFloor ?? powerFloor;
-          breakerPenalty = state.aids.breakerPenalty ?? breakerPenalty;
+        if (state.assist) {
+          powerTotal = state.assist.powerTotal ?? powerTotal;
+          powerFloor = state.assist.powerFloor ?? powerFloor;
+          breakerPenalty = state.assist.breakerPenalty ?? breakerPenalty;
         }
         lastPower = state.power;
         for (const sys of SYSTEMS) {

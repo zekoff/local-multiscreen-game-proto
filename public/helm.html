@@ -29,8 +29,8 @@
           "deco1 emergency deco2";
       }
     }
-    /* --- Mode split (see AIDS in src/engine/game.ts) ------------------------
-       CRUISE keeps the painted steering aids and Course Hold. OFFICER flies
+    /* --- Mode split (see ASSIST in src/engine/game.ts) ------------------------
+       CRUISE keeps the painted steering assists and Course Hold. OFFICER flies
        without either and gets two earned controls instead: Drift Trim (inside
        the alignment panel — it IS steering) and Comms (its own cell). Both sets
        live in the DOM; the mode class decides which is shown, because the page
@@ -219,14 +219,14 @@
       render(state) {
         playFxAudio(state.fx, audio, HELM_FX); // gate pass/miss chimes
         readyRoomAmbient(audio, state.phase); // soft lobby bed while standing by
-        // Which controls this pilot has (see AIDS in src/engine/game.ts). Cruise
+        // Which controls this pilot has (see ASSIST in src/engine/game.ts). Cruise
         // keeps the painted band + Course Hold; Officer flies without them and
         // works the Drift Trim and Comms widgets instead.
-        const aids = state.aids || { steerAids: true, courseHold: true, driftTrim: false, comms: false };
-        consoleEl.classList.toggle('mode-officer', !aids.steerAids);
-        consoleEl.classList.toggle('mode-cruise', !!aids.steerAids);
-        if (aids.driftTrim && trimHost) trimHost.render(state);
-        if (aids.comms && commsHost) commsHost.render(state);
+        const assist = state.assist || { steerAssist: true, courseHold: true, driftTrim: false, comms: false };
+        consoleEl.classList.toggle('mode-officer', !assist.steerAssist);
+        consoleEl.classList.toggle('mode-cruise', !!assist.steerAssist);
+        if (assist.driftTrim && trimHost) trimHost.render(state);
+        if (assist.comms && commsHost) commsHost.render(state);
         // Live deco: heading trace (course drift), real readouts, bridge status.
         // Traces: real heading (alignment) + real throttle + synthetic inertial load.
         helmGraph(state.alignment ?? 0, state.throttle ?? 0, helmInertial());
@@ -260,8 +260,8 @@
         // band just marks the on-course zone around 0. A tripped engines breaker
         // halves engine power (mirrors eff() in src/engine/game.ts).
         // A tripped breaker only derates the system when the mode says so (see
-        // breakerPenalty in AIDS) — mirrors eff() in src/engine/game.ts.
-        const brkPen = state.aids ? state.aids.breakerPenalty : 0.5;
+        // breakerPenalty in ASSIST) — mirrors eff() in src/engine/game.ts.
+        const brkPen = state.assist ? state.assist.breakerPenalty : 0.5;
         const effEngines = state.power.engines * (state.breakers.engines ? brkPen : 1);
         const win = 12 + 18 * (effEngines / 4);
         // Inline engine-power readout (no separate power panel on this console).
@@ -282,7 +282,7 @@
         // pilot judges the line from the bar and the readout below it. (The
         // painted zone band is hidden by CSS; this is its text counterpart.)
         const stateEl = document.getElementById('align-state');
-        stateEl.textContent = !aids.steerAids ? '' : lined ? (next ? 'on the gate' : 'on course') : 'off line';
+        stateEl.textContent = !assist.steerAssist ? '' : lined ? (next ? 'on the gate' : 'on course') : 'off line';
         stateEl.style.color = lined ? 'var(--good)' : 'var(--warn)';
         // Next nav gate readout: closest gate, its bearing, and steering hint.
         // A debris field takes over the line — throttle discipline is this

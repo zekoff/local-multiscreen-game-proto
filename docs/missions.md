@@ -18,7 +18,7 @@ A `MissionDef` has three layers:
    `breakerEvery`, optional `gateEvery`), caps (`maxAsteroids`), and scales
    (`driftScale`, `speedScale`, `parTime`). This is the mission's baseline
    pressure; per-seat difficulty stacks on top of it (the `rate` multipliers in
-   the `AIDS` table, `game.ts`), preserving the design pillar that player
+   the `ASSIST` table, `game.ts`), preserving the design pillar that player
    difficulty is a parameter, not a code path. Note that difficulty now also
    changes *which controls a console has* — also declared in that same table, so
    a mission never needs to know which mode a seat is on.

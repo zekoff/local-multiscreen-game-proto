@@ -131,11 +131,11 @@ logic without a browser.
     `autoTow()`, called in that fixed order; `autoGunner` takes bot quality as
     arguments so a **manned Cruise weapons seat** can run it at maximum strength
     while its player keeps the deflector and tractor.
-  - *Per-seat difficulty:* `AIDS[difficulty]` (top of `game.ts`) is the single
+  - *Per-seat difficulty:* `ASSIST[difficulty]` (top of `game.ts`) is the single
     table declaring what each mode changes — CPU scope on weapons, the power pool
     / locked floor / breaker penalty on engineering, which steering controls the
     helm has, the drift profile, and the per-seat event-rate multipliers. Read via
-    `aids(seat)`; serialized under `aids` so clients render the mode. Cruise
+    `assist(seat)`; serialized under `assist` so clients render the mode. Cruise
     withdraws its rate discount where a structural aid already replaces the work
     (engineering, weapons) and keeps it where the aid is only visual (helm).
 - **Actions** — validated per seat in `action(seat, a)`; a helm client cannot
@@ -144,7 +144,7 @@ logic without a browser.
 - **Interdependence** (the coordination engine): engineering allocates a pool of
   **power units across four systems** (engines, shields, weapons, **sensors**;
   max 4 each) — **7 under Officer, 8 under Cruise with one pip locked on per
-  system** (`powerTotal`/`powerFloor` in `AIDS`). A tripped breaker halves the
+  system** (`powerTotal`/`powerFloor` in `ASSIST`). A tripped breaker halves the
   system under Officer and costs nothing under Cruise (`breakerPenalty`), but
   always needs the reset gesture either way. Breakers trip
   mainly when a rock hits the hull (fully-shielded hits don't trip anything);
@@ -285,8 +285,8 @@ step.
   self-contained page + inline module each; controls send actions, `render`
   reflects the latest snapshot. Helm has throttle + course/gate steering +
   Emergency Warp; engineering has 4-way power + breakers + sensors + pulse;
-  weapons is the Phaser radar scope (`js/weapons-scope.js` mounted via
-  `js/phaser-station.js`) + recharge/fire + shields. Sliders track a local
+  weapons is the Canvas2D radar scope (`js/weapons-scope.js` mounted via
+  `js/canvas-station.js`) + recharge/fire + shields. Sliders track a local
   "dragging" flag so server echoes don't fight the player's finger.
 - **`mainscreen.html` + `js/mainscreen.js`** — view-only seat. `mainscreen.js`
   is the DOM/net shell (captain HUD, ship HUD + log, mission-select lobby,

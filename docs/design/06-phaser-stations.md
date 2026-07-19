@@ -5,12 +5,23 @@ for rich graphical feedback and input. Requested 2026-07-09 as a
 later-development-stage option, to be built collaboratively (human + Claude).
 
 > **Status (2026-07-11): the weapons radar scope is built and shipped**
-> (`public/js/weapons-scope.js`, mounted via `js/phaser-station.js` per the
-> hybrid pattern below). It renders converging contacts, tap-to-target, a decay
-> sweep, a **passive sensor-range ring** (contacts stay invisible until they
-> cross inside), name-only labels (threat data lives on the main screen), and an
-> expanding **sensor-pulse** animation. Helm and engineering remain DOM. The
-> assessment below is the original plan; it held up.
+> (`public/js/weapons-scope.js`). It renders converging contacts, tap-to-target,
+> a decay sweep, a **passive sensor-range ring** (contacts stay invisible until
+> they cross inside), name-only labels (threat data lives on the main screen),
+> and an expanding **sensor-pulse** animation. Helm and engineering remain DOM.
+> The assessment below is the original plan; it held up.
+>
+> **Update (2026-07-19): the scope was ported OFF Phaser to Canvas2D**
+> (`js/canvas-station.js`; `js/phaser-station.js` is deleted — the scope was its
+> only consumer). The hybrid "engine as a widget" pattern below is what made this
+> a contained change, and it's the right lesson: the *pattern* held, the *engine*
+> was the wrong tool for this particular widget. The scope draws arcs, dots, and
+> short labels — no physics, textures, tweens, or asset loading — so Phaser's
+> 1.4 MB bought nothing and cost every phone on the crew the download. **Phaser
+> still earns its keep on the main screen** (`js/main-view/phaser-renderer.js`),
+> which runs on a TV/laptop and genuinely uses sprites, particles, and effects.
+> Rule of thumb going forward: reach for the engine when a widget needs sprites,
+> tweens, or asset pipelines — not merely because it needs to draw.
 
 ## Verdict: feasible, low architectural risk, do it per-widget rather than per-app
 
@@ -72,7 +83,7 @@ helm.html
 Pattern for the seam (same as mainscreen.js today): `render(state)` stashes
 the latest snapshot; the Phaser scene's `update()` reads it and tweens toward
 it; scene input handlers call `net.action(...)`. One new shared helper
-(`js/phaser-station.js`) can own the mount/resize/DPR boilerplate.
+(now `js/canvas-station.js`) can own the mount/resize/DPR boilerplate.
 
 ## Risks and mitigations
 

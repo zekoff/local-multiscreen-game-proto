@@ -92,8 +92,8 @@ cloud-migration design; the standalone migration doc was pruned).
   **music plays on the main screen only**;
   SFX are routed per device (laser→weapons, sensor pings→engineering, gate
   chimes→helm, ship-wide booms→main screen) via the `js/fx-audio.js` helper.
-  `js/weapons-scope.js` is the Phaser radar scope mounted via
-  `js/phaser-station.js`. `supervisor.html` is the optional "Sim Supervisor"
+  `js/weapons-scope.js` is the Canvas2D radar scope mounted via
+  `js/canvas-station.js` (immediate-mode; Phaser is main-screen only). `supervisor.html` is the optional "Sim Supervisor"
   debug role and `js/debug-panel.js` its shared controls.
 - Seats: crew (`helm`/`engineering`/`weapons`/`crewchief`) are exclusive; `main`
   and `supervisor` are view-only, non-exclusive (multiple allowed, no game seat
@@ -124,13 +124,13 @@ cloud-migration design; the standalone migration doc was pruned).
   another station's controls.
 - Per-role difficulty must stay a *parameter*, not a separate code path; that's a
   core design pillar (see `docs/design/02-architecture.md`). Concretely: every
-  Cruise-vs-Officer difference lives in the **`AIDS` table** at the top of
-  `game.ts` and is read through `aids(seat)` at the touch points — there is no
+  Cruise-vs-Officer difference lives in the **`ASSIST` table** at the top of
+  `game.ts` and is read through `assist(seat)` at the touch points — there is no
   `if (difficulty === 'cruise')` anywhere in the engine, and new mode differences
   must be added as a **field on that table**, never as a branch. The resolved
-  profile is serialized under `aids` so clients render the mode rather than
+  profile is serialized under `assist` so clients render the mode rather than
   re-deriving its rules (engineering reads `powerTotal`/`powerFloor`/
-  `breakerPenalty`; helm reads `steerAids`/`courseHold`/`driftTrim`/`comms`;
+  `breakerPenalty`; helm reads `steerAssist`/`courseHold`/`driftTrim`/`comms`;
   weapons reads `autoScope`). Cruise is not "the same console, slower" — it hands
   the weapons scope to the CPU, locks a power pip per system on a bigger pool, and
   makes tripped breakers cost no function. The same parameter rule applies to

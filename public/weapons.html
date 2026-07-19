@@ -147,8 +147,7 @@
 
   <script type="module">
     import { initStation, setHealthBar, setChargeBar, mountHelp } from '/js/station.js';
-    import { mountPhaser } from '/js/phaser-station.js';
-    import { WeaponsScopeScene } from '/js/weapons-scope.js';
+    import { WeaponsScope } from '/js/weapons-scope.js';
     import { createAudio } from '/js/audio.js';
     import { playFxAudio, readyRoomAmbient } from '/js/fx-audio.js';
     import { createIntents } from '/js/optimistic.js';
@@ -187,8 +186,9 @@
     const shieldsBtn = document.getElementById('shields-btn');
     let shieldsRaised = false;
 
-    const scopeScene = new WeaponsScopeScene();
-    mountPhaser({ parentId: 'scope-mount', width: 360, height: 200, scene: scopeScene });
+    // Canvas2D instrument (was a Phaser scene): it sizes itself to the panel and
+    // redraws from each snapshot. Same API as before — onTarget / setState / pulse.
+    const scopeScene = new WeaponsScope().mount(document.getElementById('scope-mount'));
 
     const intents = createIntents();
     const net = initStation({
@@ -208,7 +208,7 @@
         // governor from this seat). The scope keeps rendering — situational
         // awareness is the whole point — but it stops taking taps, and the fire
         // control panel is hidden entirely. Deflector + tractor stay the player's.
-        const autoScope = !!(state.aids && state.aids.autoScope);
+        const autoScope = !!(state.assist && state.assist.autoScope);
         consoleEl.classList.toggle('mode-cruise', autoScope);
         document.getElementById('scope-mode').textContent = autoScope ? '— AUTO-TRACK' : '';
         // The scope scene reads this on its own update loop; tapping a blip
@@ -285,8 +285,8 @@
         // matters (drives laser recharge + tractor reel, and shield regen), with
         // a NO-POWER call — no separate power panel needed on this console.
         // A trip only halves the system under Officer; under Cruise it costs no
-        // performance, so the note must not claim otherwise (see AIDS).
-        const brkPen = state.aids ? state.aids.breakerPenalty : 0.5;
+        // performance, so the note must not claim otherwise (see ASSIST).
+        const brkPen = state.assist ? state.assist.breakerPenalty : 0.5;
         const tripNote = brkPen < 1 ? ' <span style="color:var(--bad)">(breaker ½)</span>' : ' <span style="color:var(--warn)">(breaker out)</span>';
         const wp = state.power.weapons, wTrip = state.breakers.weapons;
         document.getElementById('wpn-power').innerHTML = wp > 0
