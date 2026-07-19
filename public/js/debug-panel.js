@@ -5,9 +5,15 @@
 // Used by the main screen (overlay) and the supervisor page (inline panel).
 
 const SPEEDS = [0, 0.25, 0.5, 1, 2, 5]; // 0 = pause; 5× is the debug top speed
-const SPAWN_OPTIONS = [
-  ['rock', 'Rock'], ['pod', 'Rescue Pod'], ['mineral', 'Salvage'], ['ghost', 'Sensor Ghost'],
-  ['gate', 'Nav Gate'], ['obstacle', 'Obstacle'], ['fire', 'Fire'], ['boarders', 'Boarders'], ['flare', 'Solar Flare'],
+// Every procedurally-addable concept, grouped for the spawn dropdown. Each value
+// maps to a case in game.ts debugSpawn() (which reuses the scripted-event
+// executors so debug matches real play).
+const SPAWN_GROUPS = [
+  ['Contacts', [['rock', 'Rock'], ['pod', 'Rescue Pod'], ['mineral', 'Salvage'], ['ghost', 'Sensor Ghost']]],
+  ['Navigation', [['gate', 'Nav Gate'], ['obstacle', 'Obstacle'], ['divert', 'Divert Beacon']]],
+  ['Hazards', [['ionstorm', 'Ion Storm'], ['debris', 'Debris Field'], ['ghostswarm', 'Ghost Swarm'], ['blackout', 'Blackout (toggle)'], ['flare', 'Solar Flare']]],
+  ['Emergencies', [['fire', 'Fire'], ['breach', 'Hull Breach'], ['boarders', 'Boarders'], ['leak', 'Coolant Leak']]],
+  ['Test', [['damage', 'Hull −30% (test repair)']]],
 ];
 
 export function mountDebugPanel(container, net) {
@@ -17,12 +23,12 @@ export function mountDebugPanel(container, net) {
     <div class="debug-row" id="debug-speeds"></div>
     <div class="debug-row">
       <span class="debug-lbl">CPU crew</span>
-      <input type="range" id="debug-skill" min="0" max="100" step="5" value="60" class="debug-slider">
-      <span id="debug-skill-val" class="debug-lbl">60%</span>
+      <input type="range" id="debug-skill" min="0" max="100" step="5" value="70" class="debug-slider">
+      <span id="debug-skill-val" class="debug-lbl">70%</span>
     </div>
     <div class="debug-row">
       <select id="debug-spawn-what" class="debug-select">
-        ${SPAWN_OPTIONS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
+        ${SPAWN_GROUPS.map(([g, opts]) => `<optgroup label="${g}">${opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</optgroup>`).join('')}
       </select>
       <button class="debug-btn" id="debug-spawn-btn">Spawn</button>
     </div>`;

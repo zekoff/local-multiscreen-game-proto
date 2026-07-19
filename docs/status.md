@@ -2,36 +2,38 @@
 
 This file should contain only the most recent status of the project -- usually the last major prompt with completed work.
 
-## Most recent: consoles + main-screen polish pass (2026-07-18)
+## Most recent: salvage/ghost/heal + debug + CPU pass (2026-07-18)
 
-Building on the Phaser sole-renderer work, a large gameplay/visual/UX pass.
+**Engine (`src/engine/game.ts`, `mission.ts`, `mission-gen.ts`):**
+- **Salvage silhouette from spawn**: minerals reveal their amber silhouette on the
+  viewscreen from spawn (`MINERAL_VISUAL_RANGE`), so the captain can call salvage
+  early. Sensor ID / tractor lock still gate on `identified` (unchanged).
+- **Ghost-swarm event**: a new timed `EventAction` (`ghostSwarm`, peer to
+  `ionStorm`/`debrisField`) drips phantom ghost contacts onto the scope mixed with
+  the normal target cadence — weapons pressure (a shot on a ghost is wasted; sensor
+  ID/pulse resolves + culls them). Serialized `ghostSwarmIn`; a "SENSORS SPOOFED"
+  main-screen notice; added to the Europa timeline (~52s).
+- **Engineering Damage Control** (new): an attention-only hull heal — **no power
+  cost**, available only while **hull < 50%**, healing in **~8% chunks per nanite
+  bond (~1%/s)** up to 50%. New `sealHull` action + `repair` serialize block;
+  constants `HULL_BREACH_MAX/SEAL_BOND_TIME/SEAL_CHUNK/SEAL_DECAY`.
+- **CPU crew baseline 0.6 → 0.7** (bots a bit more capable; `botCs`/`botOverBase`
+  keep the 0.6 anchor as the old floor). Debug skill slider default now 70%.
 
-**Engine (`src/engine/`):**
-- Rescue pods are announced **only at sensor-ID range** (removed the scripted
-  pre-announce mission logs); sensor **ID band pulled in ~25%** (acquire band
-  unchanged).
-- Tractor beam is **independent of the laser** — tow AND fire at once (removed the
-  fire() latch guard).
-- Earlier in the pass: shield lower/raise doctrine fixes, CPU-helm priority
-  (pods→salvage→rings→course), `mission.speedScale` serialized.
+**Client:**
+- **Damage Control widget** on the engineering console (own grid area; fits phone
+  no-scroll): slide-to-ARM → hold-to-seal, animated nanite-bond bar, hull bar,
+  per-chunk "breach sealed +8%" flash/toast, **visible-but-disabled above 50%**.
+- **Debug panel** now offers **every** procedurally-addable concept, grouped
+  (Contacts / Navigation / Hazards / Emergencies / Test incl. a hull-damage
+  button) — dispatches through the scripted-event executors so debug matches play.
 
-**Consoles (responsive, one-screen):** each `<main class="console">` fits a phone
-with no scroll and, on a larger screen, grows the controls and reveals
-**decorative-but-live chrome** (`public/js/deco.js`): rolling sparkline graphs of
-real per-station data, sensible readouts, a **cross-console Bridge Status** from
-real seat state, and a **tactical log** of the console's own toasts (via a new
-`initStation` `onToast` hook) + ambient flavor. Functional and decorative widgets
-are **interleaved** on large screens. Weapons: laser + tractor side by side,
-tractor fills its cell, button differentiation (FIRE/STANDARD red, SNAPSHOT amber,
-Latch teal). **Click-to-copy** on the room code + join link.
+**Europa CPU study (crewSkill=1.0, 16 seeds/config)** — pure all-auto arrives 94%
+but scores ~52 (survives, doesn't thrive). Biggest CPU deficits: **salvage towing**
+(all-auto banks ~2.6 vs ~9.4 with a human gunner — the bot never tows ore by
+design) and **power/breaker management** (a skilled engineer cut impacts 5.8→2.6,
+hull 58→79). See the response for the full table + CPU-improvement ideas (top:
+let the auto-gunner tractor identified salvage; smarter auto-engineer power/breaker
++ auto Damage Control below 50%).
 
-**Main screen (`phaser-renderer.js`):** procedural per-mission backdrop (sun,
-ringed planet, comets, capital ships, buoys), target-lock brackets, muzzle flash +
-impact sparks, warp jump-tunnel + improved slipstream, localized shield-hit ripple,
-per-mission color grading, lens/barrel distortion, in-scene mission title card,
-docking-lights polish, contact-sprite pooling. Star speed doubled at max, trails
-trimmed. See `docs/mainscreen-visual-roadmap.md` for what's shipped vs remaining.
-
-Missions: **Europa Salvage Loop (default), Shakedown Cruise, Free Flight** only.
-Deployed to Cloudflare. `CLAUDE.md`'s "zero-build / no asset files" line carves out
-the main screen (Phaser bundle + CC0 sprites); audio stays procedural.
+Missions: Europa (default), Shakedown Cruise, Free Flight. Deployed to Cloudflare.

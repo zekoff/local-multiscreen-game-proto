@@ -86,6 +86,7 @@ export function mountHudOverlay({ container }) {
     if (s.flareIn > 0) n.push({ text: `SOLAR FLARE IN ${Math.ceil(s.flareIn)}s — SAFE POSTURE`, tone: 'warn' });
     if (s.viewImpaired) n.push({ text: 'FORWARD VIEW LOST — FLY ON SENSORS', tone: 'warn' });
     if (s.ionStormIn > 0) n.push({ text: 'ION STORM — SENSORS DEGRADED', tone: 'warn' });
+    if (s.ghostSwarmIn > 0) n.push({ text: 'SENSORS SPOOFED — VERIFY TARGETS', tone: 'warn' });
     if (s.debrisIn > 0) n.push({ text: 'DEBRIS FIELD — EASE THROTTLE', tone: 'warn' });
     const inbound = (s.asteroids || []).filter((a) => a.targetable && (a.kind === 'rock' || a.kind === 'unknown')).length;
     if (inbound >= 3) n.push({ text: 'ASTEROID FIELD', tone: 'warn' });

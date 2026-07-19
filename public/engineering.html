@@ -30,19 +30,28 @@
     .brk-tap:disabled { opacity: 0.5; }
     /* Engineering grid: fits a phone (no scroll); widens + adds deco on desktop. */
     main.engineering {
-      grid-template-columns: 1fr;
-      grid-template-areas: "power" "sensors";
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "power   power"
+        "sensors repair";
     }
-    main.engineering .pwr-row { min-height: 2.7rem; margin-bottom: 0.4rem; }
+    main.engineering .pwr-row { min-height: 2.5rem; margin-bottom: 0.35rem; }
     @media (min-width: 860px) and (min-height: 620px) {
       main.engineering {
         grid-template-columns: 1.4fr 1fr 1fr;
         grid-template-areas:
-          "power sensors deco3"
-          "power deco1   deco2";
+          "power sensors repair"
+          "power deco1   repair"
+          "deco3 deco2   deco2";
       }
       main.engineering .pwr-row { min-height: 3.2rem; margin-bottom: 0.6rem; }
     }
+    /* Damage Control widget. */
+    #repair-panel.disabled { opacity: 0.5; }
+    #repair-panel.disabled #dc-controls { display: none; }
+    #repair-panel.sealed-flash { box-shadow: 0 0 0 2px #6ad39a inset, 0 0 18px 2px #6ad39a55; }
+    #dc-arm { height: 40px; }
+    #dc-arm::-webkit-slider-thumb { background: var(--bad); }
   </style>
 </head>
 <body>
@@ -73,6 +82,23 @@
         More sensor power resolves asteroids sooner, so Weapons can target them earlier.
         The pulse lights up every contact at once (long cooldown).</p>
       <button id="pulse-btn" style="width:100%">Sensor Pulse</button>
+    </div>
+
+    <!-- Damage Control: an attention-only hull-breach seal. Available only when
+         hull < 50% (below that the ship is 'breached'); slide to ARM, then HOLD
+         to run the nanite bond — each completed bond seals a breach for a chunk
+         of hull. No power cost; it just demands the engineer's hands. -->
+    <div class="panel" id="repair-panel" style="grid-area:repair">
+      <h2>Damage Control <span id="repair-status" style="color:var(--dim); text-transform:none; letter-spacing:0; font-weight:400;"></span></h2>
+      <p class="label" style="margin-bottom:0.3rem;">Hull integrity <span id="dc-hull-pct" style="color:var(--accent)"></span></p>
+      <div class="meter" style="margin-bottom:0.6rem;"><div id="dc-hull-bar"></div></div>
+      <div id="dc-controls">
+        <p class="label" id="dc-hint" style="margin-bottom:0.3rem;">Slide to ARM, then hold to seal.</p>
+        <input type="range" id="dc-arm" min="0" max="100" step="1" value="0">
+        <button id="dc-seal" class="primary" style="width:100%; margin-top:0.3rem;" disabled>Seal Breach</button>
+        <p class="label" style="margin:0.5rem 0 0.2rem;">Nanite bond</p>
+        <div class="meter cool"><div id="dc-bond"></div></div>
+      </div>
     </div>
 
     <!-- (Breakers now live inline on each power row above; hull/shield vitals
@@ -221,6 +247,7 @@
           renderCrew(engCrewEl, state, 'engineering');
           engLog.tick(state.missionTime ?? 0);
         }
+        renderDamageControl(state);
         lastPower = state.power;
         for (const sys of SYSTEMS) {
           lastBreakers[sys] = !!state.breakers[sys];
@@ -255,6 +282,65 @@
     // Sensor pulse button.
     document.getElementById('pulse-btn').addEventListener('click', () => net.action({ kind: 'sensorPulse' }));
 
+    // --- Damage Control (hull-breach nanite seal) ---
+    // Available only below 50% hull. Slide dc-arm fully right to ARM, then HOLD
+    // dc-seal to run the nanite bond — each completed bond seals a breach for a
+    // hull chunk (server-side). Releasing (or leaving the breach state) stops it.
+    const repairPanel = document.getElementById('repair-panel');
+    const dcArm = document.getElementById('dc-arm');
+    const dcSeal = document.getElementById('dc-seal');
+    const dcBond = document.getElementById('dc-bond');
+    let dcArmed = false;
+    let dcSealing = false;
+    let prevBond = 0;
+    function setSealing(on) {
+      if (on === dcSealing) return;
+      dcSealing = on;
+      net.action({ kind: 'sealHull', on });
+      if (on) audio.breakerArm && audio.breakerArm();
+    }
+    dcArm.addEventListener('input', () => {
+      if (Number(dcArm.value) >= 100 && !dcArmed) {
+        dcArmed = true;
+        dcSeal.disabled = false;
+        audio.breakerArm && audio.breakerArm();
+      }
+    });
+    // Hold-to-seal: pointer down starts the bond, release/leave stops it.
+    for (const ev of ['pointerdown']) dcSeal.addEventListener(ev, (e) => { if (dcArmed) { e.preventDefault(); setSealing(true); } });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) dcSeal.addEventListener(ev, () => setSealing(false));
+    window.addEventListener('blur', () => setSealing(false)); // safety: never latch sealing
+
+    function renderDamageControl(state) {
+      const r = state.repair || { sealing: false, bond: 0, available: false };
+      const available = !!r.available && state.phase === 'active';
+      repairPanel.classList.toggle('disabled', !available);
+      setHealthBar(document.getElementById('dc-hull-bar'), state.hull ?? 100);
+      document.getElementById('dc-hull-pct').textContent = `${Math.round(state.hull ?? 100)}%`;
+      dcBond.style.width = `${Math.round((r.bond || 0) * 100)}%`;
+      const statusEl = document.getElementById('repair-status');
+      if (!available) {
+        statusEl.textContent = '— STANDBY (hull nominal)';
+        // Reset the arm when out of the breach state so it must be re-armed.
+        if (dcArmed) { dcArmed = false; dcArm.value = '0'; dcSeal.disabled = true; }
+        if (dcSealing) setSealing(false);
+        document.getElementById('dc-hint').textContent = 'Seals only while hull < 50%.';
+      } else if (r.sealing) {
+        statusEl.innerHTML = '— <b style="color:var(--good)">SEALING</b>';
+        document.getElementById('dc-hint').textContent = 'Hold to keep the nanites bonding…';
+      } else {
+        statusEl.innerHTML = '— <b style="color:var(--bad)">⚠ HULL BREACHED</b>';
+        document.getElementById('dc-hint').textContent = dcArmed ? 'Armed — hold Seal Breach.' : 'Slide to ARM, then hold to seal.';
+      }
+      // A completed bond: the server resets bond high→low. Flash + chime feedback.
+      if (prevBond > 0.7 && (r.bond || 0) < 0.2 && available) {
+        repairPanel.classList.add('sealed-flash');
+        setTimeout(() => repairPanel.classList.remove('sealed-flash'), 450);
+        audio.breakerTick && audio.breakerTick();
+      }
+      prevBond = r.bond || 0;
+    }
+
     // Power presets (P#11): one saved split, save + load. Load applies on the
     // next snapshot (the server re-allocates), so no optimistic paint needed.
     document.getElementById('preset-save').addEventListener('click', () => { net.action({ kind: 'savePreset' }); audio.powerClick(); });
@@ -286,8 +372,9 @@
         '<b>Engines</b> = speed and turning. <b>Weapons</b> = laser recharge rate (and it feeds the tractor beam). <b>Sensors</b> = how early contacts are detected AND identified. <b>Shields</b> = shield recharge (only while lowered).',
         '<b>Breakers</b> trip when rocks hit the hull. When a system trips, its power row turns into the restore control — slide to arm, then tap 3 times. A tripped system runs at half power until restored.',
         'The <b>Sensor Pulse</b> reveals AND identifies every contact at once and cuts through ion storms (long cooldown).',
+        '<b>Damage Control</b>: if the hull drops <b>below 50%</b>, hull breaches open. Slide to <b>ARM</b>, then <b>HOLD Seal Breach</b> — each nanite bond that completes patches the hull a chunk (~1%/s). It costs no power, but you can\'t balance systems while you\'re holding it, and it only pulls you back to 50% (not to full).',
         '<b>Save/Load Preset</b> stashes a power split (e.g. a combat setup) so you can snap back to it in one tap.',
-        'Give power to whoever needs it right now — listen to helm, weapons, and the chief.',
+        'Give power to whoever needs it right now — listen to helm and weapons.',
       ],
     });
 

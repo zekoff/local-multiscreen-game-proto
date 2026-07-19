@@ -224,6 +224,11 @@ const VISUAL_RANGE = 7;
 // asteroids on the viewscreen; the weapons SCOPE still reads UNKNOWN until sensor
 // ID, so the captain's call ("that's a pod — hold fire") still matters.
 const POD_VISUAL_RANGE = 22;
+// Salvage (minerals) reveals its silhouette from spawn — a big drifting chunk is
+// visible far off, so the captain can call it early ("salvage, tractor it in").
+// Sensor ID / tractor lock are unaffected (those gate on `identified`), so this
+// only helps the naked-eye call on the viewscreen.
+const MINERAL_VISUAL_RANGE = 999;
 
 // Raised shields draw off the drive: a real power-triage tradeoff instead of
 // a free defensive toggle.
@@ -238,6 +243,14 @@ const SHIELD_ENGINE_PENALTY = 0.85;
 const SHIELD_MAX = 35;
 const SHIELD_REGEN_PER_POWER = 1.0;  // points/s per allocated power unit, only while lowered
 const SHIELD_DRAIN_PER_SEC = 1.0;    // points/s bled while raised (idle upkeep)
+// Engineering Damage Control: an attention-only hull heal (no power cost). Only
+// available below HULL_BREACH_MAX and only heals up to it — pulls the ship back
+// from the brink, not to full. The engineer holds the seal to fill a nanite bond;
+// each completed bond delivers a chunk (~1%/s net). Releasing decays the bond.
+const HULL_BREACH_MAX = 50;   // repair only operates/heals while hull is below this
+const SEAL_BOND_TIME = 8;     // seconds of sustained sealing per completed bond
+const SEAL_CHUNK = 8;         // hull % restored per bond (→ ~1%/s while sealing)
+const SEAL_DECAY = 0.25;      // bond progress lost per second when not sealing
 
 // --- Nav gates: fly-through targets the helm lines up on. The pass window
 // widens with engine power (thrust authority makes the ship easier to aim),
@@ -511,7 +524,9 @@ export class Game {
   // Turning it up to 1.0 makes the bots play the console OPTIMALLY (no reaction
   // lag, active gate-chasing, snapshot use) so a solo player can field a strong
   // crew; below 0.6 they get sloppier. See the `cs`/`overBase` scaling in tick.
-  crewSkill = 0.6;
+  // Default bumped to 0.7 (was 0.6) — a slightly more capable CPU crew; the 0.6
+  // anchor in botCs/botOverBase still marks the old shipped floor.
+  crewSkill = 0.7;
   // Rescales the shipped bot handicap formulas so the 0.6 baseline returns 1.0
   // (identical to the old crewSkill=1 behavior) and higher skill returns >1
   // (sharper). Keeps smoke/lab balance fixed at the baseline.
@@ -595,6 +610,12 @@ export class Game {
   private ionStormUntil = 0;   // while active, sensor range is halved (engineering pressure)
   private debrisUntil = 0;     // while active, running hot scrapes the hull (helm pressure)
   private debrisTickTimer = 0; // paces the scrape feedback (fx/log) while in debris
+  private ghostSwarmUntil = 0; // while active, phantom ghost contacts spawn on a cadence (weapons pressure)
+  private ghostSwarmTimer = 0; // paces the ghost spawns during a swarm
+  // Engineering Damage Control (hull-breach nanite seal): attention-only heal,
+  // available only below HULL_BREACH_MAX, healing in chunks while `sealing`.
+  private sealing = false;     // engineer is actively holding the seal
+  private sealBond = 0;        // 0..1 nanite-bond progress toward the next chunk
   private fullLog: { t: number; text: string }[] = []; // complete captain's log (debrief review)
   private usedDesignations = new Set<number>(); // contact callsigns already issued this run
   private firedEvents = new Set<string>(); // scripted events that already ran
@@ -720,7 +741,7 @@ export class Game {
     this.runSeed = seed ?? randomSeed();
     this.rng = mulberry32(this.runSeed);
     this.debug = debug;
-    this.crewSkill = 0.6; // baseline survival-net bots; the debug slider tunes it live (0.6=shipped, 1.0=optimal)
+    this.crewSkill = 0.7; // baseline survival-net bots (bumped from 0.6); the debug slider tunes it live (0.6=old floor, 1.0=optimal)
     // The crew's ship name (optional, set at launch): pure fiction, zero
     // mechanics — it flavors the log, the main-screen header, and the debrief.
     this.shipName = shipName.trim().slice(0, 24);
@@ -803,6 +824,10 @@ export class Game {
     this.ionStormUntil = 0;
     this.debrisUntil = 0;
     this.debrisTickTimer = 0;
+    this.ghostSwarmUntil = 0;
+    this.ghostSwarmTimer = 0;
+    this.sealing = false;
+    this.sealBond = 0;
     this.firedEvents = new Set();
     this.driftBias = 0;
     this.driftBiasTimer = 0;
@@ -879,6 +904,10 @@ export class Game {
         this.consoleEvent('engineering', 'Power preset saved.');
       } else if (a.kind === 'loadPreset') {
         this.loadPreset();
+      } else if (a.kind === 'sealHull') {
+        // Damage Control: engage/disengage the hull-breach seal (only meaningful
+        // below HULL_BREACH_MAX; the tick applies the heal).
+        this.sealing = !!a.on && this.hull < HULL_BREACH_MAX;
       }
     } else if (seat === 'weapons') {
       if (a.kind === 'target' && typeof a.id === 'number') {
@@ -1089,10 +1118,21 @@ export class Game {
       case 'mineral': this.spawnContact('mineral', near, { min: 0, max: 0 }); this.event('[debug] Spawned salvage.'); break;
       case 'ghost': this.spawnContact('ghost', near, { min: 0, max: 0 }); this.event('[debug] Spawned a sensor ghost.'); break;
       case 'gate': this.spawnGate(); break;
-      case 'obstacle': this.spawnObstacle('DEBUG MASS', { min: 10, max: 15 }, OBSTACLE_DMG_DEFAULT); break;
+      case 'obstacle': this.applyEventAction({ type: 'spawnObstacle', label: 'DEBUG MASS', reachIn: { min: 10, max: 15 }, dmg: OBSTACLE_DMG_DEFAULT }); break;
+      case 'divert': this.applyEventAction({ type: 'spawnDivert', name: 'DEBUG BEACON', seconds: 30, reward: 12 }); break;
+      // Timed hazards — reuse the scripted-event executors so debug matches play.
+      case 'ionstorm': this.applyEventAction({ type: 'ionStorm', seconds: 20 }); break;
+      case 'debris': this.applyEventAction({ type: 'debrisField', seconds: 20 }); break;
+      case 'ghostswarm': this.applyEventAction({ type: 'ghostSwarm', seconds: 24 }); break;
+      case 'blackout': this.applyEventAction({ type: 'setViewImpaired', on: !this.viewImpaired }); this.event(`[debug] Forward view ${this.viewImpaired ? 'blacked out' : 'restored'}.`); break;
+      case 'flare': this.applyEventAction({ type: 'solarFlare', inSeconds: 8 }); break;
+      // Emergencies (Crew-Chief posts).
       case 'fire': this.startEmergency('fire', 1); break;
+      case 'breach': this.startEmergency('breach', 1); break;
       case 'boarders': this.startEmergency('boarders', 1); break;
-      case 'flare': this.flareAt = this.missionTime + 8; this.event('[debug] Solar flare inbound (8s) — SAFE POSTURE.'); break;
+      case 'leak': this.startEmergency('leak', 1); break;
+      // Test aid: knock the hull down (past shields) to exercise Damage Control.
+      case 'damage': this.hull = Math.max(1, this.hull - 30); this.event('[debug] Hull −30% (test Damage Control).'); break;
       default: break;
     }
   }
@@ -1316,6 +1356,10 @@ export class Game {
       this.debrisTickTimer = 0;
       this.pushFx({ kind: 'debris' });
       this.event('DEBRIS FIELD — pulverized rock in the lane. Ease the throttle or it will scour the hull.');
+    } else if (action.type === 'ghostSwarm') {
+      this.ghostSwarmUntil = this.missionTime + action.seconds;
+      this.ghostSwarmTimer = 0;
+      this.event('SENSOR INTERFERENCE — phantom contacts spoofing the scope. Confirm before firing; a shot on a ghost is wasted.');
     } else if (action.type === 'spawnContact') {
       const n = Math.max(1, action.count ?? 1);
       for (let i = 0; i < n; i++) this.spawnContact(action.kind, action.impactIn ?? m.impactIn, m.asteroidDmg);
@@ -1564,6 +1608,23 @@ export class Game {
     } else {
       this.shieldStrength = Math.min(SHIELD_MAX, this.shieldStrength + SHIELD_REGEN_PER_POWER * this.eff('shields') * dt);
     }
+    // Engineering Damage Control: while the engineer holds the seal AND hull is
+    // below the breach threshold, advance the nanite bond; each completed bond
+    // seals a breach for a chunk of hull (attention-only — no power cost). Once
+    // hull reaches the threshold the breaches are closed and sealing disengages.
+    if (this.sealing && this.hull < HULL_BREACH_MAX) {
+      this.sealBond += dt / SEAL_BOND_TIME;
+      if (this.sealBond >= 1) {
+        this.sealBond = 0;
+        const before = this.hull;
+        this.hull = Math.min(HULL_BREACH_MAX, this.hull + SEAL_CHUNK);
+        this.hullRepaired += this.hull - before;
+        this.consoleEvent('engineering', `Hull breach sealed — nanites holding (+${Math.round(this.hull - before)}%).`);
+      }
+    } else {
+      this.sealBond = Math.max(0, this.sealBond - SEAL_DECAY * dt);
+      if (this.hull >= HULL_BREACH_MAX) this.sealing = false; // out of the brink — disengage
+    }
     // Laser recharge meter refills at a rate set by weapon power (100 = ready).
     this.charge = Math.min(100, this.charge + LASER_CHARGE_RATE * this.eff('weapons') * dt);
     // Track time spent sitting at full charge — unused firepower, surfaced as
@@ -1781,6 +1842,19 @@ export class Game {
         this.pushFx({ kind: 'impact', hullDmg: Math.max(1, Math.round(dps * 3)), absorbed: false });
         this.event('Debris scouring the hull — ease the throttle!', false);
       }
+    }
+    // Sensor-spoof swarm: while active, drip phantom (ghost) contacts onto the
+    // scope on a cadence, mixed with the ambient target stream (which keeps
+    // running independently). Ghosts self-cull once sensors ID them (below).
+    if (this.missionTime < this.ghostSwarmUntil) {
+      this.ghostSwarmTimer -= dt;
+      if (this.ghostSwarmTimer <= 0) {
+        this.ghostSwarmTimer = range(this.rng, { min: 1.5, max: 2.7 });
+        this.spawnContact('ghost', { min: 10, max: 22 }, { min: 0, max: 0 });
+      }
+    } else if (this.ghostSwarmUntil > 0) {
+      this.ghostSwarmUntil = 0;
+      this.event('Sensor interference clearing — scope returns are firming up.');
     }
     if (this.ionStormUntil > 0 && this.missionTime >= this.ionStormUntil) {
       this.ionStormUntil = 0;
@@ -2442,6 +2516,10 @@ export class Game {
       // renders the storm warning, helm the debris warning, main screen both.
       ionStormIn: round1(Math.max(0, this.ionStormUntil - this.missionTime)),
       debrisIn: round1(Math.max(0, this.debrisUntil - this.missionTime)),
+      ghostSwarmIn: round1(Math.max(0, this.ghostSwarmUntil - this.missionTime)),
+      // Engineering Damage Control state (repair widget): sealing flag + bond
+      // progress; the widget is available whenever hull < HULL_BREACH_MAX.
+      repair: { sealing: this.sealing, bond: round1(this.sealBond), available: this.hull < HULL_BREACH_MAX },
       // Slipstream open (post-gate speed boost) — drives the viewscreen streaks.
       slipstream: this.gateBoostTimer > 0,
       // Weapons governor mode + helm course-hold (self-documenting console state).
@@ -2498,9 +2576,10 @@ export class Game {
         // beacon up close even while the scope still reads UNKNOWN. That's the
         // don't-shoot cooperation: the captain's eyes OR engineering's sensors.
         kind: a.identified ? a.kind : 'unknown',
-        // Pods reveal their beacon farther out than rocks/minerals (see
-        // POD_VISUAL_RANGE) so the captain can spot and call them before sensor ID.
-        visualKind: a.impactIn <= (a.kind === 'pod' ? POD_VISUAL_RANGE : VISUAL_RANGE) ? a.kind : 'unknown',
+        // Pods reveal their beacon farther out than rocks (POD_VISUAL_RANGE), and
+        // salvage reads from spawn (MINERAL_VISUAL_RANGE), so the captain can call
+        // both before sensor ID. Rocks stay UNKNOWN until close (VISUAL_RANGE).
+        visualKind: a.impactIn <= (a.kind === 'pod' ? POD_VISUAL_RANGE : a.kind === 'mineral' ? MINERAL_VISUAL_RANGE : VISUAL_RANGE) ? a.kind : 'unknown',
         identified: a.identified, mass: a.mass,
         tractorable: a.identified && (a.kind === 'pod' || a.kind === 'mineral') && a.impactIn <= TRACTOR_RANGE,
         bearing: Math.round(a.bearing),

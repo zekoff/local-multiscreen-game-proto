@@ -139,6 +139,10 @@ export type EventAction =
   // Debris field: running hot scours the hull for the duration — helm
   // pressure (ease the throttle through it; a slow crawl is free).
   | { type: 'debrisField'; seconds: number }
+  // Sensor-spoof swarm: floods the scope with phantom (ghost) contacts mixed
+  // into the normal target cadence for the duration — weapons pressure (don't
+  // waste shots on ghosts; sensor ID/pulse resolves and culls them).
+  | { type: 'ghostSwarm'; seconds: number }
   // Spawn a typed contact (pod / mineral / ghost / rock). The workhorse for
   // don't-shoot and salvage missions — kind is resolved on the scope only when
   // sensors are strong/close enough (see identification split). `count` spawns

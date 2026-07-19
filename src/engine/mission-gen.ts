@@ -222,6 +222,12 @@ export function generateEuropaSalvageLoop(seed: number): MissionDef {
   salvage('europa-salv-5', 200);
   salvage('europa-salv-6', 288);
   ghost('europa-ghost-1', 66);
+  // A sensor-spoof swarm: phantom contacts flood the scope among the real rocks,
+  // so Weapons must verify before spending a shot (sensor ID/pulse resolves them).
+  events.push({ id: 'europa-ghostswarm', at: { time: jit(52, 5) }, actions: [
+    { type: 'log', text: 'Sensor grid is ghosting — phantom returns all over the scope. Weapons, confirm a contact before you spend a shot on it.' },
+    { type: 'ghostSwarm', seconds: int(rng, 22, 28) },
+  ] });
 
   // Heavy batch #1 with the slow lifeboat in the middle of it.
   const batch1 = jit(90, 6);
