@@ -144,6 +144,18 @@ class SpaceScene extends Phaser.Scene {
     cam.centerOn(cssW / 2, cssH / 2);
     this.baseScrollX = cam.scrollX;
     this.baseScrollY = cam.scrollY;
+    // LIVING-ROOM SCALE. This screen is read from a couch across the room, not
+    // from a desk — the contact callouts the captain calls priorities from are
+    // the most important text in the game, and at desk sizes they were simply
+    // unreadable at TV distance. Every label (and its offset from the sprite it
+    // annotates) is multiplied by this, so text and spacing grow together.
+    // 900px CSS wide is the 1.0 reference (a laptop); a 1080p TV lands near 2.1x.
+    this.uiScale = Math.max(1, Math.min(2.4, cssW / 900));
+  }
+
+  // Scale a label size or offset for viewing distance (see applyCamera).
+  ui(n) {
+    return n * (this.uiScale || 1);
   }
 
   onResize() {
@@ -161,7 +173,7 @@ class SpaceScene extends Phaser.Scene {
         .setResolution(Math.min(3, window.devicePixelRatio || 1));
       this.texts.set(key, t);
     }
-    t.setFontSize(size);
+    t.setFontSize(Math.round(this.ui(size))); // viewing-distance scale (applyCamera)
     t.setText(str);
     t.setColor(colorHex);
     t.setPosition(x, y);
@@ -574,7 +586,7 @@ class SpaceScene extends Phaser.Scene {
       // Remember where the station is so docking traffic can fly into it.
       this.stationPos = { x: px, y: py, r };
     }
-    if (r > 10 && arr < 0.3) this.label('dest', name, px, py - r - 14, colorHex, 12, 8);
+    if (r > 10 && arr < 0.3) this.label('dest', name, px, py - r - this.ui(14), colorHex, 12, 8);
   }
 
   drawGates(latest, w, h, cy) {
@@ -596,7 +608,7 @@ class SpaceScene extends Phaser.Scene {
       }
       if (t < 0.5) {
         this.label(`gate${gate.id}`, `${gate.label} ${Math.ceil(gate.reachIn)}s`,
-          cxg, cy - r * 0.82 - 12, lined ? '#8fd6ff' : '#ffb347', 11, 8);
+          cxg, cy - r * 0.82 - this.ui(12), lined ? '#8fd6ff' : '#ffb347', 11, 8);
       }
     }
   }
@@ -670,8 +682,8 @@ class SpaceScene extends Phaser.Scene {
           c.img.setTint(0x4cd97b).setDisplaySize(rr * 2.2, rr * 2.2);
           c.glow.setTint(0x4cd97b).setDisplaySize(rr * 5, rr * 5).setAlpha((0.18 + blink * 0.22) * fadeA);
           if (showLabels) {
-            this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - rr - 14, '#4cd97b', 12, 12);
-            this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + rr + 16, blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
+            this.label(`c${a.id}`, `${a.label} — RESCUE POD`, px, py - rr - this.ui(14), '#4cd97b', 12, 12);
+            this.label(`c2${a.id}`, 'DO NOT FIRE', px, py + rr + this.ui(16), blink > 0.5 ? '#7dffb0' : '#4cd97b', 12, 12);
           }
         } else {
           // Visible pod SILHOUETTE, but not yet resolved — neutral, no green, no
@@ -688,7 +700,7 @@ class SpaceScene extends Phaser.Scene {
         c.img.setTexture('mineral').setTint(0xffb347).setDisplaySize(rr * 2, rr * 2)
           .setRotation((performance.now() / 2600) % (Math.PI * 2));
         c.glow.setTint(0xffb347).setDisplaySize(rr * 3.6, rr * 3.6).setAlpha((0.14 + growth * 0.14) * fadeA);
-        if (showLabels) this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - rr - 14, '#ffb347', 11, 12);
+        if (showLabels) this.label(`c${a.id}`, `${a.label} — SALVAGE`, px, py - rr - this.ui(14), '#ffb347', 11, 12);
         continue;
       }
 
@@ -717,7 +729,7 @@ class SpaceScene extends Phaser.Scene {
         const targeted = a.id === latest.targetId;
         this.gRings.lineStyle(targeted ? 3.5 : 2, hexInt(threatHex), (targeted ? 1 : 0.8) * fadeA);
         this.gRings.strokeCircle(px, py, r + (targeted ? 6 : 4));
-        this.label(`c${a.id}`, `${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - 14, threatHex, 12, 12);
+        this.label(`c${a.id}`, `${a.label} ${Math.ceil(a.impactIn)}s`, px, py - r - this.ui(14), threatHex, 12, 12);
       }
     }
     for (const [id, c] of this.contacts) {

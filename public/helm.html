@@ -208,7 +208,20 @@
     const throttle = document.getElementById('throttle');
     const warpBtn = document.getElementById('warp-btn');
     const consoleEl = document.querySelector('main.helm'); // carries the mode class
-    let draggingThrottle = false;
+    // When the pilot last touched the throttle. render() refuses to re-sync the
+    // slider from server state within this window, so a snapshot can't yank the
+    // knob out from under a finger mid-drag.
+    //
+    // This is a TIMESTAMP and not a dragging=true/false flag on purpose: a flag
+    // is cleared by pointerup, and a pointerup can go missing (released off the
+    // element, a cancelled touch, a pointer stolen by the browser). A latched
+    // flag stopped the slider syncing FOREVER — the knob then showed a stale
+    // value while the ship ran at another, and because dragging a range input
+    // back to the value it already displays fires no `input` event, the pilot
+    // could no longer command that value at all. The throttle looked dead.
+    // A timestamp always heals on its own.
+    let throttleTouchedAt = 0;
+    const THROTTLE_HOLD_MS = 400;
     let trimHost = null, commsHost = null; // Officer-only widget hosts
 
     const intents = createIntents();
@@ -248,8 +261,9 @@
         // until the snapshot repeats it back, so the readout never snaps to a
         // stale % for a tick. Derived values (speed) stay server-driven.
         const shownThrottle = intents.get('throttle') ?? state.throttle;
-        // Don't fight the player's finger: only sync the slider when idle.
-        if (!draggingThrottle) throttle.value = shownThrottle;
+        // Don't fight the player's finger: only sync the slider once they've been
+        // off it briefly. Self-healing — see throttleTouchedAt.
+        if (Date.now() - throttleTouchedAt > THROTTLE_HOLD_MS) throttle.value = shownThrottle;
         document.getElementById('throttle-val').textContent = `${shownThrottle}%`;
         // Alignment marker: map -100..100 onto the track width.
         const pct = (state.alignment + 100) / 200;
@@ -340,13 +354,18 @@
     trimHost = mountWidgets(document.getElementById('trim-widget'), [driftTrim], { net, intents, audio, seat: 'helm' });
     commsHost = mountWidgets(document.getElementById('comms-widget'), [comms], { net, intents, audio, seat: 'helm' });
 
-    // Throttle sends on change; track dragging so render() doesn't stomp it.
+    // Throttle sends on input; touching it defers the render sync briefly (see
+    // throttleTouchedAt). Every touch event refreshes the stamp — including
+    // pointerup, so a released finger still gets its grace period before state
+    // takes the knob back.
     // The servo confirmation sounds once on RELEASE (change), not per input
     // event — one short diegetic beat per committed setpoint, sparse tone.
-    throttle.addEventListener('pointerdown', () => (draggingThrottle = true));
-    throttle.addEventListener('pointerup', () => (draggingThrottle = false));
+    for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove', 'keydown']) {
+      throttle.addEventListener(ev, () => { throttleTouchedAt = Date.now(); });
+    }
     throttle.addEventListener('change', () => audio.throttleSet(Number(throttle.value)));
     throttle.addEventListener('input', () => {
+      throttleTouchedAt = Date.now();
       const value = Number(throttle.value);
       net.action({ kind: 'throttle', value });
       // Setpoint echo: hold the commanded % until the server repeats it back.
@@ -383,6 +402,12 @@
       btn.addEventListener('pointerup', stop);
       btn.addEventListener('pointerleave', stop);
       btn.addEventListener('pointercancel', stop);
+      // Same never-latch rule as the throttle: if every release event is missed
+      // (pointer stolen, tab switched mid-press) the interval would keep nudging
+      // forever and the ship would spin with nobody touching it.
+      btn.addEventListener('lostpointercapture', stop);
+      window.addEventListener('blur', stop);
+      document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
       btn.addEventListener('contextmenu', (e) => e.preventDefault());
     }
     holdToSteer(document.getElementById('port-btn'), -1);

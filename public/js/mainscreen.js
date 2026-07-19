@@ -125,8 +125,10 @@ const net = initStation({
       audio.stopMusic();
       musicRunning = false;
     }
-    // Soft ready-room ambient bed while the crew is in the lobby (stops on launch).
-    readyRoomAmbient(audio, state.phase);
+    // Ready-room ambience while the crew is in the lobby — beeps only, NO drone.
+    // This screen drives the room's speakers, and a continuous hum under the
+    // pre-launch briefing is fatiguing rather than atmospheric.
+    readyRoomAmbient(audio, state.phase, { drone: false });
     // HUD bars (hull/shields colored by value; progress keeps the accent).
     setHealthBar(document.getElementById('hull-bar'), state.hull);
     setHealthBar(document.getElementById('shield-bar'), state.shields.strength);

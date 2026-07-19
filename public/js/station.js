@@ -76,6 +76,25 @@ export function initStation({ seat, render, onJoined, startPayload, intents, onT
     setTimeout(() => el.remove(), 4200);
   }
 
+  // --- Navigation guards -----------------------------------------------------
+  // A station is a physical console for the length of a mission, and the two
+  // easiest ways to accidentally abandon one mid-fight are a stray right-click
+  // (or long-press on a phone, which is the same gesture) and the browser's Back
+  // button / back-swipe. Leaving drops the seat to auto-assist and makes the
+  // crew's problem everyone's problem, so both are refused here.
+  //
+  // Programmatic navigation still works: the error handler and the missing-room
+  // redirect both set location.href, which popstate trapping doesn't touch. To
+  // actually leave, close the tab — or use the in-page debrief button.
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Seed a history entry to swallow, then re-seed it on every attempt so Back
+  // never has anywhere to go.
+  history.pushState(null, '', location.href);
+  window.addEventListener('popstate', () => {
+    history.pushState(null, '', location.href);
+    toast('Back is disabled at a station — close the tab to leave.');
+  });
+
   function renderPhase(state) {
     latest = state;
     // The ready-room banner (crew consoles) pins to the top and pushes the

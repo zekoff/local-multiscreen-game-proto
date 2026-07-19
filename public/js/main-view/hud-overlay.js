@@ -29,6 +29,12 @@ export function mountHudOverlay({ container }) {
   }
   window.addEventListener('resize', resize);
 
+  // Viewing-distance scale, matching the Phaser scene's uiScale: the main screen
+  // is read from across the room, so callout text is sized against the display's
+  // CSS width (900px = 1.0 reference; a 1080p TV lands near 2.1x) rather than at
+  // desk-legible sizes.
+  const uiScale = (w, dpr) => Math.max(1, Math.min(2.4, (w / dpr) / 900));
+
   // Fixed forward crosshair (screen space) marking the ship's heading.
   function drawReticle(w, h, dpr) {
     const cx = w / 2;
@@ -70,9 +76,10 @@ export function mountHudOverlay({ container }) {
       ctx.lineTo(ex - dir * 10 * dpr, ey - 12 * dpr);
       ctx.lineTo(ex - dir * 10 * dpr, ey + 12 * dpr);
       ctx.closePath(); ctx.fill();
-      ctx.font = `${11 * dpr}px monospace`;
+      const us = uiScale(w, dpr);
+      ctx.font = `${Math.round(11 * us) * dpr}px monospace`;
       ctx.textAlign = right ? 'right' : 'left';
-      ctx.fillText(`${tg.label} ▸`, right ? ex - 16 * dpr : ex + 16 * dpr, ey - 18 * dpr);
+      ctx.fillText(`${tg.label} ▸`, right ? ex - 16 * dpr : ex + 16 * dpr, ey - 18 * us * dpr);
       ctx.restore();
     }
   }

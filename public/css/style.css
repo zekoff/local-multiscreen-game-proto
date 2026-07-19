@@ -26,6 +26,10 @@ html, body {
      way (accidental highlights while tapping controls). Disable it everywhere. */
   -webkit-user-select: none;
   user-select: none;
+  /* Suppress the iOS long-press callout (the touch equivalent of the right-click
+     menu that station.js refuses) — a held steering button must never raise a
+     copy/share sheet over the console mid-mission. */
+  -webkit-touch-callout: none;
 }
 
 /* ...except real text entry, which still needs selection to be usable. */

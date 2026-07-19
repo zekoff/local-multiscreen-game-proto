@@ -90,12 +90,23 @@ export interface MissionDef {
 // Derive the velocity scale and par time from a target well-executed duration,
 // so authored and generated missions share one length model. Calibrated against
 // the engine's peak progress rate (~0.6 * speedScale /s) with the real losses a
-// clean run still takes (gate detours, turns) folded into SPEED_CALIB — tuned
-// against `npm run lab` so a `skilled` crew arrives near targetSeconds.
+// clean run still takes (gate detours, turns) folded into SPEED_CALIB.
 // parTime sits above the well-executed time so the debrief time score has slack.
-// Recalibrated 325 -> 260 after the 7-point power pool (default engines 3):
+//
+// History: 325 -> 260 after the 7-point power pool (default engines 3), because
 // the faster baseline ship was landing skilled runs ~20% under targetSeconds.
-export const SPEED_CALIB = 260;
+//
+// 260 -> 390 (2026-07-19) after PLAYTEST, which is the calibration that actually
+// matters. The old number was tuned so the LAB'S BOT CREW arrived near
+// targetSeconds — but bots beeline, and a human crew stops to work salvage, lines
+// up tows, and takes diverts. A real crew was running Europa in ~7.5 minutes
+// against its 5-minute target (~1.5x), and the observed human/skilled-bot ratio
+// is ~1.32x. The cost wasn't just duration: Europa's scripted timeline ends near
+// t=288s, so the overrun was spent in unscripted ambient filler with the story
+// already over. Calibrating so a HUMAN crew lands near targetSeconds puts the
+// arrival back where the authored content ends. Bots now finish comfortably
+// early, which is expected and is not a regression — they are not the audience.
+export const SPEED_CALIB = 390;
 export function pacingFor(targetSeconds: number): { targetSeconds: number; speedScale: number; parTime: number } {
   return {
     targetSeconds,

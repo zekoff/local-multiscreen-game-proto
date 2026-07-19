@@ -7,10 +7,16 @@
 // Ready-room ambient: start a soft lobby bed while phase === 'lobby', stop it
 // otherwise. Idempotent (safe to call every snapshot). Consoles call this in
 // their render so the bridge has atmosphere while the crew waits to launch.
-export function readyRoomAmbient(audio, phase) {
+// `drone` = the low continuous bed. The MAIN SCREEN passes drone:false: it's the
+// device actually plugged into speakers in the room, and a constant hum sitting
+// under the whole pre-launch conversation wears on people. The sparse beeps stay
+// (they read as a ship idling, not as noise), and the consoles — phones, quiet,
+// usually pocketed — keep the full bed.
+export function readyRoomAmbient(audio, phase, { drone = true } = {}) {
   if (!audio) return;
   if (phase === 'lobby') {
-    audio.startAmbient?.();
+    if (drone) audio.startAmbient?.();
+    else audio.stopAmbient?.();
     // Soft, occasional beeps/boops so the bridge feels alive while the crew
     // stands by (called every ~250ms snapshot, so keep the chance low).
     if (Math.random() < 0.02) audio.readyBeep?.();

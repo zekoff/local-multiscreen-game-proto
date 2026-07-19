@@ -2,7 +2,53 @@
 
 This file should contain only the most recent status of the project -- usually the last major prompt with completed work.
 
-## Latest: `assist` rename + weapons scope off Phaser (2026-07-19, after the split below)
+## Latest: throttle bug, Europa re-timing, TV-scale labels, guards (2026-07-19)
+
+**Throttle became un-settable mid-mission — FIXED (root cause found).** The helm
+latched `draggingThrottle = true` on `pointerdown` and only cleared it on
+`pointerup`. Any missed `pointerup` (released off the element, cancelled touch,
+pointer stolen) latched it forever, and the slider then stopped syncing from
+server state — showing a stale value while the ship ran at another. Because
+dragging a range input back to the value it already displays fires **no `input`
+event**, the pilot could no longer command that value at all; the throttle looked
+dead. Replaced the boolean with a self-healing **timestamp** (`throttleTouchedAt`,
+400ms grace) that no missed event can latch. The same never-latch treatment was
+applied to `holdToSteer` (blur/visibilitychange/lostpointercapture), where a
+missed release would have left the ship nudging forever.
+
+**Europa re-timed: `SPEED_CALIB` 260 → 390.** The old constant was calibrated so
+the LAB'S BOTS arrived near `targetSeconds`, but bots beeline while a human crew
+stops to work salvage and line up tows. A real crew ran the 5-minute Europa in
+~7.5 minutes. Worse than duration: Europa's scripted timeline ends near **t=288s**,
+so the overrun was spent in unscripted ambient filler with the story already over.
+Calibrating to the **human** ratio (~1.32× skilled-bot) puts arrival back where the
+authored content ends. Lab: Europa skilled 341s → **231s** (⇒ ~305s human ≈ the
+5-minute target), and weak crews now complete far more often (auto 20%→70%,
+1h-helm 40%→70%) since there's less time to accumulate damage.
+**Caveat:** this constant is global, so first-flight/free-flight also got ~1/3
+shorter (first-flight skilled 137s → 90s). A single global constant can't be right
+for every mission — the human/bot gap is mission-dependent (salvage missions stop
+more). If the shakedown should keep its old length, it needs a per-mission speed
+override rather than a different global.
+
+**Main screen at living-room scale.** All viewscreen labels (and their offsets
+from the sprites they annotate) now scale by `uiScale` = CSS width / 900, clamped
+1.0–2.4 — a 1080p TV lands at ~2.1×. Matched in the HUD overlay's off-screen
+objective chevron. *Known side effect:* clustered contacts overlap more than
+before; the top HUD threat list remains the authoritative priority readout.
+
+**Lobby hum removed from the main screen.** `readyRoomAmbient` takes
+`{ drone: false }` there — that device drives the room's speakers and a continuous
+bed under the pre-launch briefing is fatiguing. Sparse ready-beeps stay; consoles
+(phones) keep the full bed.
+
+**Navigation guards on every console.** `initStation` refuses the context menu
+(and CSS kills the iOS long-press callout) and traps Back via
+`pushState`/`popstate` re-push with an explanatory toast — leaving mid-mission
+drops the seat to auto-assist. Programmatic redirects (error handler, missing
+room) are unaffected.
+
+## Earlier today: `assist` rename + weapons scope off Phaser
 
 - **`aids` → `assist`** throughout: `AssistProfile`, `ASSIST`, `assist(seat)`,
   the serialized key `assist`, and the field `steerAssist`. Pure rename, no
